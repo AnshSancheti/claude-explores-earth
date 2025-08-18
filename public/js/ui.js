@@ -27,10 +27,14 @@ class UIManager {
     entry.setAttribute('data-step', data.stepCount); // Add step tracking
     
     const time = new Date().toLocaleTimeString();
+    const modeIndicator = data.mode === 'pathfinding' ? 
+      '<span class="mode-indicator pathfinding">🧭 Pathfinding</span>' : 
+      '<span class="mode-indicator exploring">🔍 Exploring</span>';
     
     entry.innerHTML = `
       <div class="decision-header">
         <span class="decision-step">Step ${data.stepCount}</span>
+        ${modeIndicator}
         <span class="decision-time">${time}</span>
       </div>
       <div class="decision-reasoning">${data.decision.reasoning}</div>

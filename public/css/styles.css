@@ -206,6 +206,29 @@ h1 {
   margin-bottom: 8px;
 }
 
+.mode-indicator {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.8em;
+  font-weight: bold;
+}
+
+.mode-indicator.exploring {
+  background: #2a5a2a;
+  color: #8fbc8f;
+}
+
+.mode-indicator.pathfinding {
+  background: #5a3a2a;
+  color: #daa520;
+}
+
+.frontier-info {
+  color: #666;
+  font-size: 0.8em;
+  margin-bottom: 8px;
+}
+
 .decision-screenshots {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

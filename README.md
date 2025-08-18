@@ -12,9 +12,13 @@ The AI agent autonomously navigates NYC streets, capturing multi-directional vie
 ## ✨ Features
 
 ### 🤖 Autonomous Exploration
-- **AI-Powered Navigation**: Uses GPT-4 Vision to analyze Street View images and decide where to go next
+- **AI-Powered Navigation**: Uses GPT-5-nano Vision to analyze Street View images and decide where to go next
 - **Multi-Directional Vision**: Captures screenshots in multiple directions before moving
 - **Smart Path Planning**: Prioritizes unvisited locations to maximize exploration coverage
+- **Loop Prevention**: Automatically escapes repetitive paths using frontier-based pathfinding
+- **Dual Mode Operation**: 
+  - 🔍 **Exploration Mode**: AI chooses based on visual interest
+  - 🧭 **Pathfinding Mode**: BFS navigation to nearest unexplored area when stuck
 - **Manual Step Mode**: Take single exploration steps with the "Take Step" button
 
 ### 📊 Real-Time Visualization
@@ -57,7 +61,7 @@ GOOGLE_MAPS_API_KEY=your_google_maps_key
 OPENAI_API_KEY=your_openai_key
 
 # Configuration
-STEP_INTERVAL_MS=5000
+STEP_INTERVAL_MS=500
 
 # Starting Location (default: Empire State Building)
 START_LAT=40.748817
@@ -114,7 +118,8 @@ npm run dev
 - **Frontend Street View**: What users see in the browser
 - **Headless Street View**: Server-side Puppeteer instance for screenshots
 - **Exploration Agent**: Coordinates navigation and decision-making
-- **Coverage Tracker**: Maintains visited locations and statistics
+- **Coverage Tracker**: Maintains visited locations, frontier, and statistics
+- **Pathfinder**: BFS-based navigation to escape loops and reach unexplored areas
 
 ## 🗂️ Project Structure
 
@@ -126,8 +131,9 @@ ai-explores-nyc/
 │   │   └── explorationAgent.js  # Main exploration logic
 │   ├── services/
 │   │   ├── streetViewHeadless.js # Puppeteer Street View
-│   │   ├── openai.js            # GPT-4 Vision integration
-│   │   └── coverage.js          # Exploration tracking
+│   │   ├── openai.js            # GPT-5-nano Vision integration
+│   │   ├── coverage.js          # Exploration & frontier tracking
+│   │   └── pathfinder.js        # BFS pathfinding for loop escape
 │   └── utils/
 │       ├── logger.js            # Session logging
 │       └── screenshot.js        # Image capture & storage
@@ -161,7 +167,7 @@ ai-explores-nyc/
 ### Environment Variables
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `STEP_INTERVAL_MS` | Time between exploration steps | 5000 |
+| `STEP_INTERVAL_MS` | Time between exploration steps | 500 |
 | `START_LAT` | Starting latitude | 40.748817 |
 | `START_LNG` | Starting longitude | -73.985428 |
 | `START_PANO_ID` | Optional panorama ID (overrides lat/lng) | - |

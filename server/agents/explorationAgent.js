@@ -1,6 +1,7 @@
 import { StreetViewHeadless } from '../services/streetViewHeadless.js';
 import { OpenAIService } from '../services/openai.js';
 import { CoverageTracker } from '../services/coverage.js';
+import { Pathfinder } from '../services/pathfinder.js';
 import { ScreenshotService } from '../utils/screenshot.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -15,6 +16,7 @@ export class ExplorationAgent {
     this.streetViewHeadless = new StreetViewHeadless();
     this.ai = new OpenAIService();
     this.coverage = new CoverageTracker();
+    this.pathfinder = new Pathfinder(this.coverage);
     this.screenshot = new ScreenshotService(this.runId);
     
     this.currentPosition = {
@@ -24,6 +26,11 @@ export class ExplorationAgent {
     this.currentPanoId = process.env.START_PANO_ID || null;
     this.startPanoId = process.env.START_PANO_ID || null;
     this.currentHeading = 0;
+    
+    // Mode tracking
+    this.mode = 'exploration'; // 'exploration' or 'pathfinding'
+    this.pathToFrontier = null;
+    this.stuckCounter = 0;
   }
 
   async initialize() {
@@ -44,7 +51,7 @@ export class ExplorationAgent {
     }
     
     this.currentPanoId = panoData.pano_id;
-    this.coverage.addVisited(this.currentPanoId, this.currentPosition);
+    this.coverage.addVisited(this.currentPanoId, this.currentPosition, panoData.links || []);
     
     this.socket.emit('position-update', {
       position: this.currentPosition,
@@ -85,62 +92,107 @@ export class ExplorationAgent {
       lng: panoData.location.lng
     };
     
-    // Log current location details
+    // Log current location details and frontier status
     console.log(`Current location - PanoID: ${this.currentPanoId}, Lat: ${this.currentPosition.lat.toFixed(6)}, Lng: ${this.currentPosition.lng.toFixed(6)}`);
+    console.log(`Frontier size: ${this.coverage.getFrontierSize()}, Mode: ${this.mode}`);
     
-    const unvisitedLinks = links.filter(link => 
-      !this.coverage.hasVisited(link.pano)
-    );
+    // Check if we're stuck in a loop
+    const isStuck = this.coverage.isInLoop(this.currentPanoId) && 
+                    links.every(link => this.coverage.hasVisited(link.pano));
     
-    const targetLinks = unvisitedLinks.length > 0 ? unvisitedLinks : links;
+    let selectedLink = null;
+    let decision = null;
+    let screenshots = [];  // Declare at higher scope to avoid reference error
     
-    // Create a fresh screenshots array for this step
-    const screenshots = [];
-    
-    // Capture screenshots with the current step number
-    for (const link of targetLinks) {
-      const heading = parseFloat(link.heading);
-      await this.streetViewHeadless.setHeading(heading);
+    // Determine mode and select next move
+    if (isStuck && this.coverage.hasFrontier()) {
+      // Switch to pathfinding mode
+      this.mode = 'pathfinding';
+      console.log('Stuck - switching to pathfinding mode');
       
-      const screenshotData = await this.screenshot.capture(
-        currentStep,  // Use the captured step number
-        heading,
-        await this.streetViewHeadless.getScreenshot()
-      );
-      
-      console.log(`Captured screenshot: step=${currentStep}, filename=${screenshotData.filename}`);
-      
-      // Validate that the filename matches the current step
-      if (!screenshotData.filename.startsWith(`${currentStep}-`)) {
-        console.error(`Screenshot filename mismatch! Expected step ${currentStep}, got ${screenshotData.filename}`);
+      const pathInfo = this.pathfinder.findPathToNearestFrontier(this.currentPanoId);
+      if (pathInfo) {
+        // Find the link that leads to the next step in path
+        selectedLink = links.find(l => l.pano === pathInfo.nextStep);
+        if (selectedLink) {
+          decision = {
+            selectedPanoId: selectedLink.pano,
+            reasoning: `Pathfinding to frontier (${pathInfo.pathLength} steps away)`
+          };
+          console.log(`Pathfinding: Next step to ${selectedLink.pano}`);
+        }
+      } else {
+        // No path found, try escape heuristic
+        selectedLink = this.pathfinder.findBestEscapeDirection(this.currentPanoId, links);
+        if (selectedLink) {
+          decision = {
+            selectedPanoId: selectedLink.pano,
+            reasoning: 'Escaping local area using heuristic'
+          };
+        }
       }
-      
-      screenshots.push({
-        direction: heading,
-        filename: screenshotData.filename,
-        panoId: link.pano,
-        description: link.description || '',
-        visited: this.coverage.hasVisited(link.pano),
-        base64: screenshotData.base64,
-        position: this.currentPosition  // Add current position for Google Maps links
-      });
-      
-      await new Promise(resolve => setTimeout(resolve, 100));  // Reduced delay for faster execution
     }
     
-    const visitedPanos = unvisitedLinks.length === 0 ? 
-      this.coverage.getVisitedList() : [];
+    // If not stuck or no pathfinding solution, use normal exploration
+    if (!selectedLink) {
+      this.mode = 'exploration';
+      
+      const unvisitedLinks = links.filter(link => 
+        !this.coverage.hasVisited(link.pano)
+      );
+      
+      const targetLinks = unvisitedLinks.length > 0 ? unvisitedLinks : links;
+      
+      // Use the screenshots array declared at higher scope
+      screenshots = [];
+      
+      // Capture screenshots with the current step number
+      for (const link of targetLinks) {
+        const heading = parseFloat(link.heading);
+        await this.streetViewHeadless.setHeading(heading);
+        
+        const screenshotData = await this.screenshot.capture(
+          currentStep,  // Use the captured step number
+          heading,
+          await this.streetViewHeadless.getScreenshot()
+        );
+        
+        console.log(`Captured screenshot: step=${currentStep}, filename=${screenshotData.filename}`);
+        
+        // Validate that the filename matches the current step
+        if (!screenshotData.filename.startsWith(`${currentStep}-`)) {
+          console.error(`Screenshot filename mismatch! Expected step ${currentStep}, got ${screenshotData.filename}`);
+        }
+        
+        screenshots.push({
+          direction: heading,
+          filename: screenshotData.filename,
+          panoId: link.pano,
+          description: link.description || '',
+          visited: this.coverage.hasVisited(link.pano),
+          base64: screenshotData.base64,
+          position: this.currentPosition  // Add current position for Google Maps links
+        });
+        
+        await new Promise(resolve => setTimeout(resolve, 100));  // Reduced delay for faster execution
+      }
+      
+      const visitedPanos = unvisitedLinks.length === 0 ? 
+        this.coverage.getVisitedList() : [];
+      
+      decision = await this.ai.decideNextMove({
+        currentPosition: this.currentPosition,
+        screenshots,
+        links: targetLinks,  // Only pass links we have screenshots for
+        visitedPanos,
+        stats: this.coverage.getStats(),
+        stepNumber: currentStep,
+        mode: this.mode
+      });
+      
+      selectedLink = links.find(l => l.pano === decision.selectedPanoId);
+    }
     
-    const decision = await this.ai.decideNextMove({
-      currentPosition: this.currentPosition,
-      screenshots,
-      links: targetLinks,  // Only pass links we have screenshots for
-      visitedPanos,
-      stats: this.coverage.getStats(),
-      stepNumber: currentStep
-    });
-    
-    const selectedLink = links.find(l => l.pano === decision.selectedPanoId);
     if (!selectedLink) {
       throw new Error('Invalid panorama selection');
     }
@@ -158,25 +210,30 @@ export class ExplorationAgent {
     };
     this.currentPanoId = newPanoData.pano_id;  // Use the actual pano ID from the panorama
     
-    this.coverage.addVisited(this.currentPanoId, this.currentPosition);
+    // Update coverage with new panorama's links for frontier tracking
+    const newLinks = newPanoData.links || [];
+    this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
     
-    // Validate all screenshots before sending
-    const invalidScreenshots = screenshots.filter(s => !s.filename.startsWith(`${currentStep}-`));
-    if (invalidScreenshots.length > 0) {
-      console.error(`WARNING: Found ${invalidScreenshots.length} screenshots with wrong step number!`);
-      invalidScreenshots.forEach(s => console.error(`  Invalid: ${s.filename}`));
+    // Only validate and send screenshots if we took them (exploration mode)
+    let thumbnailUrls = [];
+    if (this.mode === 'exploration') {
+      const invalidScreenshots = screenshots.filter(s => !s.filename.startsWith(`${currentStep}-`));
+      if (invalidScreenshots.length > 0) {
+        console.error(`WARNING: Found ${invalidScreenshots.length} screenshots with wrong step number!`);
+        invalidScreenshots.forEach(s => console.error(`  Invalid: ${s.filename}`));
+      }
+      
+      thumbnailUrls = screenshots.map(s => {
+        const url = `/runs/shots/${this.runId}/${currentStep}/${s.filename}`;
+        //console.log(`  Mapping: ${s.filename} -> ${url}`);
+        return {
+          direction: s.direction,
+          visited: s.visited,
+          thumbnail: url,
+          position: s.position  // Include position for Google Maps links
+        };
+      });
     }
-    
-    const thumbnailUrls = screenshots.map(s => {
-      const url = `/runs/shots/${this.runId}/${currentStep}/${s.filename}`;
-      //console.log(`  Mapping: ${s.filename} -> ${url}`);
-      return {
-        direction: s.direction,
-        visited: s.visited,
-        thumbnail: url,
-        position: s.position  // Include position for Google Maps links
-      };
-    });
     
     console.log(`Sending ${thumbnailUrls.length} thumbnails for step ${currentStep}`);
     
@@ -190,7 +247,9 @@ export class ExplorationAgent {
       panoId: selectedLink.pano,
       screenshots: thumbnailUrls,
       newPosition: this.currentPosition,
-      stats: this.coverage.getStats()
+      stats: this.coverage.getStats(),
+      mode: this.mode,
+      frontierSize: this.coverage.getFrontierSize()
     });
     
     this.logger.log('exploration-step', {

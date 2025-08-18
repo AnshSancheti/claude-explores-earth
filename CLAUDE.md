@@ -48,6 +48,15 @@ The system uses `getCurrentPanorama()` to get the exact panorama ID being displa
 - Screenshots are only taken for `targetLinks`
 - AI only receives `targetLinks` to ensure it has visual data for all options
 
+#### Frontier-Based Exploration
+The system prevents getting stuck in loops through intelligent pathfinding:
+- **Frontier Tracking**: Maintains a set of discovered but unvisited panoramas
+- **Loop Detection**: Identifies when revisiting same locations repeatedly
+- **Mode Switching**: Automatically switches between:
+  - 🔍 **Exploration Mode**: AI chooses based on visual interest
+  - 🧭 **Pathfinding Mode**: BFS navigation to nearest frontier when stuck
+- **Escape Strategy**: Uses heuristics to escape fully-explored areas
+
 #### Communication Flow
 ```
 Browser ←→ WebSocket (Socket.io) ←→ Server
@@ -88,7 +97,8 @@ START_PANO_ID=<optional_pano_id>  # Takes priority over lat/lng if set
 - `server/agents/explorationAgent.js` - Main exploration logic, coordinates all services
 - `server/services/streetViewHeadless.js` - Puppeteer-based Street View for screenshots
 - `server/services/openai.js` - GPT-5-nano vision integration (index-based selection)
-- `server/services/coverage.js` - Tracks visited panoramas and path history
+- `server/services/coverage.js` - Tracks visited panoramas, frontier, and path history
+- `server/services/pathfinder.js` - BFS pathfinding to escape loops and reach frontiers
 
 ### Frontend Components
 - `public/js/app.js` - Main application controller
