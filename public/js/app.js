@@ -9,18 +9,6 @@ class ExplorationApp {
   }
 
   initialize() {
-    const checkGoogleMaps = setInterval(() => {
-      if (window.google && window.google.maps) {
-        clearInterval(checkGoogleMaps);
-        this.streetViewManager.initialize();
-      }
-    }, 100);
-    
-    // Delay map initialization to ensure DOM is ready
-    setTimeout(() => {
-      this.mapManager.initialize();
-    }, 500);
-    
     this.connectSocket();
     this.setupEventListeners();
   }
@@ -40,19 +28,34 @@ class ExplorationApp {
       this.uiManager.setExplorationState(false);
     });
 
-    this.socket.on('exploration-started', (data) => {
-      console.log('Exploration started', data);
+    // Receive initial configuration when connecting
+    this.socket.on('initial-config', (data) => {
+      console.log('Initial config received', data);
       this.startLocation = data.startLocation;
       
-      // Store pano ID globally for street view
       if (data.startPanoId) {
         window.START_PANO_ID = data.startPanoId;
       }
       
+      // Initialize maps with the start position
       if (this.startLocation) {
+        // Set position first, then initialize
         this.mapManager.setStartPosition(this.startLocation);
-        this.streetViewManager.setStartPosition(this.startLocation);
+        this.mapManager.initialize();
+        
+        // Initialize Street View when Google Maps is ready
+        const checkGoogleMaps = setInterval(() => {
+          if (window.google && window.google.maps) {
+            clearInterval(checkGoogleMaps);
+            this.streetViewManager.setStartPosition(this.startLocation);
+            this.streetViewManager.initialize();
+          }
+        }, 100);
       }
+    });
+
+    this.socket.on('exploration-started', (data) => {
+      console.log('Exploration started', data);
       
       this.isExploring = true;
       this.uiManager.setExplorationState(true);
@@ -62,14 +65,20 @@ class ExplorationApp {
 
     this.socket.on('position-update', (data) => {
       console.log('Position update', data);
-      this.mapManager.updatePosition(data.position);
+      if (this.mapManager.map) {
+        this.mapManager.updatePosition(data.position);
+      }
       this.uiManager.updateStats(data.stats);
     });
 
     this.socket.on('move-decision', (data) => {
       console.log('Move decision', data);
-      this.mapManager.updatePosition(data.newPosition);
-      this.streetViewManager.updatePosition(data.panoId, data.decision.direction);
+      if (this.mapManager.map) {
+        this.mapManager.updatePosition(data.newPosition);
+      }
+      if (this.streetViewManager.panorama) {
+        this.streetViewManager.updatePosition(data.panoId, data.decision.direction);
+      }
       this.uiManager.updateStats(data.stats);
       this.uiManager.updateStep(data.stepCount);
       this.uiManager.addDecisionEntry(data);
@@ -86,8 +95,12 @@ class ExplorationApp {
       console.log('Exploration reset');
       this.isExploring = false;
       this.uiManager.setExplorationState(false);
-      this.mapManager.reset();
-      this.streetViewManager.reset();
+      if (this.mapManager.map) {
+        this.mapManager.reset();
+      }
+      if (this.streetViewManager.panorama) {
+        this.streetViewManager.reset();
+      }
       this.uiManager.clearDecisionLog();
       this.uiManager.updateStats({ locationsVisited: 0, distanceTraveled: 0 });
       this.uiManager.updateStep(0);

@@ -17,8 +17,8 @@ export class ExplorationAgent {
     this.screenshot = new ScreenshotService(this.runId);
     
     this.currentPosition = {
-      lat: parseFloat(process.env.START_LAT) || 40.748817,
-      lng: parseFloat(process.env.START_LNG) || -73.985428
+      lat: parseFloat(process.env.START_LAT),
+      lng: parseFloat(process.env.START_LNG)
     };
     this.currentPanoId = process.env.START_PANO_ID || null;
     this.startPanoId = process.env.START_PANO_ID || null;
@@ -158,8 +158,8 @@ export class ExplorationAgent {
 
   async reset() {
     this.currentPosition = {
-      lat: parseFloat(process.env.START_LAT) || 40.748817,
-      lng: parseFloat(process.env.START_LNG) || -73.985428
+      lat: parseFloat(process.env.START_LAT),
+      lng: parseFloat(process.env.START_LNG)
     };
     this.currentPanoId = this.startPanoId;
     this.currentHeading = 0;

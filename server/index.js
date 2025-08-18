@@ -28,11 +28,32 @@ app.use(express.json());
 app.use(express.static(join(ROOT_DIR, 'public')));
 app.use('/runs', express.static(join(ROOT_DIR, 'runs')));
 
+// Serve Google Maps API loader with API key from environment
+app.get('/api/maps-loader', (req, res) => {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) {
+    return res.status(500).send('Google Maps API key not configured');
+  }
+  
+  res.type('application/javascript');
+  res.send(`
+    window.initStreetView = function() {
+      window.streetViewReady = true;
+    };
+    
+    const script = document.createElement('script');
+    script.src = 'https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initStreetView';
+    script.async = true;
+    script.defer = true;
+    document.head.appendChild(script);
+  `);
+});
+
 const PORT = process.env.PORT || 5173;
 const STEP_INTERVAL = parseInt(process.env.STEP_INTERVAL_MS) || 5000;
 const START_LOCATION = {
-  lat: parseFloat(process.env.START_LAT) || 40.748817,
-  lng: parseFloat(process.env.START_LNG) || -73.985428
+  lat: parseFloat(process.env.START_LAT),
+  lng: parseFloat(process.env.START_LNG)
 };
 const START_PANO_ID = process.env.START_PANO_ID || null;
 
@@ -50,6 +71,12 @@ io.on('connection', (socket) => {
   };
   
   sessions.set(socket.id, session);
+  
+  // Send initial configuration to client
+  socket.emit('initial-config', {
+    startLocation: START_LOCATION,
+    startPanoId: START_PANO_ID
+  });
 
   socket.on('start-exploration', async () => {
     const session = sessions.get(socket.id);

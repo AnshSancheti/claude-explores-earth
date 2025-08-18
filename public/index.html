@@ -50,13 +50,10 @@
 
   <script src='https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.js'></script>
   <script src="/socket.io/socket.io.js"></script>
-  <script>
-    window.GOOGLE_MAPS_API_KEY = '${process.env.GOOGLE_MAPS_API_KEY || 'AIzaSyClOQReUbDPjHCGg-sd2TNkbbBs48V4cYk'}';
-  </script>
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyClOQReUbDPjHCGg-sd2TNkbbBs48V4cYk&callback=initStreetView" async defer></script>
   <script src="js/streetview.js"></script>
   <script src="js/map.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/app.js"></script>
+  <script src="/api/maps-loader"></script>
 </body>
 </html>

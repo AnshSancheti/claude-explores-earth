@@ -61,8 +61,8 @@ export class StreetViewHeadless {
               options.pano = startPanoId;
             } else {
               options.position = { 
-                lat: ${parseFloat(process.env.START_LAT) || 40.748817}, 
-                lng: ${parseFloat(process.env.START_LNG) || -73.985428}
+                lat: ${parseFloat(process.env.START_LAT)}, 
+                lng: ${parseFloat(process.env.START_LNG)}
               };
             }
             

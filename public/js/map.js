@@ -5,17 +5,26 @@ class MapManager {
     this.startMarker = null;
     this.pathLine = null;
     this.pathCoordinates = [];
-    this.startPosition = { lat: 40.748817, lng: -73.985428 };
+    // Start position will be set from server via setStartPosition()
+    this.startPosition = null;
   }
 
   initialize() {
     console.log('Initializing minimap...');
     
+    // startPosition should already be set via setStartPosition
+    if (!this.startPosition) {
+      console.error('Cannot initialize map without start position');
+      return;
+    }
+    
+    const center = [this.startPosition.lng, this.startPosition.lat];
+
     try {
       this.map = new maplibregl.Map({
         container: 'minimap',
         style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-        center: [this.startPosition.lng, this.startPosition.lat],
+        center: center,
         zoom: 14,
         attributionControl: false
       });
@@ -38,21 +47,29 @@ class MapManager {
   setStartPosition(position) {
     this.startPosition = position;
     
-    if (this.startMarker) {
-      this.startMarker.setLngLat([position.lng, position.lat]);
+    // Only update map elements if map is initialized
+    if (this.map) {
+      if (this.startMarker) {
+        this.startMarker.setLngLat([position.lng, position.lat]);
+      }
+      
+      if (this.currentMarker) {
+        this.currentMarker.setLngLat([position.lng, position.lat]);
+      }
+      
+      this.map.flyTo({
+        center: [position.lng, position.lat],
+        zoom: 14
+      });
     }
-    
-    if (this.currentMarker) {
-      this.currentMarker.setLngLat([position.lng, position.lat]);
-    }
-    
-    this.map.flyTo({
-      center: [position.lng, position.lat],
-      zoom: 14
-    });
   }
 
   addStartMarker() {
+    if (!this.startPosition) {
+      console.warn('Cannot add start marker without start position');
+      return;
+    }
+    
     const el = document.createElement('div');
     el.className = 'marker-start';
     el.style.width = '30px';
@@ -73,6 +90,12 @@ class MapManager {
     el.style.backgroundImage = 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'20\' height=\'20\' viewBox=\'0 0 20 20\'%3E%3Ccircle cx=\'10\' cy=\'10\' r=\'8\' fill=\'%23f44336\'/%3E%3Ccircle cx=\'10\' cy=\'10\' r=\'4\' fill=\'white\'/%3E%3C/svg%3E")';
     el.style.backgroundSize = 'cover';
 
+    // Initialize at start position
+    if (!this.startPosition) {
+      console.warn('Cannot add current marker without start position');
+      return;
+    }
+    
     this.currentMarker = new maplibregl.Marker({ element: el })
       .setLngLat([this.startPosition.lng, this.startPosition.lat])
       .addTo(this.map);

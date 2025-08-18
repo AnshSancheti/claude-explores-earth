@@ -10,7 +10,8 @@ class StreetViewManager {
   constructor() {
     this.panorama = null;
     this.currentPanoId = null;
-    this.startPosition = { lat: 40.748817, lng: -73.985428 };
+    // Start position will be set from server via setStartPosition()
+    this.startPosition = null;
   }
 
   setStartPosition(position) {
@@ -21,6 +22,12 @@ class StreetViewManager {
   }
 
   initialize() {
+    // Don't initialize until we have a start position
+    if (!this.startPosition && !window.START_PANO_ID) {
+      console.warn('Street View cannot initialize without start position');
+      return;
+    }
+    
     // Check if we have a pano ID from the server
     const startPanoId = window.START_PANO_ID || null;
     const options = {
@@ -40,7 +47,7 @@ class StreetViewManager {
     
     if (startPanoId) {
       options.pano = startPanoId;
-    } else {
+    } else if (this.startPosition) {
       options.position = this.startPosition;
     }
     
