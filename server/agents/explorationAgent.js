@@ -10,6 +10,7 @@ export class ExplorationAgent {
     this.logger = logger;
     this.runId = uuidv4();
     this.stepCount = 0;
+    this.isStepExecuting = false;  // Internal lock for step execution
     
     this.streetViewHeadless = new StreetViewHeadless();
     this.ai = new OpenAIService();
@@ -59,8 +60,19 @@ export class ExplorationAgent {
   }
 
   async exploreStep() {
-    this.stepCount++;
-    console.log(`\n=== Starting step ${this.stepCount} ===`);
+    // Check if a step is already executing
+    if (this.isStepExecuting) {
+      console.warn('Step already executing, skipping concurrent execution');
+      return;
+    }
+    
+    try {
+      this.isStepExecuting = true;
+      
+      // Store the current step number at the start
+      const currentStep = this.stepCount + 1;
+      this.stepCount = currentStep;
+      console.log(`\n=== Starting step ${currentStep} ===`);
     
     // Get data for the current panorama directly (no coordinate conversion)
     const panoData = await this.streetViewHeadless.getCurrentPanorama();
@@ -79,18 +91,26 @@ export class ExplorationAgent {
     
     const targetLinks = unvisitedLinks.length > 0 ? unvisitedLinks : links;
     
+    // Create a fresh screenshots array for this step
     const screenshots = [];
+    
+    // Capture screenshots with the current step number
     for (const link of targetLinks) {
       const heading = parseFloat(link.heading);
       await this.streetViewHeadless.setHeading(heading);
       
       const screenshotData = await this.screenshot.capture(
-        this.stepCount,
+        currentStep,  // Use the captured step number
         heading,
         await this.streetViewHeadless.getScreenshot()
       );
       
-      console.log(`Captured screenshot: step=${this.stepCount}, filename=${screenshotData.filename}`);
+      console.log(`Captured screenshot: step=${currentStep}, filename=${screenshotData.filename}`);
+      
+      // Validate that the filename matches the current step
+      if (!screenshotData.filename.startsWith(`${currentStep}-`)) {
+        console.error(`Screenshot filename mismatch! Expected step ${currentStep}, got ${screenshotData.filename}`);
+      }
       
       screenshots.push({
         direction: heading,
@@ -135,8 +155,15 @@ export class ExplorationAgent {
     
     this.coverage.addVisited(this.currentPanoId, this.currentPosition);
     
+    // Validate all screenshots before sending
+    const invalidScreenshots = screenshots.filter(s => !s.filename.startsWith(`${currentStep}-`));
+    if (invalidScreenshots.length > 0) {
+      console.error(`WARNING: Found ${invalidScreenshots.length} screenshots with wrong step number!`);
+      invalidScreenshots.forEach(s => console.error(`  Invalid: ${s.filename}`));
+    }
+    
     const thumbnailUrls = screenshots.map(s => {
-      const url = `/runs/shots/${this.runId}/${this.stepCount}/${s.filename}`;
+      const url = `/runs/shots/${this.runId}/${currentStep}/${s.filename}`;
       console.log(`  Mapping: ${s.filename} -> ${url}`);
       return {
         direction: s.direction,
@@ -145,10 +172,10 @@ export class ExplorationAgent {
       };
     });
     
-    console.log(`Sending ${thumbnailUrls.length} thumbnails for step ${this.stepCount}`);
+    console.log(`Sending ${thumbnailUrls.length} thumbnails for step ${currentStep}`);
     
     this.socket.emit('move-decision', {
-      stepCount: this.stepCount,
+      stepCount: currentStep,
       decision: {
         reasoning: decision.reasoning,
         selectedPanoId: decision.selectedPanoId,
@@ -161,13 +188,19 @@ export class ExplorationAgent {
     });
     
     this.logger.log('exploration-step', {
-      step: this.stepCount,
+      step: currentStep,
       from: this.currentPanoId,
       to: selectedLink.pano,
       decision: decision.reasoning,
       position: this.currentPosition,
       stats: this.coverage.getStats()
     });
+    
+    } finally {
+      // Always clear the lock when done
+      this.isStepExecuting = false;
+      console.log(`=== Completed step ${this.stepCount} ===`);
+    }
   }
 
   async reset() {

@@ -67,6 +67,7 @@ io.on('connection', (socket) => {
     agent: null,
     interval: null,
     isExploring: false,
+    isStepInProgress: false,  // Add flag for single step synchronization
     logger: logger
   };
   
@@ -132,8 +133,18 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'Cannot take step while exploration is running' });
       return;
     }
+    
+    // Check if a step is already in progress
+    if (session.isStepInProgress) {
+      console.log('Step already in progress, ignoring request');
+      socket.emit('error', { message: 'A step is already in progress' });
+      return;
+    }
 
     try {
+      // Set the flag to prevent concurrent steps
+      session.isStepInProgress = true;
+      
       if (!session.agent) {
         session.agent = new ExplorationAgent(socket, session.logger);
         await session.agent.initialize();
@@ -145,11 +156,14 @@ io.on('connection', (socket) => {
       }
 
       await session.agent.exploreStep();
-      socket.emit('exploration-stopped');
+      socket.emit('step-complete');
       
     } catch (error) {
       console.error('Single step error:', error);
       socket.emit('error', { message: error.message });
+    } finally {
+      // Always clear the flag when done
+      session.isStepInProgress = false;
     }
   });
 

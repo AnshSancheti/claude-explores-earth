@@ -64,6 +64,8 @@ Each WebSocket connection maintains its own session with:
 - Independent exploration agent
 - Separate headless browser instance
 - Isolated coverage tracking
+- Step synchronization to prevent concurrent execution
+- State isolation between manual steps
 
 ## Environment Configuration
 
@@ -85,7 +87,7 @@ START_PANO_ID=<optional_pano_id>  # Takes priority over lat/lng if set
 ### Server Components
 - `server/agents/explorationAgent.js` - Main exploration logic, coordinates all services
 - `server/services/streetViewHeadless.js` - Puppeteer-based Street View for screenshots
-- `server/services/openai.js` - GPT-4 vision integration for decision making
+- `server/services/openai.js` - GPT-5-nano vision integration (index-based selection)
 - `server/services/coverage.js` - Tracks visited panoramas and path history
 
 ### Frontend Components
@@ -108,8 +110,15 @@ The system ensures AI only sees panoramas it has screenshots for by:
 2. Passing only `targetLinks` to the AI service
 3. Validating AI selection against available options
 
+### Step Execution Synchronization
+To prevent race conditions and ensure data consistency:
+1. Each step captures its step number at the start
+2. Server-side locks prevent concurrent step execution
+3. Agent-level locks provide additional safety
+4. Screenshot filenames are validated before sending to client
+
 ### Manual Step Mode
-The "Take Step" button reuses the same exploration logic but triggers single steps instead of continuous exploration. The agent persists between manual steps.
+The "Take Step" button reuses the same exploration logic but triggers single steps instead of continuous exploration. The agent persists between manual steps with proper synchronization to prevent race conditions.
 
 ### Start Location Flexibility
 The system prioritizes `START_PANO_ID` over lat/lng coordinates when both are provided. This ensures precise starting positions in Street View while still showing correct minimap location.
