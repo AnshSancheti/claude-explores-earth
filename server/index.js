@@ -98,16 +98,32 @@ io.on('connection', (socket) => {
 
       await session.agent.initialize();
 
-      session.interval = setInterval(async () => {
+      // Use recursive setTimeout for safer sequential execution
+      const runExplorationStep = async () => {
+        if (!session.isExploring || !session.agent) {
+          return;
+        }
+        
         try {
-          if (session.agent) {
-            await session.agent.exploreStep();
+          await session.agent.exploreStep();
+          
+          // Schedule next step only after current step completes
+          if (session.isExploring) {
+            session.interval = setTimeout(runExplorationStep, STEP_INTERVAL);
           }
         } catch (error) {
           console.error('Exploration step error:', error);
           socket.emit('error', { message: error.message });
+          
+          // Continue exploration even after errors
+          if (session.isExploring) {
+            session.interval = setTimeout(runExplorationStep, STEP_INTERVAL);
+          }
         }
-      }, STEP_INTERVAL);
+      };
+      
+      // Start the first step
+      session.interval = setTimeout(runExplorationStep, STEP_INTERVAL);
 
     } catch (error) {
       console.error('Failed to start exploration:', error);
@@ -119,7 +135,7 @@ io.on('connection', (socket) => {
   socket.on('stop-exploration', () => {
     const session = sessions.get(socket.id);
     if (session.interval) {
-      clearInterval(session.interval);
+      clearTimeout(session.interval);  // Changed to clearTimeout
       session.interval = null;
     }
     session.isExploring = false;
@@ -170,7 +186,7 @@ io.on('connection', (socket) => {
   socket.on('reset-exploration', async () => {
     const session = sessions.get(socket.id);
     if (session.interval) {
-      clearInterval(session.interval);
+      clearTimeout(session.interval);  // Changed to clearTimeout
       session.interval = null;
     }
     
@@ -188,7 +204,7 @@ io.on('connection', (socket) => {
     
     if (session) {
       if (session.interval) {
-        clearInterval(session.interval);
+        clearTimeout(session.interval);  // Changed to clearTimeout
       }
       if (session.agent && session.agent.streetView) {
         await session.agent.streetView.close();

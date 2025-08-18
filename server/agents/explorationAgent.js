@@ -121,7 +121,7 @@ export class ExplorationAgent {
         base64: screenshotData.base64
       });
       
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => setTimeout(resolve, 100));  // Reduced delay for faster execution
     }
     
     const visitedPanos = unvisitedLinks.length === 0 ? 
