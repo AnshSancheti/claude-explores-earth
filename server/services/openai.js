@@ -7,7 +7,7 @@ export class OpenAIService {
     });
   }
 
-  async decideNextMove({ currentPosition, screenshots, links, visitedPanos, stats }) {
+  async decideNextMove({ currentPosition, screenshots, links, visitedPanos, stats, stepNumber }) {
     const imageContents = screenshots.map((screenshot, index) => ({
       type: "image_url",
       image_url: {
@@ -48,15 +48,44 @@ Respond with a JSON object containing:
           }
         ],
         response_format: { type: "json_object" },
-        max_completion_tokens: 500
+        max_completion_tokens: 2000
       });
 
-      const decision = JSON.parse(response.choices[0].message.content);
+      // Log token usage
+      if (response.usage) {
+        const step = stepNumber ? `Step ${stepNumber} - ` : '';
+        console.log(`${step}Token usage - Input: ${response.usage.prompt_tokens}, Output: ${response.usage.completion_tokens}, Total: ${response.usage.total_tokens}`);
+      }
+
+      const rawContent = response.choices[0].message.content;
+      let decision;
+      
+      try {
+        decision = JSON.parse(rawContent);
+      } catch (parseError) {
+        console.error('Failed to parse AI response as JSON:');
+        console.error('Raw response:', rawContent);
+        console.error('Parse error:', parseError.message);
+        
+        // Try to extract index from the response if possible
+        const indexMatch = rawContent.match(/"selectedIndex"\s*:\s*(\d+)/);
+        if (indexMatch) {
+          const extractedIndex = parseInt(indexMatch[1]);
+          console.log(`Extracted index ${extractedIndex} from malformed JSON`);
+          decision = {
+            selectedIndex: extractedIndex,
+            reasoning: "Extracted from malformed response"
+          };
+        } else {
+          throw new Error(`Invalid JSON response from AI: ${rawContent.substring(0, 200)}`);
+        }
+      }
       
       // Validate index
       const selectedIndex = parseInt(decision.selectedIndex);
       if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= links.length) {
         console.warn('AI selected invalid index:', decision.selectedIndex, 'Valid range: 0-' + (links.length - 1));
+        console.warn('Full AI response:', rawContent);
         decision.selectedIndex = 0;
         decision.reasoning = "Invalid selection, defaulting to first available direction.";
       }
@@ -70,7 +99,14 @@ Respond with a JSON object containing:
         reasoning: decision.reasoning
       };
     } catch (error) {
-      console.error('Error in OpenAI decision:', error);
+      console.error('Error in OpenAI decision:', error.message);
+      
+      // Log additional context for debugging
+      if (error.response) {
+        console.error('API Response status:', error.response.status);
+        console.error('API Response data:', JSON.stringify(error.response.data).substring(0, 500));
+      }
+      
       // Ultimate fallback
       const unvisited = links.filter(l => !visitedPanos.includes(l.pano));
       const target = unvisited.length > 0 ? unvisited[0] : links[0];

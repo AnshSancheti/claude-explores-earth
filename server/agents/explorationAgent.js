@@ -132,7 +132,8 @@ export class ExplorationAgent {
       screenshots,
       links: targetLinks,  // Only pass links we have screenshots for
       visitedPanos,
-      stats: this.coverage.getStats()
+      stats: this.coverage.getStats(),
+      stepNumber: currentStep
     });
     
     const selectedLink = links.find(l => l.pano === decision.selectedPanoId);
@@ -164,7 +165,7 @@ export class ExplorationAgent {
     
     const thumbnailUrls = screenshots.map(s => {
       const url = `/runs/shots/${this.runId}/${currentStep}/${s.filename}`;
-      console.log(`  Mapping: ${s.filename} -> ${url}`);
+      //console.log(`  Mapping: ${s.filename} -> ${url}`);
       return {
         direction: s.direction,
         visited: s.visited,
