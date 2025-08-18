@@ -85,6 +85,9 @@ export class ExplorationAgent {
       lng: panoData.location.lng
     };
     
+    // Log current location details
+    console.log(`Current location - PanoID: ${this.currentPanoId}, Lat: ${this.currentPosition.lat.toFixed(6)}, Lng: ${this.currentPosition.lng.toFixed(6)}`);
+    
     const unvisitedLinks = links.filter(link => 
       !this.coverage.hasVisited(link.pano)
     );
@@ -118,7 +121,8 @@ export class ExplorationAgent {
         panoId: link.pano,
         description: link.description || '',
         visited: this.coverage.hasVisited(link.pano),
-        base64: screenshotData.base64
+        base64: screenshotData.base64,
+        position: this.currentPosition  // Add current position for Google Maps links
       });
       
       await new Promise(resolve => setTimeout(resolve, 100));  // Reduced delay for faster execution
@@ -169,7 +173,8 @@ export class ExplorationAgent {
       return {
         direction: s.direction,
         visited: s.visited,
-        thumbnail: url
+        thumbnail: url,
+        position: s.position  // Include position for Google Maps links
       };
     });
     

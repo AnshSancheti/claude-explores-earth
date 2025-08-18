@@ -35,14 +35,22 @@ class UIManager {
       </div>
       <div class="decision-reasoning">${data.decision.reasoning}</div>
       <div class="decision-screenshots">
-        ${data.screenshots.map(s => `
-          <div class="screenshot-thumb">
-            <img src="${s.thumbnail}" alt="Direction ${Math.round(s.direction)}°" onerror="console.error('Failed to load:', this.src)">
-            <div class="screenshot-label ${s.visited ? 'visited-badge' : ''}">
-              ${Math.round(s.direction)}° ${s.visited ? '(V)' : ''}
+        ${data.screenshots.map(s => {
+          // Generate Google Maps Street View URL
+          const lat = s.position ? s.position.lat : 0;
+          const lng = s.position ? s.position.lng : 0;
+          const heading = Math.round(s.direction);
+          const mapsUrl = `https://www.google.com/maps/@${lat},${lng},3a,75y,${heading}h,90t/data=!3m6!1e1!3m4!1s!2e0!7i16384!8i8192`;
+          
+          return `
+            <div class="screenshot-thumb" style="cursor: pointer;" onclick="window.open('${mapsUrl}', '_blank')" title="Click to view in Google Maps">
+              <img src="${s.thumbnail}" alt="Direction ${heading}°" onerror="console.error('Failed to load:', this.src)" style="pointer-events: none;">
+              <div class="screenshot-label ${s.visited ? 'visited-badge' : ''}" style="pointer-events: none;">
+                ${heading}° ${s.visited ? '(V)' : ''}
+              </div>
             </div>
-          </div>
-        `).join('')}
+          `;
+        }).join('')}
       </div>
     `;
     
