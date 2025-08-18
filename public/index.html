@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Explores NYC 🗽</title>
+  <link href='https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.css' rel='stylesheet' />
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🗽 AI Explores NYC</h1>
+      <div class="stats-bar">
+        <div class="stat-item">
+          <span class="stat-label">Locations</span>
+          <span id="locationsVisited" class="stat-value">0</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Distance</span>
+          <span id="distanceTraveled" class="stat-value">0 m</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">Step</span>
+          <span id="currentStep" class="stat-value">0</span>
+        </div>
+      </div>
+      <div class="controls">
+        <button id="startBtn" class="btn btn-primary">Start Exploration</button>
+        <button id="stepBtn" class="btn btn-info">Take Step</button>
+        <button id="stopBtn" class="btn btn-secondary" disabled>Stop</button>
+        <button id="resetBtn" class="btn btn-warning">Reset</button>
+      </div>
+    </header>
+
+    <div class="main-content">
+      <div class="street-view-container">
+        <div id="streetView"></div>
+        <div class="minimap-container">
+          <div id="minimap"></div>
+        </div>
+      </div>
+
+      <div class="sidebar">
+        <h3>🤖 AI Decision Log</h3>
+        <div id="decisionLog" class="decision-log"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src='https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.js'></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    window.GOOGLE_MAPS_API_KEY = '${process.env.GOOGLE_MAPS_API_KEY || 'AIzaSyClOQReUbDPjHCGg-sd2TNkbbBs48V4cYk'}';
+  </script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyClOQReUbDPjHCGg-sd2TNkbbBs48V4cYk&callback=initStreetView" async defer></script>
+  <script src="js/streetview.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
