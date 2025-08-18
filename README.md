@@ -1,89 +1,223 @@
 # AI Explores NYC 🗽
 
-An autonomous AI agent that explores Manhattan using Google Street View, attempting to maximize coverage of NYC. The agent analyzes Street View imagery in multiple directions, tracks its exploration progress with a real-time coverage map, and makes intelligent navigation decisions every few seconds.
+An autonomous AI agent that explores Manhattan using Google Street View, attempting to maximize coverage of NYC. The agent analyzes Street View imagery in multiple directions, tracks its exploration progress with a real-time coverage map, and makes intelligent navigation decisions.
 
-## 🎯 Key Features
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-green.svg)
 
-### Autonomous Exploration
-- **AI-Powered Navigation**: Uses GPT-5 to analyze Street View images and decide where to go next
-- **Multi-Directional Vision**: Captures screenshots in multiple directions without moving, allowing the AI to "look around" before deciding
+## 🎥 Demo
+
+The AI agent autonomously navigates NYC streets, capturing multi-directional views and making exploration decisions based on visual analysis. Watch as it builds a map of its journey in real-time!
+
+## ✨ Features
+
+### 🤖 Autonomous Exploration
+- **AI-Powered Navigation**: Uses GPT-4 Vision to analyze Street View images and decide where to go next
+- **Multi-Directional Vision**: Captures screenshots in multiple directions before moving
 - **Smart Path Planning**: Prioritizes unvisited locations to maximize exploration coverage
-- **Backtracking Capability**: Can return to previous locations to reach unexplored areas
+- **Manual Step Mode**: Take single exploration steps with the "Take Step" button
 
-### Real-Time Visualization
-- **Interactive MapLibre Map**: Live map showing:
-  - Agent's exploration path (red line)
-  - Starting position marker (green) at Empire State Building
-  - Current position marker (red) that follows the agent
-- **Coverage Statistics**: 
-  - Number of unique locations visited
-  - Total distance traveled
-- **Decision Log**: Real-time display of AI's reasoning for each move with thumbnails
+### 📊 Real-Time Visualization
+- **Live Street View**: Watch exactly what the AI sees as it explores
+- **Interactive Minimap**: Track the exploration path with markers and route visualization
+- **Coverage Statistics**: Monitor unique locations visited and total distance traveled
+- **Decision Log**: See the AI's reasoning for each move with screenshot thumbnails
 
-### Technical Features
+### 🛠️ Technical Features
+- **Dual Street View System**: Synchronized frontend display and headless backend capture
 - **Screenshot Archival**: All captured images saved with timestamps
 - **Session Logging**: Detailed logs for replay and analysis
+- **Multi-Session Support**: Each browser connection gets its own exploration session
 
-## 🎮 How It Works
+## 🚀 Quick Start
 
-1. **Initialization**: Agent starts at Empire State Building
-2. **Multi-Directional Observation**: 
-   - Rotates camera to face each available path
-   - Captures screenshots of unvisited directions (prioritized)
-   - If all paths are visited, captures all directions
-3. **AI Decision**: Passes in screenshots to AI agent, which analyzes all images and coverage data simultaneously to choose next move
-4. **Navigation**: Moves to selected location via Street View API
-5. **Coverage Tracking**: Updates real-time map, statistics, and grid cells
-6. **Repeat**: Continues exploring until session ends or user resets
+### Prerequisites
+- Node.js 18+ 
+- npm or yarn
+- Google Maps API key with Street View access
+- OpenAI API key with GPT-4 Vision access
 
-## 🧠 AI Decision Making
+### Installation
 
-The agent uses a sophisticated prompt that considers:
-- **Visual Analysis**: Street scenes from multiple directions
-- **Landmark Detection**: Identifies notable buildings and signs
-- **Visit History**: Track visited panoramas locally to avoid loops, only sending visited panoramas to AI agent if all panos have been visited.
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/ai-explores-nyc.git
+cd ai-explores-nyc
+```
 
-### Multi-Directional Screenshot System
-The agent can "look around" before moving:
-1. **Rotation without Movement**: Camera smoothly pivots to face each available direction while staying at the same location
-2. **Smart Capture Priority**: 
-   - If some paths are unvisited: captures only those
-   - If all paths are visited: captures all for context
-3. **Simultaneous Analysis**: AI sees all viable directions at once for informed decisions
-4. **Visual Memory**: Helps identify landmarks and remember areas
+2. Install dependencies:
+```bash
+npm install
+```
 
-## 📊 Coverage Tracking
+3. Create a `.env` file:
+```env
+# Required API Keys
+GOOGLE_MAPS_API_KEY=your_google_maps_key
+OPENAI_API_KEY=your_openai_key
 
-The system tracks exploration using:
-- **Visited Panoramas**: Set of unique Street View panorama IDs
-- **Path History**: Ordered list of coordinates for route display
-- **Distance Metrics**: Total meters traveled
+# Configuration
+STEP_INTERVAL_MS=5000
 
-## 📝 Logging System
+# Starting Location (default: Empire State Building)
+START_LAT=40.748817
+START_LNG=-73.985428
+# Optional: Use a specific panorama ID
+START_PANO_ID=PfZ-rW8bzPDXJsJuJqsBVA
+```
 
-All sessions are comprehensively logged:
+4. Start the application:
+```bash
+npm start
+# or for development with auto-reload
+npm run dev
+```
 
-### Log Files
-- **Location**: `runs/` directory
-- **Contents**: Complete server log history with metadata
+5. Open your browser to `http://localhost:5173` (or the port specified in your .env)
+
+## 🎮 Usage
+
+### Controls
+- **Start Exploration**: Begin autonomous exploration
+- **Take Step**: Execute a single exploration step
+- **Stop**: Pause the exploration
+- **Reset**: Return to starting position and clear history
+
+### Exploration Modes
+1. **Continuous Mode**: Agent explores automatically every few seconds
+2. **Manual Mode**: Use "Take Step" for controlled exploration
+3. **Hybrid**: Start/stop continuous exploration as needed
+
+## 🏗️ Architecture
+
+### System Design
+```
+┌─────────────┐     WebSocket      ┌─────────────┐
+│   Browser   │ ◄─────────────────► │   Server    │
+│  (Display)  │                     │  (Control)  │
+└─────────────┘                     └─────────────┘
+       │                                    │
+       │                                    ▼
+       ▼                            ┌─────────────┐
+┌─────────────┐                     │  Puppeteer  │
+│ Street View │                     │  (Headless) │
+│  (Visible)  │                     └─────────────┘
+└─────────────┘                            │
+                                           ▼
+                                    ┌─────────────┐
+                                    │   OpenAI    │
+                                    │ GPT-4 Vision│
+                                    └─────────────┘
+```
+
+### Key Components
+- **Frontend Street View**: What users see in the browser
+- **Headless Street View**: Server-side Puppeteer instance for screenshots
+- **Exploration Agent**: Coordinates navigation and decision-making
+- **Coverage Tracker**: Maintains visited locations and statistics
+
+## 🗂️ Project Structure
+
+```
+ai-explores-nyc/
+├── server/
+│   ├── index.js                 # Express server & WebSocket
+│   ├── agents/
+│   │   └── explorationAgent.js  # Main exploration logic
+│   ├── services/
+│   │   ├── streetViewHeadless.js # Puppeteer Street View
+│   │   ├── openai.js            # GPT-4 Vision integration
+│   │   └── coverage.js          # Exploration tracking
+│   └── utils/
+│       ├── logger.js            # Session logging
+│       └── screenshot.js        # Image capture & storage
+├── public/
+│   ├── index.html               # Main UI
+│   ├── js/
+│   │   ├── app.js              # Application controller
+│   │   ├── streetview.js       # Frontend Street View
+│   │   ├── map.js              # Minimap management
+│   │   └── ui.js               # UI updates
+│   └── css/
+│       └── styles.css          # Styling
+├── runs/                        # Logs & screenshots (auto-created)
+└── package.json
+```
+
+## 📸 Data Storage
 
 ### Screenshots
-- **Location**: `runs/shots/<runId>/<step>/`
-- **Naming**: `<step>-dir<direction>.jpg`
-- **Multi-directional**: Separate images for each viewed direction
+- Location: `runs/shots/<runId>/<step>/`
+- Format: `<step>-dir<heading>.jpg`
+- Captured for each direction the AI analyzes
 
-### Detailed Logs
-- **API Calls**: All Google Maps and OpenAI requests
-- **Navigation Events**: Movement between panoramas
-- **Model I/O**: AI inputs and outputs
+### Logs
+- Location: `runs/`
+- Format: JSON lines with timestamps
+- Includes all navigation decisions and API calls
 
-## 🗺️ Map Features
+## 🔧 Configuration
 
-The interactive map (powered by MapLibre GL JS) shows:
-- **Base Layer**: OpenStreetMap tiles
-- **Exploration Path**: Red line showing agent's route
-- **Markers**: 
-  - Green: Starting point (Empire State Building)
-  - Red: Current position
-- **Auto-Pan**: Follows agent when moving beyond view
-- **Zoom Controls**: Navigate and explore the map
+### Environment Variables
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `STEP_INTERVAL_MS` | Time between exploration steps | 5000 |
+| `START_LAT` | Starting latitude | 40.748817 |
+| `START_LNG` | Starting longitude | -73.985428 |
+| `START_PANO_ID` | Optional panorama ID (overrides lat/lng) | - |
+
+### Customization
+- Modify starting location in `.env`
+- Adjust exploration interval for faster/slower navigation
+- Configure AI prompts in `server/services/openai.js`
+
+## 🤝 Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Google Maps Platform for Street View API
+- OpenAI for GPT-4 Vision API
+- MapLibre GL JS for map visualization
+- The open-source community for the amazing tools
+
+## ⚠️ Important Notes
+
+- **API Costs**: This application uses paid APIs (Google Maps & OpenAI). Monitor your usage to avoid unexpected charges.
+- **Rate Limits**: Respect API rate limits. The default 5-second interval helps prevent hitting limits.
+- **Browser Requirements**: Modern browser with WebSocket support required.
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+1. **"No panorama found at location"**
+   - Ensure your starting coordinates have Street View coverage
+   - Try using a panorama ID instead of lat/lng
+
+2. **Screenshots not displaying**
+   - Check that the `runs/` directory is created and writable
+   - Verify the server can access the file system
+
+3. **AI making invalid selections**
+   - Ensure you're using GPT-4 Vision (not GPT-3.5)
+   - Check that screenshots are being captured correctly
+
+## 📧 Contact
+
+For questions or support, please open an issue on GitHub.
+
+---
+
+Built with ❤️ by developers who believe AI should explore the world
