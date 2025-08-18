@@ -20,8 +20,11 @@ class UIManager {
   }
 
   addDecisionEntry(data) {
+    console.log(`Received decision for step ${data.stepCount}, thumbnails:`, data.screenshots.map(s => s.thumbnail));
+    
     const entry = document.createElement('div');
     entry.className = 'decision-entry';
+    entry.setAttribute('data-step', data.stepCount); // Add step tracking
     
     const time = new Date().toLocaleTimeString();
     
@@ -34,7 +37,7 @@ class UIManager {
       <div class="decision-screenshots">
         ${data.screenshots.map(s => `
           <div class="screenshot-thumb">
-            <img src="${s.thumbnail}" alt="Direction ${Math.round(s.direction)}°">
+            <img src="${s.thumbnail}" alt="Direction ${Math.round(s.direction)}°" onerror="console.error('Failed to load:', this.src)">
             <div class="screenshot-label ${s.visited ? 'visited-badge' : ''}">
               ${Math.round(s.direction)}° ${s.visited ? '(V)' : ''}
             </div>

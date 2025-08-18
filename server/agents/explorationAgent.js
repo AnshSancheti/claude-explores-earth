@@ -60,6 +60,7 @@ export class ExplorationAgent {
 
   async exploreStep() {
     this.stepCount++;
+    console.log(`\n=== Starting step ${this.stepCount} ===`);
     
     // Get data for the current panorama directly (no coordinate conversion)
     const panoData = await this.streetViewHeadless.getCurrentPanorama();
@@ -88,6 +89,8 @@ export class ExplorationAgent {
         heading,
         await this.streetViewHeadless.getScreenshot()
       );
+      
+      console.log(`Captured screenshot: step=${this.stepCount}, filename=${screenshotData.filename}`);
       
       screenshots.push({
         direction: heading,
@@ -132,6 +135,18 @@ export class ExplorationAgent {
     
     this.coverage.addVisited(this.currentPanoId, this.currentPosition);
     
+    const thumbnailUrls = screenshots.map(s => {
+      const url = `/runs/shots/${this.runId}/${this.stepCount}/${s.filename}`;
+      console.log(`  Mapping: ${s.filename} -> ${url}`);
+      return {
+        direction: s.direction,
+        visited: s.visited,
+        thumbnail: url
+      };
+    });
+    
+    console.log(`Sending ${thumbnailUrls.length} thumbnails for step ${this.stepCount}`);
+    
     this.socket.emit('move-decision', {
       stepCount: this.stepCount,
       decision: {
@@ -140,11 +155,7 @@ export class ExplorationAgent {
         direction: parseFloat(selectedLink.heading)
       },
       panoId: selectedLink.pano,
-      screenshots: screenshots.map(s => ({
-        direction: s.direction,
-        visited: s.visited,
-        thumbnail: `/runs/shots/${this.runId}/${this.stepCount}/${s.filename}`
-      })),
+      screenshots: thumbnailUrls,
       newPosition: this.currentPosition,
       stats: this.coverage.getStats()
     });
