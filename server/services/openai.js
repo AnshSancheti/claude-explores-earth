@@ -16,40 +16,21 @@ export class OpenAIService {
       }
     }));
 
-    const linkDescriptions = links.map((link, index) => {
-      const screenshot = screenshots.find(s => s.panoId === link.pano);
-      const visited = visitedPanos.includes(link.pano);
-      return `Direction ${index + 1}: Heading ${link.heading}° - ${link.description || 'Street'} ${visited ? '(VISITED)' : '(UNVISITED)'}`;
-    }).join('\n');
+    const systemPrompt = `You are an AI agent exploring the world through Google Street View. Your task is to choose which direction looks most intriguing to explore next.
 
-    const systemPrompt = `You are an AI explorer navigating NYC using Google Street View. Your goal is to maximize exploration coverage of Manhattan.
+You will be shown ${screenshots.length} screenshots, each representing a different direction you can move.
 
-Current Statistics:
-- Unique locations visited: ${stats.locationsVisited}
-- Total distance traveled: ${stats.distanceTraveled}m
-
-You are currently at position: ${currentPosition.lat}, ${currentPosition.lng}
-
-Available directions:
-${linkDescriptions}
-
-${visitedPanos.length > 0 ? `Note: All directions have been visited. Choose the best path for potential backtracking to reach new areas.` : 'Some directions are unvisited - prioritize exploring those.'}
-
-Analyze the provided screenshots and choose the next direction. Consider:
-1. Prioritize UNVISITED locations to maximize coverage
-2. Look for major streets that might lead to unexplored areas
-3. Identify landmarks or street signs that indicate interesting areas
-4. If all paths are visited, choose paths that might lead to unexplored branches
+Look at each screenshot and select the one that seems most interesting to explore. Let your curiosity guide you.
 
 Respond with a JSON object containing:
 {
-  "selectedPanoId": "the_pano_id_to_move_to",
-  "reasoning": "Brief explanation of why you chose this direction (1-2 sentences)"
+  "selectedIndex": <number between 0 and ${screenshots.length - 1}>,
+  "reasoning": "Brief explanation of why this view intrigues you the most (1 sentence)"
 }`;
 
     try {
       const response = await this.client.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: "gpt-5-nano",
         messages: [
           {
             role: "system",
@@ -60,30 +41,37 @@ Respond with a JSON object containing:
             content: [
               {
                 type: "text",
-                text: "Here are screenshots from each available direction. Please choose where to go next."
+                text: `Here are ${screenshots.length} screenshots from different directions. Choose which one to explore next by returning its index (0-${screenshots.length - 1}).`
               },
               ...imageContents
             ]
           }
         ],
         response_format: { type: "json_object" },
-        max_tokens: 200,
-        temperature: 0.7
+        max_completion_tokens: 500
       });
 
       const decision = JSON.parse(response.choices[0].message.content);
       
-      const validPanoIds = links.map(l => l.pano);
-      if (!validPanoIds.includes(decision.selectedPanoId)) {
-        console.warn('AI selected invalid pano ID:', decision.selectedPanoId, 'Valid options:', validPanoIds);
-        decision.selectedPanoId = links[0].pano;
+      // Validate index
+      const selectedIndex = parseInt(decision.selectedIndex);
+      if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= links.length) {
+        console.warn('AI selected invalid index:', decision.selectedIndex, 'Valid range: 0-' + (links.length - 1));
+        decision.selectedIndex = 0;
         decision.reasoning = "Invalid selection, defaulting to first available direction.";
       }
 
-      return decision;
-    } catch (error) {
-      console.error('OpenAI API error:', error);
+      // Map index to panoId
+      const selectedPanoId = links[selectedIndex].pano;
+      console.log(`AI selected index ${selectedIndex} => panoId: ${selectedPanoId}`);
       
+      return {
+        selectedPanoId,
+        reasoning: decision.reasoning
+      };
+    } catch (error) {
+      console.error('Error in OpenAI decision:', error);
+      // Ultimate fallback
       const unvisited = links.filter(l => !visitedPanos.includes(l.pano));
       const target = unvisited.length > 0 ? unvisited[0] : links[0];
       

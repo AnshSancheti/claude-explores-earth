@@ -117,6 +117,9 @@ export class ExplorationAgent {
       throw new Error('Invalid panorama selection');
     }
     
+    // Log successful AI selection
+    console.log(`✓ AI successfully selected panoId: ${selectedLink.pano} | Reasoning: ${decision.reasoning}`);
+    
     await this.streetViewHeadless.navigateToPano(selectedLink.pano);
     // Get the current panorama data after navigation (ensures we have the actual displayed pano)
     const newPanoData = await this.streetViewHeadless.getCurrentPanorama();
