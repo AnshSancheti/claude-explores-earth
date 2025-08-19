@@ -8,6 +8,9 @@ class UIManager {
     this.stepBtn = document.getElementById('stepBtn');
     this.stopBtn = document.getElementById('stopBtn');
     this.resetBtn = document.getElementById('resetBtn');
+    
+    // Track the last pathfinding group
+    this.lastPathfindingGroup = null;
   }
 
   updateStats(stats) {
@@ -20,47 +23,137 @@ class UIManager {
   }
 
   addDecisionEntry(data) {
-    console.log(`Received decision for step ${data.stepCount}, thumbnails:`, data.screenshots.map(s => s.thumbnail));
+    console.log(`Received decision for step ${data.stepCount}, mode: ${data.mode}`);
     
-    const entry = document.createElement('div');
-    entry.className = 'decision-entry';
-    entry.setAttribute('data-step', data.stepCount); // Add step tracking
+    // Check if this is a pathfinding step
+    if (data.mode === 'pathfinding') {
+      // Check if we can group with the last pathfinding group
+      if (this.lastPathfindingGroup && 
+          this.lastPathfindingGroup.parentElement === this.decisionLog &&
+          this.lastPathfindingGroup === this.decisionLog.firstChild) {
+        // Update the existing pathfinding group
+        this.updatePathfindingGroup(this.lastPathfindingGroup, data);
+        return;
+      } else {
+        // Create a new pathfinding group
+        const group = this.createPathfindingGroup(data);
+        this.decisionLog.insertBefore(group, this.decisionLog.firstChild);
+        this.lastPathfindingGroup = group;
+      }
+    } else {
+      // This is an exploration step - show full details
+      this.lastPathfindingGroup = null; // Reset pathfinding group tracking
+      
+      const entry = document.createElement('div');
+      entry.className = 'decision-entry exploration-entry';
+      entry.setAttribute('data-step', data.stepCount);
+      
+      const time = new Date().toLocaleTimeString();
+      const modeIndicator = '<span class="mode-indicator exploring">🔍</span>';
+      
+      entry.innerHTML = `
+        <div class="decision-header">
+          <span class="decision-step">${modeIndicator} Step ${data.stepCount}</span>
+          <span class="decision-time">${time}</span>
+        </div>
+        <div class="decision-reasoning">${data.decision.reasoning}</div>
+        <div class="decision-screenshots">
+          ${data.screenshots.map(s => {
+            // Generate Google Maps Street View URL
+            const lat = s.position ? s.position.lat : 0;
+            const lng = s.position ? s.position.lng : 0;
+            const heading = Math.round(s.direction);
+            const mapsUrl = `https://www.google.com/maps/@${lat},${lng},3a,75y,${heading}h,90t/data=!3m6!1e1!3m4!1s!2e0!7i16384!8i8192`;
+            
+            return `
+              <div class="screenshot-thumb" style="cursor: pointer;" onclick="window.open('${mapsUrl}', '_blank')" title="Click to view in Google Maps">
+                <img src="${s.thumbnail}" alt="Direction ${heading}°" onerror="console.error('Failed to load:', this.src)" style="pointer-events: none;">
+                <div class="screenshot-label ${s.visited ? 'visited-badge' : ''}" style="pointer-events: none;">
+                  ${heading}° ${s.visited ? '(V)' : ''}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+      
+      this.decisionLog.insertBefore(entry, this.decisionLog.firstChild);
+    }
+    
+    // Clean up old entries
+    while (this.decisionLog.children.length > 20) {
+      this.decisionLog.removeChild(this.decisionLog.lastChild);
+    }
+  }
+
+  createPathfindingGroup(data) {
+    const group = document.createElement('div');
+    group.className = 'decision-entry pathfinding-group collapsed';
+    group.setAttribute('data-start-step', data.stepCount);
+    group.setAttribute('data-end-step', data.stepCount);
     
     const time = new Date().toLocaleTimeString();
-    const modeIndicator = data.mode === 'pathfinding' ? 
-      '<span class="mode-indicator pathfinding">🧭</span>' : 
-      '<span class="mode-indicator exploring">🔍</span>';
     
-    entry.innerHTML = `
-      <div class="decision-header">
-        <span class="decision-step">${modeIndicator} Step ${data.stepCount}</span>
+    group.innerHTML = `
+      <div class="decision-header pathfinding-header" onclick="UIManager.togglePathfindingGroup(this)">
+        <span class="decision-step">
+          <span class="mode-indicator pathfinding">🧭</span>
+          <span class="step-range">Step ${data.stepCount}</span>
+        </span>
+        <span class="expand-icon">▶</span>
         <span class="decision-time">${time}</span>
       </div>
-      <div class="decision-reasoning">${data.decision.reasoning}</div>
-      <div class="decision-screenshots">
-        ${data.screenshots.map(s => {
-          // Generate Google Maps Street View URL
-          const lat = s.position ? s.position.lat : 0;
-          const lng = s.position ? s.position.lng : 0;
-          const heading = Math.round(s.direction);
-          const mapsUrl = `https://www.google.com/maps/@${lat},${lng},3a,75y,${heading}h,90t/data=!3m6!1e1!3m4!1s!2e0!7i16384!8i8192`;
-          
-          return `
-            <div class="screenshot-thumb" style="cursor: pointer;" onclick="window.open('${mapsUrl}', '_blank')" title="Click to view in Google Maps">
-              <img src="${s.thumbnail}" alt="Direction ${heading}°" onerror="console.error('Failed to load:', this.src)" style="pointer-events: none;">
-              <div class="screenshot-label ${s.visited ? 'visited-badge' : ''}" style="pointer-events: none;">
-                ${heading}° ${s.visited ? '(V)' : ''}
-              </div>
-            </div>
-          `;
-        }).join('')}
+      <div class="pathfinding-details" style="display: none;">
+        <div class="pathfinding-step-detail">
+          Step ${data.stepCount}: ${data.decision.reasoning}
+        </div>
       </div>
     `;
     
-    this.decisionLog.insertBefore(entry, this.decisionLog.firstChild);
+    return group;
+  }
+
+  updatePathfindingGroup(group, data) {
+    const startStep = parseInt(group.getAttribute('data-start-step'));
+    const endStep = data.stepCount;
+    const stepCount = endStep - startStep + 1;
     
-    while (this.decisionLog.children.length > 20) {
-      this.decisionLog.removeChild(this.decisionLog.lastChild);
+    group.setAttribute('data-end-step', endStep);
+    
+    // Update the header
+    const stepRange = group.querySelector('.step-range');
+    const time = group.querySelector('.decision-time');
+    
+    if (stepCount === 1) {
+      stepRange.textContent = `Step ${startStep}`;
+    } else {
+      stepRange.textContent = `Steps ${startStep}-${endStep}`;
+    }
+    time.textContent = new Date().toLocaleTimeString();
+    
+    // Add the new step to the details
+    const details = group.querySelector('.pathfinding-details');
+    const newDetail = document.createElement('div');
+    newDetail.className = 'pathfinding-step-detail';
+    newDetail.textContent = `Step ${data.stepCount}: ${data.decision.reasoning}`;
+    details.appendChild(newDetail);
+  }
+
+  static togglePathfindingGroup(header) {
+    const group = header.parentElement;
+    const details = group.querySelector('.pathfinding-details');
+    const icon = header.querySelector('.expand-icon');
+    
+    if (group.classList.contains('collapsed')) {
+      group.classList.remove('collapsed');
+      group.classList.add('expanded');
+      details.style.display = 'block';
+      icon.textContent = '▼';
+    } else {
+      group.classList.add('collapsed');
+      group.classList.remove('expanded');
+      details.style.display = 'none';
+      icon.textContent = '▶';
     }
   }
 
@@ -77,6 +170,7 @@ class UIManager {
 
   clearDecisionLog() {
     this.decisionLog.innerHTML = '';
+    this.lastPathfindingGroup = null;
   }
 
   showError(message) {

@@ -482,6 +482,86 @@ h1 {
   border: 1px solid rgba(255, 193, 7, 0.3);
 }
 
+/* Pathfinding Group Styles */
+.pathfinding-group {
+  background: rgba(255, 255, 255, 0.01);
+  border-color: rgba(255, 193, 7, 0.15);
+  padding: 10px 8px 4px 8px; /* More padding on top, less on bottom to center text */
+  opacity: 0.85;
+  transition: all 0.3s ease;
+}
+
+.pathfinding-group:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.pathfinding-group .pathfinding-header {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  padding: 0px 0 0px 0;
+}
+
+.pathfinding-group .expand-icon {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  margin-left: auto;
+  transition: transform 0.2s ease;
+}
+
+.pathfinding-group.expanded .expand-icon {
+  transform: rotate(90deg);
+}
+
+.pathfinding-count {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: normal;
+  margin-left: 8px;
+  opacity: 0.7;
+}
+
+.pathfinding-details {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.pathfinding-step-detail {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.4;
+  margin-bottom: 6px;
+  padding-left: 24px;
+  position: relative;
+}
+
+.pathfinding-step-detail::before {
+  content: '•';
+  position: absolute;
+  left: 10px;
+  color: rgba(255, 193, 7, 0.5);
+}
+
+/* Enhance exploration entries to stand out more */
+.exploration-entry {
+  background: var(--bg-tertiary);
+  border-color: rgba(76, 175, 80, 0.2);
+}
+
+.exploration-entry:hover {
+  border-color: rgba(76, 175, 80, 0.4);
+  box-shadow: 0 4px 20px rgba(76, 175, 80, 0.1);
+}
+
 /* Enhanced Screenshot Grid */
 .decision-screenshots {
   display: grid;
