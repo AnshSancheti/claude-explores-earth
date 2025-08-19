@@ -56,7 +56,7 @@ class UIManager {
           <span class="decision-step">${modeIndicator} Step ${data.stepCount}</span>
           <span class="decision-time">${time}</span>
         </div>
-        <div class="decision-reasoning">${data.decision.reasoning}</div>
+        <div class="decision-reasoning">${escapeHtml(data.decision.reasoning)}</div>
         <div class="decision-screenshots">
           ${data.screenshots.map(s => {
             // Generate Google Maps Street View URL
@@ -105,7 +105,7 @@ class UIManager {
       </div>
       <div class="pathfinding-details" style="display: none;">
         <div class="pathfinding-step-detail">
-          Step ${data.stepCount}: ${data.decision.reasoning}
+          Step ${data.stepCount}: ${escapeHtml(data.decision.reasoning)}
         </div>
       </div>
     `;

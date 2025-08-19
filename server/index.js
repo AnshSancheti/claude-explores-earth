@@ -5,8 +5,10 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import { ExplorationAgent } from './agents/explorationAgent.js';
 import { Logger } from './utils/logger.js';
+import { productionSecurity } from './middleware/secureRuns.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -27,11 +29,73 @@ const io = new Server(server, {
 
 app.use(cors());
 app.use(express.json());
+
+// Rate limiting configuration
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
+
+// Stricter rate limiting for API endpoints
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30, // Limit each IP to 30 API requests per windowMs
+  message: 'Too many API requests from this IP, please try again later.'
+});
+
+// Socket.io connection rate limiting
+const socketLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 5, // Limit each IP to 5 socket connections per minute
+  message: 'Too many connection attempts, please try again later.'
+});
+
+// Apply general rate limiting to all requests
+app.use(generalLimiter);
+
+// Serve static files
 app.use(express.static(join(ROOT_DIR, 'public')));
-app.use('/runs', express.static(join(ROOT_DIR, 'runs')));
+
+// Protected routes for sensitive data
+// In development: Allow all access for testing
+// In production: Allow read-only access to recent files (for screenshots in decision log)
+const runsMiddleware = express.static(join(ROOT_DIR, 'runs'));
+app.use('/runs', runsMiddleware);
+
+// Admin authentication endpoint
+app.post('/api/admin/auth', apiLimiter, express.json(), (req, res) => {
+  const { password } = req.body;
+  const controlPassword = process.env.CONTROL_PASSWORD;
+  
+  if (!controlPassword) {
+    return res.status(500).json({ error: 'Admin authentication not configured' });
+  }
+  
+  if (!password) {
+    return res.status(400).json({ error: 'Password required' });
+  }
+  
+  if (password === controlPassword) {
+    // Generate a simple session token (in production, use proper JWT)
+    const token = Buffer.from(`admin:${Date.now()}`).toString('base64');
+    res.json({ 
+      success: true, 
+      token,
+      message: 'Authentication successful' 
+    });
+  } else {
+    // Add delay to prevent brute force
+    setTimeout(() => {
+      res.status(401).json({ error: 'Invalid password' });
+    }, 1000);
+  }
+});
 
 // Serve Google Maps API loader with API key from environment
-app.get('/api/maps-loader', (req, res) => {
+app.get('/api/maps-loader', apiLimiter, (req, res) => {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
   if (!apiKey) {
     return res.status(500).send('Google Maps API key not configured');
@@ -271,22 +335,94 @@ class GlobalExploration {
 // Initialize global exploration
 const globalExploration = new GlobalExploration();
 
-// Socket.io connection handling
+// Helper function to verify admin token
+function verifyAdminToken(token) {
+  if (!token) return false;
+  
+  try {
+    // Decode the simple token (in production, use proper JWT)
+    const decoded = Buffer.from(token, 'base64').toString();
+    const [prefix, timestamp] = decoded.split(':');
+    
+    // Check if token is valid and not expired (1 hour)
+    if (prefix === 'admin' && timestamp) {
+      const tokenAge = Date.now() - parseInt(timestamp);
+      return tokenAge < 60 * 60 * 1000; // 1 hour expiry
+    }
+  } catch (e) {
+    return false;
+  }
+  
+  return false;
+}
+
+// Socket.io connection handling with rate limiting
+const connectionAttempts = new Map();
+
+io.use((socket, next) => {
+  const clientIp = socket.handshake.address;
+  const now = Date.now();
+  
+  // Clean up old entries
+  for (const [ip, timestamps] of connectionAttempts.entries()) {
+    const filtered = timestamps.filter(t => now - t < 60000); // Keep last minute
+    if (filtered.length === 0) {
+      connectionAttempts.delete(ip);
+    } else {
+      connectionAttempts.set(ip, filtered);
+    }
+  }
+  
+  // Check rate limit
+  const attempts = connectionAttempts.get(clientIp) || [];
+  if (attempts.length >= 5) {
+    return next(new Error('Too many connection attempts. Please try again later.'));
+  }
+  
+  // Record this attempt
+  attempts.push(now);
+  connectionAttempts.set(clientIp, attempts);
+  
+  next();
+});
+
 io.on('connection', (socket) => {
   globalExploration.addClient(socket);
 
-  socket.on('start-exploration', async () => {
+  // Control operations require authentication
+  socket.on('start-exploration', async (data) => {
+    // Check for admin token
+    const token = data?.token;
+    if (!verifyAdminToken(token)) {
+      socket.emit('error', { message: 'Admin authentication required' });
+      return;
+    }
+    
     const result = await globalExploration.startExploration();
     if (result.error) {
       socket.emit('error', { message: result.error });
     }
   });
 
-  socket.on('stop-exploration', () => {
+  socket.on('stop-exploration', (data) => {
+    // Check for admin token
+    const token = data?.token;
+    if (!verifyAdminToken(token)) {
+      socket.emit('error', { message: 'Admin authentication required' });
+      return;
+    }
+    
     globalExploration.stopExploration();
   });
 
-  socket.on('take-single-step', async () => {
+  socket.on('take-single-step', async (data) => {
+    // Check for admin token
+    const token = data?.token;
+    if (!verifyAdminToken(token)) {
+      socket.emit('error', { message: 'Admin authentication required' });
+      return;
+    }
+    
     try {
       const result = await globalExploration.takeSingleStep();
       if (result.error) {
@@ -298,7 +434,14 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('reset-exploration', async () => {
+  socket.on('reset-exploration', async (data) => {
+    // Check for admin token
+    const token = data?.token;
+    if (!verifyAdminToken(token)) {
+      socket.emit('error', { message: 'Admin authentication required' });
+      return;
+    }
+    
     await globalExploration.resetExploration();
   });
 

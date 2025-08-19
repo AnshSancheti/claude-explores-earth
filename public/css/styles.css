@@ -136,6 +136,33 @@ h1 {
 .controls {
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+
+/* Control buttons container */
+.control-buttons {
+  display: flex;
+  gap: 8px;
+  transition: all 0.3s ease;
+}
+
+.control-buttons.hidden {
+  display: none;
+}
+
+.control-buttons.show {
+  animation: fadeInScale 0.3s ease;
+}
+
+@keyframes fadeInScale {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 .btn {
@@ -234,6 +261,47 @@ h1 {
   background: rgba(255, 255, 255, 0.08);
   border-color: var(--accent-blue);
   box-shadow: 0 4px 20px rgba(33, 150, 243, 0.3);
+  transform: translateY(-2px);
+}
+
+/* Admin button styles */
+.btn-admin {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 2px solid rgba(255, 193, 7, 0.3);
+  border-radius: 12px;
+  background: rgba(255, 193, 7, 0.1);
+  backdrop-filter: blur(10px);
+  color: var(--accent-yellow);
+  cursor: pointer;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-admin:hover {
+  background: rgba(255, 193, 7, 0.2);
+  border-color: var(--accent-yellow);
+  box-shadow: 0 4px 20px rgba(255, 193, 7, 0.3);
+  transform: translateY(-2px) rotate(-5deg);
+}
+
+.btn-admin.hidden {
+  display: none;
+}
+
+.btn-lock {
+  background: rgba(255, 193, 7, 0.05);
+  border-color: rgba(255, 193, 7, 0.3);
+  color: var(--accent-yellow);
+}
+
+.btn-lock:hover:not(:disabled) {
+  background: rgba(255, 193, 7, 0.1);
+  border-color: var(--accent-yellow);
+  box-shadow: 0 4px 20px rgba(255, 193, 7, 0.3);
   transform: translateY(-2px);
 }
 
@@ -719,6 +787,201 @@ h1 {
   background: var(--glass-bg);
 }
 
+/* Modal Styles */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(5px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+  animation: fadeIn 0.2s ease;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-content {
+  background: rgba(20, 20, 20, 0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  animation: slideUp 0.3s ease;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.modal-header {
+  padding: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h3 {
+  margin: 0;
+  color: var(--accent-yellow);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  transition: all 0.2s ease;
+}
+
+.modal-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: 20px;
+}
+
+.modal-body p {
+  margin: 0 0 16px 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.modal-body input[type="password"] {
+  width: 100%;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.modal-body input[type="password"]:focus {
+  outline: none;
+  border-color: var(--accent-yellow);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 3px rgba(255, 193, 7, 0.1);
+}
+
+.auth-error {
+  margin-top: 12px;
+  padding: 8px 12px;
+  background: rgba(244, 67, 54, 0.1);
+  border: 1px solid rgba(244, 67, 54, 0.3);
+  border-radius: 6px;
+  color: var(--accent-red);
+  font-size: 13px;
+}
+
+.auth-error.hidden {
+  display: none;
+}
+
+.modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.btn-cancel, .btn-submit {
+  padding: 8px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+}
+
+.btn-cancel {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-cancel:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.btn-submit {
+  background: rgba(255, 193, 7, 0.15);
+  color: var(--accent-yellow);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+}
+
+.btn-submit:hover:not(:disabled) {
+  background: rgba(255, 193, 7, 0.25);
+  border-color: var(--accent-yellow);
+  box-shadow: 0 4px 12px rgba(255, 193, 7, 0.3);
+}
+
+.btn-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Admin Notification */
+.admin-notification {
+  position: fixed;
+  top: 80px;
+  right: 20px;
+  padding: 12px 20px;
+  background: rgba(76, 175, 80, 0.1);
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  border-radius: 8px;
+  color: var(--accent-green);
+  font-size: 14px;
+  font-weight: 600;
+  z-index: 10001;
+  opacity: 0;
+  transform: translateX(100px);
+  transition: all 0.3s ease;
+}
+
+.admin-notification.show {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.admin-notification.success {
+  background: rgba(76, 175, 80, 0.1);
+  border-color: rgba(76, 175, 80, 0.3);
+  color: var(--accent-green);
+}
+
 /* Loading Animation */
 .loading-indicator {
   position: fixed;
@@ -764,48 +1027,79 @@ h1 {
   
   header {
     padding: 12px 16px;
+    position: relative;
   }
   
   .header-content {
-    flex-direction: column;
-    gap: 12px;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
   }
   
   .brand {
-    text-align: center;
+    flex: 0 0 auto;
   }
   
   h1 {
-    font-size: 22px;
+    font-size: 20px;
   }
   
   .journey-stats {
-    order: 3;
-    padding: 0;
-    gap: 8px;
-    font-size: 12px;
+    flex: 1;
+    padding: 0 40px 0 8px; /* Add right padding to compensate for absolute controls */
+    gap: 6px;
+    font-size: 11px;
+    justify-content: center;
+    display: flex;
+    align-items: center;
   }
   
   .stat-value {
-    font-size: 14px;
+    font-size: 13px;
   }
   
   .stat-label {
-    font-size: 9px;
+    font-size: 8px;
   }
   
   .stat-divider {
-    font-size: 12px;
+    font-size: 10px;
   }
   
+  /* Position controls absolutely on mobile */
   .controls {
+    position: absolute;
+    top: 50%;
+    right: 16px;
+    transform: translateY(-50%);
     gap: 4px;
+    z-index: 101;
   }
   
   .btn {
-    width: 32px;
-    height: 32px;
-    font-size: 16px;
+    width: 30px;
+    height: 30px;
+    font-size: 14px;
+  }
+  
+  .btn svg {
+    width: 14px;
+    height: 14px;
+  }
+  
+  .btn-admin {
+    width: 34px;
+    height: 34px;
+  }
+  
+  .btn-admin svg {
+    width: 18px;
+    height: 18px;
+  }
+  
+  .control-buttons {
+    flex-direction: row;
   }
   
   /* Mobile Sidebar as Bottom Sheet */
@@ -963,7 +1257,33 @@ h1 {
 
 @media (max-width: 480px) {
   h1 {
-    font-size: 20px;
+    font-size: 18px;
+  }
+  
+  .journey-stats {
+    gap: 4px;
+  }
+  
+  .stat-value {
+    font-size: 12px;
+  }
+  
+  .stat-label {
+    font-size: 7px;
+  }
+  
+  .controls {
+    right: 12px;
+  }
+  
+  .btn {
+    width: 28px;
+    height: 28px;
+  }
+  
+  .btn-admin {
+    width: 32px;
+    height: 32px;
   }
   
   .decision-screenshots {

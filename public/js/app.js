@@ -297,28 +297,56 @@ class ExplorationApp {
     }
   }
 
+  getAuthToken() {
+    // Get auth token from adminAuth module
+    if (window.adminAuth && window.adminAuth.authToken) {
+      return window.adminAuth.authToken;
+    }
+    return null;
+  }
+
   startExploration() {
     if (!this.isExploring) {
-      this.socket.emit('start-exploration');
+      const token = this.getAuthToken();
+      if (!token) {
+        this.uiManager.showError('Admin authentication required');
+        return;
+      }
+      this.socket.emit('start-exploration', { token });
     }
   }
 
   takeStep() {
     if (!this.isExploring) {
+      const token = this.getAuthToken();
+      if (!token) {
+        this.uiManager.showError('Admin authentication required');
+        return;
+      }
       this.uiManager.setStepButtonState(true);
-      this.socket.emit('take-single-step');
+      this.socket.emit('take-single-step', { token });
     }
   }
 
   stopExploration() {
     if (this.isExploring) {
-      this.socket.emit('stop-exploration');
+      const token = this.getAuthToken();
+      if (!token) {
+        this.uiManager.showError('Admin authentication required');
+        return;
+      }
+      this.socket.emit('stop-exploration', { token });
     }
   }
 
   resetExploration() {
     if (!this.isExploring) {
-      this.socket.emit('reset-exploration');
+      const token = this.getAuthToken();
+      if (!token) {
+        this.uiManager.showError('Admin authentication required');
+        return;
+      }
+      this.socket.emit('reset-exploration', { token });
     }
   }
   
