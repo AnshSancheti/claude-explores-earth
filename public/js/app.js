@@ -18,12 +18,10 @@ class ExplorationApp {
 
     this.socket.on('connect', () => {
       console.log('Connected to server');
-      this.uiManager.showSuccess('Connected to server');
     });
 
     this.socket.on('disconnect', () => {
       console.log('Disconnected from server');
-      this.uiManager.showError('Disconnected from server');
       this.isExploring = false;
       this.uiManager.setExplorationState(false);
     });
@@ -59,7 +57,6 @@ class ExplorationApp {
       
       this.isExploring = true;
       this.uiManager.setExplorationState(true);
-      this.uiManager.showSuccess('Exploration started!');
       this.uiManager.updateStep(0);
     });
 
@@ -88,7 +85,6 @@ class ExplorationApp {
       console.log('Exploration stopped');
       this.isExploring = false;
       this.uiManager.setExplorationState(false);
-      this.uiManager.showSuccess('Exploration stopped');
     });
 
     this.socket.on('exploration-reset', () => {
@@ -104,18 +100,15 @@ class ExplorationApp {
       this.uiManager.clearDecisionLog();
       this.uiManager.updateStats({ locationsVisited: 0, distanceTraveled: 0 });
       this.uiManager.updateStep(0);
-      this.uiManager.showSuccess('Exploration reset');
     });
 
     this.socket.on('step-complete', () => {
       console.log('Single step complete');
       this.uiManager.setStepButtonState(false);
-      this.uiManager.showSuccess('Step complete');
     });
 
     this.socket.on('error', (data) => {
       console.error('Server error:', data);
-      this.uiManager.showError(data.message);
       this.uiManager.setStepButtonState(false);
     });
   }

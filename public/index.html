@@ -3,39 +3,39 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI Explores NYC 🗽</title>
+  <title>Scout - A Digital Stroll</title>
   <link href='https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.css' rel='stylesheet' />
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
   <div class="container">
     <header>
-      <h1>AI Explores NYC</h1>
-      <div class="stats-bar">
-        <div class="stat-item">
-          <div>
-            <span class="stat-label">Locations</span>
+      <div class="header-content">
+        <div class="brand">
+          <h1>🏃 Scout</h1>
+        </div>
+        <div class="journey-stats">
+          <div class="stat-item">
             <span id="locationsVisited" class="stat-value">0</span>
+            <span class="stat-label">locations</span>
           </div>
-        </div>
-        <div class="stat-item">
-          <div>
-            <span class="stat-label">Distance</span>
+          <div class="stat-divider">·</div>
+          <div class="stat-item">
             <span id="distanceTraveled" class="stat-value">0 m</span>
+            <span class="stat-label">distance</span>
           </div>
-        </div>
-        <div class="stat-item">
-          <div>
-            <span class="stat-label">Step</span>
+          <div class="stat-divider">·</div>
+          <div class="stat-item">
             <span id="currentStep" class="stat-value">0</span>
+            <span class="stat-label">steps</span>
           </div>
         </div>
-      </div>
-      <div class="controls">
-        <button id="startBtn" class="btn btn-primary">Start</button>
-        <button id="stepBtn" class="btn btn-info">Step</button>
-        <button id="stopBtn" class="btn btn-secondary" disabled>Stop</button>
-        <button id="resetBtn" class="btn btn-warning">Reset</button>
+        <div class="controls">
+          <button id="startBtn" class="btn btn-primary">Start</button>
+          <button id="stepBtn" class="btn btn-info">Step</button>
+          <button id="stopBtn" class="btn btn-secondary" disabled>Stop</button>
+          <button id="resetBtn" class="btn btn-warning">Reset</button>
+        </div>
       </div>
     </header>
 
@@ -58,7 +58,7 @@
 
       <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
-          <h3>AI Decision Log</h3>
+          <h3>Decision Log</h3>
         </div>
         <div id="decisionLog" class="decision-log"></div>
       </div>

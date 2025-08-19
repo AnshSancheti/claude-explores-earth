@@ -1,6 +1,6 @@
-# AI Explores NYC 🗽
+# Flaneur 🚶
 
-An autonomous AI agent that explores Manhattan using Google Street View, attempting to maximize coverage of NYC. The agent analyzes Street View imagery in multiple directions, tracks its exploration progress with a real-time coverage map, and makes intelligent navigation decisions.
+A digital flâneur - an autonomous AI agent that leisurely strolls through the streets of NYC via Google Street View. Named after the French term for one who walks without hurry, observing society and urban life, this agent explores Manhattan with curiosity and whimsy, analyzing Street View imagery and making intelligent navigation decisions.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D18.0.0-green.svg)
