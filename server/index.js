@@ -450,8 +450,10 @@ io.on('connection', (socket) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`🚀 Server running on http://localhost:${PORT}`);
+// Listen on all network interfaces (0.0.0.0) for production deployments
+const HOST = process.env.HOST || '0.0.0.0';
+server.listen(PORT, HOST, () => {
+  console.log(`🚀 Server running on http://${HOST}:${PORT}`);
   console.log(`📍 Starting location: ${START_LOCATION.lat}, ${START_LOCATION.lng}`);
   console.log(`⏱️  Step interval: ${STEP_INTERVAL}ms`);
   console.log(`📜 Decision history limit: ${DECISION_HISTORY_LIMIT} entries`);
