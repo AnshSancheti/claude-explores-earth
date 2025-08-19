@@ -136,6 +136,131 @@ class ExplorationApp {
     this.uiManager.resetBtn.addEventListener('click', () => {
       this.resetExploration();
     });
+    
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      // Ignore if user is typing in an input
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      
+      switch(e.key.toLowerCase()) {
+        case ' ':  // Spacebar for step
+          e.preventDefault();
+          if (!this.isExploring) {
+            this.takeStep();
+          }
+          break;
+        case 's':  // S for start/stop
+          e.preventDefault();
+          if (this.isExploring) {
+            this.stopExploration();
+          } else {
+            this.startExploration();
+          }
+          break;
+        case 'r':  // R for reset
+          e.preventDefault();
+          if (!this.isExploring) {
+            this.resetExploration();
+          }
+          break;
+        case 'f':  // F for fullscreen
+          e.preventDefault();
+          this.toggleFullscreen();
+          break;
+      }
+    });
+    
+    // Mobile sidebar toggle with touch support
+    const sidebarHeader = document.querySelector('.sidebar-header');
+    if (sidebarHeader) {
+      const toggleSidebar = () => {
+        const sidebar = document.getElementById('sidebar');
+        if (window.innerWidth <= 768) {
+          sidebar.classList.toggle('expanded');
+        }
+      };
+      
+      sidebarHeader.addEventListener('click', toggleSidebar);
+      sidebarHeader.addEventListener('touchend', (e) => {
+        e.preventDefault();
+        toggleSidebar();
+      });
+    }
+    
+    // Mobile minimap toggle with touch support and dragging
+    const minimapToggle = document.querySelector('.minimap-toggle');
+    const minimapContainer = document.getElementById('minimapContainer');
+    if (minimapToggle && window.innerWidth <= 768) {
+      let isDragging = false;
+      let startY = 0;
+      let currentY = 0;
+      let initialTop = 50; // Start at 50% (center)
+      
+      // Load saved position if exists
+      const savedPosition = localStorage.getItem('minimapPosition');
+      if (savedPosition) {
+        const topPercent = parseFloat(savedPosition);
+        minimapToggle.style.top = `${topPercent}%`;
+        minimapContainer.style.top = `${topPercent}%`;
+        initialTop = topPercent;
+      }
+      
+      const handleStart = (e) => {
+        const touch = e.type.includes('touch') ? e.touches[0] : e;
+        startY = touch.clientY;
+        isDragging = false;
+      };
+      
+      const handleMove = (e) => {
+        const touch = e.type.includes('touch') ? e.touches[0] : e;
+        currentY = touch.clientY;
+        
+        // If moved more than 10px, consider it dragging
+        if (Math.abs(currentY - startY) > 10) {
+          isDragging = true;
+          e.preventDefault();
+          
+          // Calculate new position as percentage
+          const windowHeight = window.innerHeight;
+          const newTop = (currentY / windowHeight) * 100;
+          
+          // Constrain between 10% and 90% of screen height
+          const constrainedTop = Math.max(10, Math.min(90, newTop));
+          
+          // Update positions
+          minimapToggle.style.top = `${constrainedTop}%`;
+          minimapToggle.style.transform = `translateY(-50%)`;
+          minimapContainer.style.top = `${constrainedTop}%`;
+          minimapContainer.style.transform = `translateY(-50%)`;
+          
+          // Save position
+          localStorage.setItem('minimapPosition', constrainedTop);
+        }
+      };
+      
+      const handleEnd = (e) => {
+        if (!isDragging) {
+          // It was a tap, not a drag
+          window.toggleMinimap();
+        }
+        isDragging = false;
+      };
+      
+      // Touch events
+      minimapToggle.addEventListener('touchstart', handleStart, { passive: false });
+      minimapToggle.addEventListener('touchmove', handleMove, { passive: false });
+      minimapToggle.addEventListener('touchend', handleEnd, { passive: false });
+      
+      // Mouse events for testing on desktop
+      minimapToggle.addEventListener('mousedown', handleStart);
+      minimapToggle.addEventListener('mousemove', (e) => {
+        if (e.buttons === 1) handleMove(e);
+      });
+      minimapToggle.addEventListener('mouseup', handleEnd);
+      minimapToggle.addEventListener('click', (e) => {
+        if (isDragging) e.preventDefault();
+      });
+    }
   }
 
   startExploration() {
@@ -162,9 +287,37 @@ class ExplorationApp {
       this.socket.emit('reset-exploration');
     }
   }
+  
+  toggleFullscreen() {
+    const streetViewContainer = document.querySelector('.street-view-container');
+    if (!document.fullscreenElement) {
+      streetViewContainer.requestFullscreen().catch(err => {
+        console.log('Error attempting to enable fullscreen:', err);
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  }
 }
+
+// Global function for minimap toggle on mobile
+window.toggleMinimap = function() {
+  const minimapContainer = document.getElementById('minimapContainer');
+  const minimapToggle = document.querySelector('.minimap-toggle');
+  if (window.innerWidth <= 768) {
+    minimapContainer.classList.toggle('expanded');
+    minimapToggle.classList.toggle('expanded');
+    
+    // Keep the vertical position synchronized
+    const currentTop = minimapToggle.style.top || '50%';
+    minimapContainer.style.top = currentTop;
+  }
+};
 
 document.addEventListener('DOMContentLoaded', () => {
   const app = new ExplorationApp();
   app.initialize();
+  
+  // Expose mapManager globally for zoom controls
+  window.mapManager = app.mapManager;
 });

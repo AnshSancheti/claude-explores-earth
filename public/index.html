@@ -10,24 +10,30 @@
 <body>
   <div class="container">
     <header>
-      <h1>🗽 AI Explores NYC</h1>
+      <h1>AI Explores NYC</h1>
       <div class="stats-bar">
         <div class="stat-item">
-          <span class="stat-label">Locations</span>
-          <span id="locationsVisited" class="stat-value">0</span>
+          <div>
+            <span class="stat-label">Locations</span>
+            <span id="locationsVisited" class="stat-value">0</span>
+          </div>
         </div>
         <div class="stat-item">
-          <span class="stat-label">Distance</span>
-          <span id="distanceTraveled" class="stat-value">0 m</span>
+          <div>
+            <span class="stat-label">Distance</span>
+            <span id="distanceTraveled" class="stat-value">0 m</span>
+          </div>
         </div>
         <div class="stat-item">
-          <span class="stat-label">Step</span>
-          <span id="currentStep" class="stat-value">0</span>
+          <div>
+            <span class="stat-label">Step</span>
+            <span id="currentStep" class="stat-value">0</span>
+          </div>
         </div>
       </div>
       <div class="controls">
-        <button id="startBtn" class="btn btn-primary">Start Exploration</button>
-        <button id="stepBtn" class="btn btn-info">Take Step</button>
+        <button id="startBtn" class="btn btn-primary">Start</button>
+        <button id="stepBtn" class="btn btn-info">Step</button>
         <button id="stopBtn" class="btn btn-secondary" disabled>Stop</button>
         <button id="resetBtn" class="btn btn-warning">Reset</button>
       </div>
@@ -36,13 +42,24 @@
     <div class="main-content">
       <div class="street-view-container">
         <div id="streetView"></div>
-        <div class="minimap-container">
+        <!-- Compass Overlay -->
+        <div class="compass-overlay">
+          <div class="compass-needle" id="compassNeedle"></div>
+        </div>
+        <!-- Minimap Toggle (separate for mobile) -->
+        <div class="minimap-toggle" onclick="toggleMinimap()">
+          <span>🗺️</span>
+        </div>
+        <!-- Minimap -->
+        <div class="minimap-container" id="minimapContainer">
           <div id="minimap"></div>
         </div>
       </div>
 
-      <div class="sidebar">
-        <h3>🤖 AI Decision Log</h3>
+      <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+          <h3>AI Decision Log</h3>
+        </div>
         <div id="decisionLog" class="decision-log"></div>
       </div>
     </div>

@@ -28,8 +28,8 @@ class UIManager {
     
     const time = new Date().toLocaleTimeString();
     const modeIndicator = data.mode === 'pathfinding' ? 
-      '<span class="mode-indicator pathfinding">🧭 Pathfinding</span>' : 
-      '<span class="mode-indicator exploring">🔍 Exploring</span>';
+      '<span class="mode-indicator pathfinding">🧭</span>' : 
+      '<span class="mode-indicator exploring">🔍</span>';
     
     entry.innerHTML = `
       <div class="decision-header">

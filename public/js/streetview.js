@@ -55,6 +55,19 @@ class StreetViewManager {
       document.getElementById('streetView'),
       options
     );
+    
+    // Listen for POV changes to update compass
+    this.panorama.addListener('pov_changed', () => {
+      const pov = this.panorama.getPov();
+      this.updateCompass(pov.heading);
+    });
+  }
+  
+  updateCompass(heading) {
+    const compassNeedle = document.getElementById('compassNeedle');
+    if (compassNeedle) {
+      compassNeedle.style.transform = `rotate(${heading}deg)`;
+    }
   }
 
   updatePosition(panoId, heading) {
@@ -68,6 +81,7 @@ class StreetViewManager {
         heading: heading,
         pitch: 0
       });
+      // Compass will update automatically via pov_changed listener
     }
   }
 
