@@ -68,13 +68,17 @@ Browser ←→ WebSocket (Socket.io) ←→ Server
          Navigation Decision
 ```
 
-### Session Management
-Each WebSocket connection maintains its own session with:
-- Independent exploration agent
-- Separate headless browser instance
-- Isolated coverage tracking
-- Step synchronization to prevent concurrent execution
-- State isolation between manual steps
+### Global Exploration Architecture
+The system uses a single global exploration that all users observe:
+- **Single Agent**: One exploration agent shared by all connected clients
+- **Shared State**: All users see the same exploration in real-time
+- **Persistent Operation**: Exploration continues even with 0 connected users
+- **Shared Control**: Any user can control the exploration (start/stop/step/reset)
+- **History Management**: 
+  - Last N decisions shown to new users (configurable via `DECISION_HISTORY_LIMIT`)
+  - Full history persisted to disk in `runs/persistent_logs/`
+  - Screenshot caching for recent steps
+- **Broadcasting**: All events broadcast to all connected clients
 
 ## Environment Configuration
 

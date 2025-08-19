@@ -7,6 +7,12 @@ class MapManager {
     this.pathCoordinates = [];
     // Start position will be set from server via setStartPosition()
     this.startPosition = null;
+    this.mapLoaded = false;
+    this.pendingUpdates = []; // Queue positions until map is ready
+  }
+
+  isReady() {
+    return this.mapLoaded && this.map !== null;
   }
 
   initialize() {
@@ -34,6 +40,16 @@ class MapManager {
         this.addStartMarker();
         this.addCurrentMarker();
         this.initializePath();
+        this.mapLoaded = true;
+        
+        // Process any pending position updates
+        if (this.pendingUpdates.length > 0) {
+          console.log(`Processing ${this.pendingUpdates.length} pending position updates`);
+          this.pendingUpdates.forEach(position => {
+            this.#doUpdatePosition(position);
+          });
+          this.pendingUpdates = [];
+        }
       });
 
       this.map.on('error', (e) => {
@@ -131,20 +147,37 @@ class MapManager {
   }
 
   updatePosition(position) {
+    // Queue updates if map isn't ready yet
+    if (!this.isReady()) {
+      this.pendingUpdates.push(position);
+      return;
+    }
+    
+    this.#doUpdatePosition(position);
+  }
+  
+  // Private method for actually updating position
+  #doUpdatePosition(position) {
     const lngLat = [position.lng, position.lat];
     
-    this.currentMarker.setLngLat(lngLat);
+    // Only update marker if it exists
+    if (this.currentMarker) {
+      this.currentMarker.setLngLat(lngLat);
+    }
     
     this.pathCoordinates.push(lngLat);
     
-    this.map.getSource('path').setData({
-      type: 'Feature',
-      properties: {},
-      geometry: {
-        type: 'LineString',
-        coordinates: this.pathCoordinates
-      }
-    });
+    // Only update path if source exists
+    if (this.map.getSource('path')) {
+      this.map.getSource('path').setData({
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates: this.pathCoordinates
+        }
+      });
+    }
     
     if (this.pathCoordinates.length > 1) {
       const bounds = this.pathCoordinates.reduce((bounds, coord) => {
@@ -165,8 +198,9 @@ class MapManager {
 
   reset() {
     this.pathCoordinates = [];
+    this.pendingUpdates = []; // Clear any pending updates
     
-    if (this.map.getSource('path')) {
+    if (this.map && this.map.getSource('path')) {
       this.map.getSource('path').setData({
         type: 'Feature',
         properties: {},
@@ -177,12 +211,16 @@ class MapManager {
       });
     }
     
-    this.currentMarker.setLngLat([this.startPosition.lng, this.startPosition.lat]);
+    if (this.currentMarker && this.startPosition) {
+      this.currentMarker.setLngLat([this.startPosition.lng, this.startPosition.lat]);
+    }
     
-    this.map.flyTo({
-      center: [this.startPosition.lng, this.startPosition.lat],
-      zoom: 15
-    });
+    if (this.map && this.startPosition) {
+      this.map.flyTo({
+        center: [this.startPosition.lng, this.startPosition.lat],
+        zoom: 15
+      });
+    }
   }
 }
 

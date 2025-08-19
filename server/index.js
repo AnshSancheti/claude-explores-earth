@@ -7,6 +7,8 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import { ExplorationAgent } from './agents/explorationAgent.js';
 import { Logger } from './utils/logger.js';
+import fs from 'fs';
+import path from 'path';
 
 dotenv.config();
 
@@ -51,166 +53,257 @@ app.get('/api/maps-loader', (req, res) => {
 
 const PORT = process.env.PORT || 5173;
 const STEP_INTERVAL = parseInt(process.env.STEP_INTERVAL_MS) || 5000;
+const DECISION_HISTORY_LIMIT = parseInt(process.env.DECISION_HISTORY_LIMIT) || 20;
 const START_LOCATION = {
   lat: parseFloat(process.env.START_LAT),
   lng: parseFloat(process.env.START_LNG)
 };
 const START_PANO_ID = process.env.START_PANO_ID || null;
 
-const sessions = new Map();
+// Global exploration state
+class GlobalExploration {
+  constructor() {
+    this.agent = null;
+    this.isExploring = false;
+    this.explorationInterval = null;
+    this.connectedClients = new Set();
+    this.decisionHistory = [];
+    this.screenshotCache = new Map(); // Cache screenshots by step
+    this.logger = new Logger();
+    this.persistentLogger = this.createPersistentLogger();
+    this.maxHistoryInMemory = 1000; // Cap memory usage
+    this.cacheSize = DECISION_HISTORY_LIMIT * 3;
+  }
 
-io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
-  const logger = new Logger();
-  
-  const session = {
-    agent: null,
-    interval: null,
-    isExploring: false,
-    isStepInProgress: false,  // Add flag for single step synchronization
-    logger: logger
-  };
-  
-  sessions.set(socket.id, session);
-  
-  // Send initial configuration to client
-  socket.emit('initial-config', {
-    startLocation: START_LOCATION,
-    startPanoId: START_PANO_ID
-  });
+  createPersistentLogger() {
+    const logsDir = path.join(ROOT_DIR, 'runs', 'persistent_logs');
+    if (!fs.existsSync(logsDir)) {
+      fs.mkdirSync(logsDir, { recursive: true });
+    }
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const logPath = path.join(logsDir, `exploration-${timestamp}.jsonl`);
+    return logPath;
+  }
 
-  socket.on('start-exploration', async () => {
-    const session = sessions.get(socket.id);
-    if (session.isExploring) {
-      socket.emit('error', { message: 'Exploration already in progress' });
-      return;
+  async initialize() {
+    if (!this.agent) {
+      this.agent = new ExplorationAgent(this, this.logger);
+      await this.agent.initialize();
+      console.log('Global exploration agent initialized');
+    }
+  }
+
+  async startExploration() {
+    if (this.isExploring) {
+      return { error: 'Exploration already in progress' };
     }
 
-    try {
-      session.isExploring = true;
-      session.agent = new ExplorationAgent(socket, session.logger);
+    this.isExploring = true;
+    
+    if (!this.agent) {
+      await this.initialize();
+    }
+
+    // Broadcast to all clients
+    this.broadcast('exploration-started', {
+      startLocation: START_LOCATION,
+      startPanoId: START_PANO_ID,
+      timestamp: new Date().toISOString()
+    });
+
+    // Start continuous exploration
+    const runExplorationStep = async () => {
+      if (!this.isExploring || !this.agent) {
+        return;
+      }
       
-      socket.emit('exploration-started', {
+      try {
+        const stepData = await this.agent.exploreStep();
+        this.addToHistory(stepData);
+        this.cacheScreenshots(stepData);
+        
+        // Schedule next step
+        if (this.isExploring) {
+          this.explorationInterval = setTimeout(runExplorationStep, STEP_INTERVAL);
+        }
+      } catch (error) {
+        console.error('Exploration step error:', error);
+        this.broadcast('error', { message: error.message });
+        
+        // Continue exploration even after errors
+        if (this.isExploring) {
+          this.explorationInterval = setTimeout(runExplorationStep, STEP_INTERVAL);
+        }
+      }
+    };
+    
+    // Start the first step
+    this.explorationInterval = setTimeout(runExplorationStep, STEP_INTERVAL);
+    return { success: true };
+  }
+
+  stopExploration() {
+    if (this.explorationInterval) {
+      clearTimeout(this.explorationInterval);
+      this.explorationInterval = null;
+    }
+    this.isExploring = false;
+    this.broadcast('exploration-stopped', {});
+  }
+
+  async takeSingleStep() {
+    if (this.isExploring) {
+      return { error: 'Cannot take step while exploration is running' };
+    }
+
+    if (!this.agent) {
+      await this.initialize();
+      this.broadcast('exploration-started', {
         startLocation: START_LOCATION,
-        startPanoId: START_PANO_ID,
         timestamp: new Date().toISOString()
       });
+    }
 
-      await session.agent.initialize();
+    const stepData = await this.agent.exploreStep();
+    this.addToHistory(stepData);
+    this.cacheScreenshots(stepData);
+    this.broadcast('step-complete', {});
+    return { success: true };
+  }
 
-      // Use recursive setTimeout for safer sequential execution
-      const runExplorationStep = async () => {
-        if (!session.isExploring || !session.agent) {
-          return;
-        }
-        
-        try {
-          await session.agent.exploreStep();
-          
-          // Schedule next step only after current step completes
-          if (session.isExploring) {
-            session.interval = setTimeout(runExplorationStep, STEP_INTERVAL);
-          }
-        } catch (error) {
-          console.error('Exploration step error:', error);
-          socket.emit('error', { message: error.message });
-          
-          // Continue exploration even after errors
-          if (session.isExploring) {
-            session.interval = setTimeout(runExplorationStep, STEP_INTERVAL);
-          }
-        }
-      };
+  async resetExploration() {
+    this.stopExploration();
+    
+    // Clear all history and cache
+    this.decisionHistory = [];
+    this.screenshotCache.clear();
+    
+    // Reset the agent
+    if (this.agent) {
+      await this.agent.reset();
+    }
+    
+    // Create new persistent log file
+    this.persistentLogger = this.createPersistentLogger();
+    
+    this.broadcast('exploration-reset', {});
+  }
+
+  addToHistory(stepData) {
+    // Add to memory history
+    this.decisionHistory.push(stepData);
+    
+    // Cap memory usage
+    if (this.decisionHistory.length > this.maxHistoryInMemory) {
+      this.decisionHistory.shift();
+    }
+    
+    // Write to persistent log
+    fs.appendFileSync(this.persistentLogger, JSON.stringify(stepData) + '\n');
+  }
+
+  cacheScreenshots(stepData) {
+    if (stepData.screenshots) {
+      // Add new screenshots to cache
+      this.screenshotCache.set(stepData.stepCount, stepData.screenshots);
       
-      // Start the first step
-      session.interval = setTimeout(runExplorationStep, STEP_INTERVAL);
+      // Remove old screenshots beyond cache limit
+      if (this.screenshotCache.size > this.cacheSize) {
+        const oldestStep = Math.min(...this.screenshotCache.keys());
+        this.screenshotCache.delete(oldestStep);
+      }
+    }
+  }
 
-    } catch (error) {
-      console.error('Failed to start exploration:', error);
-      socket.emit('error', { message: error.message });
-      session.isExploring = false;
+  getRecentHistory() {
+    // Return last N entries for new connections
+    return this.decisionHistory.slice(-DECISION_HISTORY_LIMIT);
+  }
+
+  getCurrentState() {
+    if (!this.agent) {
+      return {
+        isExploring: false,
+        position: START_LOCATION,
+        panoId: START_PANO_ID,
+        stats: { locationsVisited: 0, distanceTraveled: 0 },
+        stepCount: 0
+      };
+    }
+    
+    return {
+      isExploring: this.isExploring,
+      position: this.agent.currentPosition,
+      panoId: this.agent.currentPanoId,
+      stats: this.agent.coverage ? this.agent.coverage.getStats() : {},
+      stepCount: this.agent.stepCount,
+      fullPath: this.agent.coverage ? this.agent.coverage.path : []
+    };
+  }
+
+  broadcast(event, data) {
+    io.emit(event, data);
+  }
+
+  addClient(socket) {
+    this.connectedClients.add(socket.id);
+    console.log(`Client connected: ${socket.id}. Total clients: ${this.connectedClients.size}`);
+    
+    // Send current state to new client
+    socket.emit('initial-state', {
+      ...this.getCurrentState(),
+      startLocation: START_LOCATION,
+      startPanoId: START_PANO_ID,
+      recentHistory: this.getRecentHistory(),
+      connectedClients: this.connectedClients.size
+    });
+  }
+
+  removeClient(socketId) {
+    this.connectedClients.delete(socketId);
+    console.log(`Client disconnected: ${socketId}. Total clients: ${this.connectedClients.size}`);
+    
+    // Broadcast updated client count
+    this.broadcast('client-count', { count: this.connectedClients.size });
+  }
+}
+
+// Initialize global exploration
+const globalExploration = new GlobalExploration();
+
+// Socket.io connection handling
+io.on('connection', (socket) => {
+  globalExploration.addClient(socket);
+
+  socket.on('start-exploration', async () => {
+    const result = await globalExploration.startExploration();
+    if (result.error) {
+      socket.emit('error', { message: result.error });
     }
   });
 
   socket.on('stop-exploration', () => {
-    const session = sessions.get(socket.id);
-    if (session.interval) {
-      clearTimeout(session.interval);  // Changed to clearTimeout
-      session.interval = null;
-    }
-    session.isExploring = false;
-    socket.emit('exploration-stopped');
+    globalExploration.stopExploration();
   });
 
   socket.on('take-single-step', async () => {
-    const session = sessions.get(socket.id);
-    
-    if (session.isExploring) {
-      socket.emit('error', { message: 'Cannot take step while exploration is running' });
-      return;
-    }
-    
-    // Check if a step is already in progress
-    if (session.isStepInProgress) {
-      console.log('Step already in progress, ignoring request');
-      socket.emit('error', { message: 'A step is already in progress' });
-      return;
-    }
-
     try {
-      // Set the flag to prevent concurrent steps
-      session.isStepInProgress = true;
-      
-      if (!session.agent) {
-        session.agent = new ExplorationAgent(socket, session.logger);
-        await session.agent.initialize();
-        
-        socket.emit('exploration-started', {
-          startLocation: START_LOCATION,
-          timestamp: new Date().toISOString()
-        });
+      const result = await globalExploration.takeSingleStep();
+      if (result.error) {
+        socket.emit('error', { message: result.error });
       }
-
-      await session.agent.exploreStep();
-      socket.emit('step-complete');
-      
     } catch (error) {
       console.error('Single step error:', error);
       socket.emit('error', { message: error.message });
-    } finally {
-      // Always clear the flag when done
-      session.isStepInProgress = false;
     }
   });
 
   socket.on('reset-exploration', async () => {
-    const session = sessions.get(socket.id);
-    if (session.interval) {
-      clearTimeout(session.interval);  // Changed to clearTimeout
-      session.interval = null;
-    }
-    
-    if (session.agent) {
-      await session.agent.reset();
-    }
-    
-    session.isExploring = false;
-    socket.emit('exploration-reset');
+    await globalExploration.resetExploration();
   });
 
-  socket.on('disconnect', async () => {
-    console.log('Client disconnected:', socket.id);
-    const session = sessions.get(socket.id);
-    
-    if (session) {
-      if (session.interval) {
-        clearTimeout(session.interval);  // Changed to clearTimeout
-      }
-      if (session.agent && session.agent.streetView) {
-        await session.agent.streetView.close();
-      }
-      sessions.delete(socket.id);
-    }
+  socket.on('disconnect', () => {
+    globalExploration.removeClient(socket.id);
   });
 });
 
@@ -218,4 +311,5 @@ server.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📍 Starting location: ${START_LOCATION.lat}, ${START_LOCATION.lng}`);
   console.log(`⏱️  Step interval: ${STEP_INTERVAL}ms`);
+  console.log(`📜 Decision history limit: ${DECISION_HISTORY_LIMIT} entries`);
 });

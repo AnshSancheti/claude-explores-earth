@@ -26,9 +26,11 @@ class ExplorationApp {
       this.uiManager.setExplorationState(false);
     });
 
-    // Receive initial configuration when connecting
-    this.socket.on('initial-config', (data) => {
-      console.log('Initial config received', data);
+    // Receive initial state when connecting (includes current state and recent history)
+    this.socket.on('initial-state', (data) => {
+      console.log('Initial state received', data);
+      console.log(`Connected clients: ${data.connectedClients}`);
+      
       this.startLocation = data.startLocation;
       
       if (data.startPanoId) {
@@ -47,8 +49,47 @@ class ExplorationApp {
             clearInterval(checkGoogleMaps);
             this.streetViewManager.setStartPosition(this.startLocation);
             this.streetViewManager.initialize();
+            
+            // If exploration is in progress, update to current position
+            if (data.position && data.panoId) {
+              this.streetViewManager.updatePosition(data.panoId, 0);
+            }
           }
         }, 100);
+      }
+      
+      // Update UI with current state
+      if (data.stats) {
+        this.uiManager.updateStats(data.stats);
+      }
+      if (data.stepCount !== undefined) {
+        this.uiManager.updateStep(data.stepCount);
+      }
+      
+      // Update exploration state
+      this.isExploring = data.isExploring || false;
+      this.uiManager.setExplorationState(this.isExploring);
+      
+      // Load recent history into decision log
+      if (data.recentHistory && data.recentHistory.length > 0) {
+        console.log(`Loading ${data.recentHistory.length} recent decisions`);
+        data.recentHistory.forEach(entry => {
+          this.uiManager.addDecisionEntry(entry);
+        });
+      }
+      
+      // Update minimap with full path if available
+      if (data.fullPath && data.fullPath.length > 0) {
+        console.log(`Loading ${data.fullPath.length} path points to minimap`);
+        // MapManager will queue these if map isn't ready yet
+        data.fullPath.forEach(position => {
+          this.mapManager.updatePosition(position);
+        });
+      }
+      
+      // Always update current position if provided (even if we have fullPath)
+      if (data.position) {
+        this.mapManager.updatePosition(data.position);
       }
     });
 
@@ -62,17 +103,13 @@ class ExplorationApp {
 
     this.socket.on('position-update', (data) => {
       console.log('Position update', data);
-      if (this.mapManager.map) {
-        this.mapManager.updatePosition(data.position);
-      }
+      this.mapManager.updatePosition(data.position);
       this.uiManager.updateStats(data.stats);
     });
 
     this.socket.on('move-decision', (data) => {
       console.log('Move decision', data);
-      if (this.mapManager.map) {
-        this.mapManager.updatePosition(data.newPosition);
-      }
+      this.mapManager.updatePosition(data.newPosition);
       if (this.streetViewManager.panorama) {
         this.streetViewManager.updatePosition(data.panoId, data.decision.direction);
       }
@@ -91,9 +128,7 @@ class ExplorationApp {
       console.log('Exploration reset');
       this.isExploring = false;
       this.uiManager.setExplorationState(false);
-      if (this.mapManager.map) {
-        this.mapManager.reset();
-      }
+      this.mapManager.reset();
       if (this.streetViewManager.panorama) {
         this.streetViewManager.reset();
       }
@@ -110,6 +145,12 @@ class ExplorationApp {
     this.socket.on('error', (data) => {
       console.error('Server error:', data);
       this.uiManager.setStepButtonState(false);
+    });
+
+    // Handle client count updates
+    this.socket.on('client-count', (data) => {
+      console.log(`Connected clients: ${data.count}`);
+      // Could display this in the UI if desired
     });
   }
 
