@@ -136,62 +136,96 @@ export class ExplorationAgent {
       
       // If not stuck or no pathfinding solution, use normal exploration
       if (!selectedLink) {
-        this.mode = 'exploration';
-        
         const unvisitedLinks = links.filter(link => 
           !this.coverage.hasVisited(link.pano)
         );
         
         const targetLinks = unvisitedLinks.length > 0 ? unvisitedLinks : links;
         
-        // Use the screenshots array declared at higher scope
-        screenshots = [];
-        
-        // Capture screenshots with the current step number
-        for (const link of targetLinks) {
-          const heading = parseFloat(link.heading);
+        // Check if only one valid link exists - cost saving mechanism
+        if (targetLinks.length === 1) {
+          this.mode = 'pathfinding'; // Use pathfinding mode for single-link steps
+          selectedLink = targetLinks[0];
+          
+          // Still capture screenshot for display
+          const heading = parseFloat(selectedLink.heading);
           await this.streetViewHeadless.setHeading(heading);
           
           const screenshotData = await this.screenshot.capture(
-            currentStep,  // Use the captured step number
+            currentStep,
             heading,
             await this.streetViewHeadless.getScreenshot()
           );
           
-          console.log(`Captured screenshot: step=${currentStep}, filename=${screenshotData.filename}`);
-          
-          // Validate that the filename matches the current step
-          if (!screenshotData.filename.startsWith(`${currentStep}-`)) {
-            console.error(`Screenshot filename mismatch! Expected step ${currentStep}, got ${screenshotData.filename}`);
-          }
-          
-          screenshots.push({
+          screenshots = [{
             direction: heading,
             filename: screenshotData.filename,
-            panoId: link.pano,
-            description: link.description || '',
-            visited: this.coverage.hasVisited(link.pano),
+            panoId: selectedLink.pano,
+            description: selectedLink.description || '',
+            visited: this.coverage.hasVisited(selectedLink.pano),
             base64: screenshotData.base64,
-            position: this.currentPosition  // Add current position for Google Maps links
+            position: this.currentPosition
+          }];
+          
+          decision = {
+            selectedPanoId: selectedLink.pano,
+            reasoning: 'Only one available path - proceeding automatically'
+          };
+          
+          console.log(`✓ Single link detected - auto-navigating to ${selectedLink.pano} (cost-saving mode)`);
+        } else {
+          // Multiple links available - use AI for decision
+          this.mode = 'exploration';
+          
+          // Use the screenshots array declared at higher scope
+          screenshots = [];
+          
+          // Capture screenshots with the current step number
+          for (const link of targetLinks) {
+            const heading = parseFloat(link.heading);
+            await this.streetViewHeadless.setHeading(heading);
+            
+            const screenshotData = await this.screenshot.capture(
+              currentStep,  // Use the captured step number
+              heading,
+              await this.streetViewHeadless.getScreenshot()
+            );
+            
+            console.log(`Captured screenshot: step=${currentStep}, filename=${screenshotData.filename}`);
+            
+            // Validate that the filename matches the current step
+            if (!screenshotData.filename.startsWith(`${currentStep}-`)) {
+              console.error(`Screenshot filename mismatch! Expected step ${currentStep}, got ${screenshotData.filename}`);
+            }
+            
+            screenshots.push({
+              direction: heading,
+              filename: screenshotData.filename,
+              panoId: link.pano,
+              description: link.description || '',
+              visited: this.coverage.hasVisited(link.pano),
+              base64: screenshotData.base64,
+              position: this.currentPosition  // Add current position for Google Maps links
+            });
+            
+            await new Promise(resolve => setTimeout(resolve, 100));  // Reduced delay for faster execution
+          }
+          
+          const visitedPanos = unvisitedLinks.length === 0 ? 
+            this.coverage.getVisitedList() : [];
+          
+          decision = await this.ai.decideNextMove({
+            currentPosition: this.currentPosition,
+            screenshots,
+            links: targetLinks,  // Only pass links we have screenshots for
+            visitedPanos,
+            stats: this.coverage.getStats(),
+            stepNumber: currentStep,
+            mode: this.mode
           });
           
-          await new Promise(resolve => setTimeout(resolve, 100));  // Reduced delay for faster execution
+          selectedLink = links.find(l => l.pano === decision.selectedPanoId);
         }
-        
-        const visitedPanos = unvisitedLinks.length === 0 ? 
-          this.coverage.getVisitedList() : [];
-        
-        decision = await this.ai.decideNextMove({
-          currentPosition: this.currentPosition,
-          screenshots,
-          links: targetLinks,  // Only pass links we have screenshots for
-          visitedPanos,
-          stats: this.coverage.getStats(),
-          stepNumber: currentStep,
-          mode: this.mode
-        });
-        
-        selectedLink = links.find(l => l.pano === decision.selectedPanoId);
       }
       
       if (!selectedLink) {
@@ -215,9 +249,9 @@ export class ExplorationAgent {
       const newLinks = newPanoData.links || [];
       this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
       
-      // Only validate and send screenshots if we took them (exploration mode)
+      // Process screenshots for all modes (exploration, pathfinding, single-link)
       let thumbnailUrls = [];
-      if (this.mode === 'exploration') {
+      if (screenshots && screenshots.length > 0) {
         const invalidScreenshots = screenshots.filter(s => !s.filename.startsWith(`${currentStep}-`));
         if (invalidScreenshots.length > 0) {
           console.error(`WARNING: Found ${invalidScreenshots.length} screenshots with wrong step number!`);

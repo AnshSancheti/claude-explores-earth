@@ -33,8 +33,7 @@ class UIManager {
     
     entry.innerHTML = `
       <div class="decision-header">
-        <span class="decision-step">Step ${data.stepCount}</span>
-        ${modeIndicator}
+        <span class="decision-step">${modeIndicator} Step ${data.stepCount}</span>
         <span class="decision-time">${time}</span>
       </div>
       <div class="decision-reasoning">${data.decision.reasoning}</div>
