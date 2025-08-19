@@ -31,10 +31,26 @@
           </div>
         </div>
         <div class="controls">
-          <button id="startBtn" class="btn btn-primary">Start</button>
-          <button id="stepBtn" class="btn btn-info">Step</button>
-          <button id="stopBtn" class="btn btn-secondary" disabled>Stop</button>
-          <button id="resetBtn" class="btn btn-warning">Reset</button>
+          <button id="startBtn" class="btn btn-primary" title="Start">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M4 2 L13 8 L4 14 Z"/>
+            </svg>
+          </button>
+          <button id="stepBtn" class="btn btn-info" title="Step">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M2 8 L10 8 M10 8 L7 5 M10 8 L7 11" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button id="stopBtn" class="btn btn-secondary" disabled title="Stop">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <rect x="3" y="3" width="10" height="10" rx="1"/>
+            </svg>
+          </button>
+          <button id="resetBtn" class="btn btn-warning" title="Reset">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 3 L8 1 L5 4 L8 7 L8 5 C10.5 5 12.5 7 12.5 9.5 C12.5 12 10.5 14 8 14 C5.5 14 3.5 12 3.5 9.5 C3.5 8.5 3.8 7.6 4.3 6.9" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
         </div>
       </div>
     </header>
