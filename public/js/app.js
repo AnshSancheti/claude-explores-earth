@@ -14,7 +14,18 @@ class ExplorationApp {
   }
 
   connectSocket() {
-    this.socket = io();
+    // Configure Socket.io connection for production
+    const socketOptions = {
+      transports: ['polling', 'websocket'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000
+    };
+    
+    // In production, connect to the same origin
+    this.socket = io(socketOptions);
 
     this.socket.on('connect', () => {
       console.log('Connected to server');

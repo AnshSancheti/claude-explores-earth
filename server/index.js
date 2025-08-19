@@ -18,12 +18,52 @@ const __dirname = dirname(__filename);
 const ROOT_DIR = join(__dirname, '..');
 
 const app = express();
+
+// Trust proxy headers in production (for fly.io)
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', true);
+}
+
 const server = createServer(app);
+
+// Configure Socket.io for production environment
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+    origin: (origin, callback) => {
+      // In production, allow the app's domain and handle proxy headers
+      if (process.env.NODE_ENV === 'production') {
+        // Allow requests with no origin (same-origin requests)
+        if (!origin) return callback(null, true);
+        
+        // Allow fly.dev domains
+        if (origin.includes('fly.dev')) {
+          return callback(null, true);
+        }
+        
+        // Allow localhost for development
+        if (origin.includes('localhost')) {
+          return callback(null, true);
+        }
+        
+        // Reject other origins
+        return callback(new Error('Not allowed by CORS'));
+      } else {
+        // In development, allow all origins
+        callback(null, true);
+      }
+    },
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  // Add connection settings for production
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  transports: ['polling', 'websocket'],
+  allowEIO3: true,
+  // Allow upgrades from polling to websocket
+  allowUpgrades: true,
+  // Handle proxy headers from fly.io
+  path: '/socket.io/'
 });
 
 app.use(cors());
