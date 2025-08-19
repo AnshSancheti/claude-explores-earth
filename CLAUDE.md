@@ -107,8 +107,21 @@ START_PANO_ID=<optional_pano_id>  # Takes priority over lat/lng if set
 ### Frontend Components
 - `public/js/app.js` - Main application controller
 - `public/js/streetview.js` - User-visible Street View display
-- `public/js/map.js` - Minimap showing exploration path
-- `public/js/ui.js` - UI updates and decision log
+- `public/js/map.js` - Minimap showing exploration path with user interaction tracking
+- `public/js/ui.js` - UI updates and decision log with smart pathfinding grouping
+
+### UI Features
+- **Glass Morphism Design**: Modern glass effects on header and sidebar with backdrop blur
+- **Icon-Based Controls**: Consistent SVG icons for play, step, stop, and reset actions
+- **Smart Decision Log**: 
+  - Groups consecutive pathfinding steps to reduce clutter
+  - Smooth slide-down animations for new entries
+  - Timeline connectors between entries with color-coded dots
+  - Green indicators for exploration decisions, yellow for pathfinding
+- **Interactive Minimap**: 
+  - Respects manual user adjustments (pan/zoom)
+  - Reset button to recenter on full exploration path
+  - Doesn't auto-reposition after user interaction
 
 ## Data Storage
 
