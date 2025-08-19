@@ -5,7 +5,6 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import dotenv from 'dotenv';
 import cors from 'cors';
-import rateLimit from 'express-rate-limit';
 import { ExplorationAgent } from './agents/explorationAgent.js';
 import { Logger } from './utils/logger.js';
 import { productionSecurity } from './middleware/secureRuns.js';
@@ -30,32 +29,6 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
-// Rate limiting configuration
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
-  message: 'Too many requests from this IP, please try again later.',
-  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-});
-
-// Stricter rate limiting for API endpoints
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 30, // Limit each IP to 30 API requests per windowMs
-  message: 'Too many API requests from this IP, please try again later.'
-});
-
-// Socket.io connection rate limiting
-const socketLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 5, // Limit each IP to 5 socket connections per minute
-  message: 'Too many connection attempts, please try again later.'
-});
-
-// Apply general rate limiting to all requests
-app.use(generalLimiter);
-
 // Serve static files
 app.use(express.static(join(ROOT_DIR, 'public')));
 
@@ -66,7 +39,7 @@ const runsMiddleware = express.static(join(ROOT_DIR, 'runs'));
 app.use('/runs', runsMiddleware);
 
 // Admin authentication endpoint
-app.post('/api/admin/auth', apiLimiter, express.json(), (req, res) => {
+app.post('/api/admin/auth', express.json(), (req, res) => {
   const { password } = req.body;
   const controlPassword = process.env.CONTROL_PASSWORD;
   
@@ -95,10 +68,11 @@ app.post('/api/admin/auth', apiLimiter, express.json(), (req, res) => {
 });
 
 // Serve Google Maps API loader with API key from environment
-app.get('/api/maps-loader', apiLimiter, (req, res) => {
+app.get('/api/maps-loader', (req, res) => {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
   if (!apiKey) {
-    return res.status(500).send('Google Maps API key not configured');
+    console.error('GOOGLE_MAPS_API_KEY not configured in environment variables');
+    return res.status(500).send('Google Maps API key not configured. Please set GOOGLE_MAPS_API_KEY.');
   }
   
   res.type('application/javascript');
@@ -115,7 +89,8 @@ app.get('/api/maps-loader', apiLimiter, (req, res) => {
   `);
 });
 
-const PORT = process.env.PORT || 5173;
+// Use PORT from environment, default to 3000 for Fly.io
+const PORT = process.env.PORT || 3000;
 const STEP_INTERVAL = parseInt(process.env.STEP_INTERVAL_MS) || 5000;
 const DECISION_HISTORY_LIMIT = parseInt(process.env.DECISION_HISTORY_LIMIT) || 20;
 const START_LOCATION = {
@@ -356,36 +331,7 @@ function verifyAdminToken(token) {
   return false;
 }
 
-// Socket.io connection handling with rate limiting
-const connectionAttempts = new Map();
-
-io.use((socket, next) => {
-  const clientIp = socket.handshake.address;
-  const now = Date.now();
-  
-  // Clean up old entries
-  for (const [ip, timestamps] of connectionAttempts.entries()) {
-    const filtered = timestamps.filter(t => now - t < 60000); // Keep last minute
-    if (filtered.length === 0) {
-      connectionAttempts.delete(ip);
-    } else {
-      connectionAttempts.set(ip, filtered);
-    }
-  }
-  
-  // Check rate limit
-  const attempts = connectionAttempts.get(clientIp) || [];
-  if (attempts.length >= 5) {
-    return next(new Error('Too many connection attempts. Please try again later.'));
-  }
-  
-  // Record this attempt
-  attempts.push(now);
-  connectionAttempts.set(clientIp, attempts);
-  
-  next();
-});
-
+// Socket.io connection handling
 io.on('connection', (socket) => {
   globalExploration.addClient(socket);
 
@@ -451,10 +397,14 @@ io.on('connection', (socket) => {
 });
 
 // Listen on all network interfaces (0.0.0.0) for production deployments
-const HOST = process.env.HOST || '0.0.0.0';
+const HOST = '0.0.0.0'; // Always bind to 0.0.0.0 for containerized environments
 server.listen(PORT, HOST, () => {
-  console.log(`🚀 Server running on http://${HOST}:${PORT}`);
+  console.log(`🚀 Server listening on ${HOST}:${PORT}`);
   console.log(`📍 Starting location: ${START_LOCATION.lat}, ${START_LOCATION.lng}`);
   console.log(`⏱️  Step interval: ${STEP_INTERVAL}ms`);
   console.log(`📜 Decision history limit: ${DECISION_HISTORY_LIMIT} entries`);
+  console.log(`🔐 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔑 Google Maps API: ${process.env.GOOGLE_MAPS_API_KEY ? 'Configured' : 'NOT CONFIGURED'}`);
+  console.log(`🔑 OpenAI API: ${process.env.OPENAI_API_KEY ? 'Configured' : 'NOT CONFIGURED'}`);
+  console.log(`🔑 Admin Password: ${process.env.CONTROL_PASSWORD ? 'Configured' : 'NOT CONFIGURED'}`);
 });
