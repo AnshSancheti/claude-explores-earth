@@ -9,6 +9,7 @@ class MapManager {
     this.startPosition = null;
     this.mapLoaded = false;
     this.pendingUpdates = []; // Queue positions until map is ready
+    this.userHasInteracted = false; // Track if user manually adjusted the map
   }
 
   isReady() {
@@ -40,6 +41,7 @@ class MapManager {
         this.addStartMarker();
         this.addCurrentMarker();
         this.initializePath();
+        this.addResetButton();
         this.mapLoaded = true;
         
         // Process any pending position updates
@@ -50,6 +52,9 @@ class MapManager {
           });
           this.pendingUpdates = [];
         }
+        
+        // Track user interactions
+        this.setupInteractionTracking();
       });
 
       this.map.on('error', (e) => {
@@ -179,26 +184,30 @@ class MapManager {
       });
     }
     
-    if (this.pathCoordinates.length > 1) {
-      const bounds = this.pathCoordinates.reduce((bounds, coord) => {
-        return bounds.extend(coord);
-      }, new maplibregl.LngLatBounds(this.pathCoordinates[0], this.pathCoordinates[0]));
-      
-      this.map.fitBounds(bounds, {
-        padding: 50,
-        maxZoom: 16
-      });
-    } else {
-      this.map.flyTo({
-        center: lngLat,
-        zoom: 15
-      });
+    // Only auto-fit bounds if user hasn't manually interacted with the map
+    if (!this.userHasInteracted) {
+      if (this.pathCoordinates.length > 1) {
+        const bounds = this.pathCoordinates.reduce((bounds, coord) => {
+          return bounds.extend(coord);
+        }, new maplibregl.LngLatBounds(this.pathCoordinates[0], this.pathCoordinates[0]));
+        
+        this.map.fitBounds(bounds, {
+          padding: 50,
+          maxZoom: 16
+        });
+      } else {
+        this.map.flyTo({
+          center: lngLat,
+          zoom: 15
+        });
+      }
     }
   }
 
   reset() {
     this.pathCoordinates = [];
     this.pendingUpdates = []; // Clear any pending updates
+    this.userHasInteracted = false; // Reset interaction tracking
     
     if (this.map && this.map.getSource('path')) {
       this.map.getSource('path').setData({
@@ -221,6 +230,66 @@ class MapManager {
         zoom: 15
       });
     }
+  }
+  
+  setupInteractionTracking() {
+    // Track when user manually pans or zooms
+    this.map.on('dragstart', () => {
+      this.userHasInteracted = true;
+      console.log('User manually panned minimap');
+    });
+    
+    this.map.on('zoomstart', (e) => {
+      // Check if zoom was triggered by user (not programmatic)
+      if (!e.originalEvent) return;
+      this.userHasInteracted = true;
+      console.log('User manually zoomed minimap');
+    });
+  }
+  
+  addResetButton() {
+    // Create reset button container
+    const resetBtn = document.createElement('button');
+    resetBtn.className = 'minimap-reset-btn';
+    resetBtn.innerHTML = '⟲';
+    resetBtn.title = 'Reset view to show full path';
+    resetBtn.onclick = () => this.resetView();
+    
+    // Add to minimap container
+    const minimapContainer = document.getElementById('minimapContainer');
+    if (minimapContainer) {
+      minimapContainer.appendChild(resetBtn);
+    }
+  }
+  
+  resetView() {
+    // Reset interaction flag
+    this.userHasInteracted = false;
+    
+    // Recenter map to show full path
+    if (this.pathCoordinates.length > 1) {
+      const bounds = this.pathCoordinates.reduce((bounds, coord) => {
+        return bounds.extend(coord);
+      }, new maplibregl.LngLatBounds(this.pathCoordinates[0], this.pathCoordinates[0]));
+      
+      this.map.fitBounds(bounds, {
+        padding: 50,
+        maxZoom: 16
+      });
+    } else if (this.pathCoordinates.length === 1) {
+      this.map.flyTo({
+        center: this.pathCoordinates[0],
+        zoom: 15
+      });
+    } else if (this.startPosition) {
+      // No path yet, center on start position
+      this.map.flyTo({
+        center: [this.startPosition.lng, this.startPosition.lat],
+        zoom: 15
+      });
+    }
+    
+    console.log('Minimap view reset to show full path');
   }
 }
 
