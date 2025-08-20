@@ -133,6 +133,7 @@ app.get('/api/maps-loader', (req, res) => {
 const PORT = process.env.PORT || 3000;
 const STEP_INTERVAL = parseInt(process.env.STEP_INTERVAL_MS) || 5000;
 const DECISION_HISTORY_LIMIT = parseInt(process.env.DECISION_HISTORY_LIMIT) || 20;
+const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL) || 500; // Save every N steps
 const START_LOCATION = {
   lat: parseFloat(process.env.START_LAT),
   lng: parseFloat(process.env.START_LNG)
@@ -153,6 +154,13 @@ class GlobalExploration {
     // Keep enough history for new clients to see recent decisions with screenshots
     this.maxHistoryInMemory = Math.max(DECISION_HISTORY_LIMIT * 2, 50); 
     this.cacheSize = this.maxHistoryInMemory; // Match cache to history size
+    
+    // Save optimization - only save periodically
+    this.saveInterval = SAVE_INTERVAL; // Save every N steps (configurable)
+    this.lastSaveStep = 0;
+    this.pendingSave = false;
+    this.backgroundSaveTimer = null;
+    this.backgroundSaveInterval = 5 * 60 * 1000; // 5 minutes in milliseconds
   }
 
   createPersistentLogger() {
@@ -166,8 +174,14 @@ class GlobalExploration {
   }
   
   // Save current state to a JSON file
-  async saveState() {
+  async saveState(force = false) {
     if (!this.agent || !this.agent.coverage) return;
+    
+    // Only save if forced or enough steps have passed
+    if (!force && (this.agent.stepCount - this.lastSaveStep) < this.saveInterval) {
+      this.pendingSave = true;
+      return;
+    }
     
     const saveDir = path.join(ROOT_DIR, 'runs', 'saves');
     if (!fs.existsSync(saveDir)) {
@@ -200,6 +214,8 @@ class GlobalExploration {
       // Atomic rename
       fs.renameSync(tempPath, finalPath);
       console.log(`State saved: ${this.agent.stepCount} steps, ${Object.keys(saveData.graph).length} nodes`);
+      this.lastSaveStep = this.agent.stepCount;
+      this.pendingSave = false;
     } catch (error) {
       console.error('Failed to save state:', error);
       // Clean up temp file if it exists
@@ -214,14 +230,17 @@ class GlobalExploration {
     const savePath = path.join(ROOT_DIR, 'runs', 'saves', 'current-run.json');
     
     if (!fs.existsSync(savePath)) {
+      console.log('📄 No save file found at:', savePath);
       return { error: 'No save file found' };
     }
     
+    console.log('📄 Loading save file from:', savePath);
     try {
       const saveData = JSON.parse(fs.readFileSync(savePath, 'utf8'));
+      console.log(`📊 Save file details: runId=${saveData.runId}, stepCount=${saveData.stepCount}, lastUpdated=${saveData.lastUpdated}`);
       
       // Stop current exploration
-      this.stopExploration();
+      await this.stopExploration();
       
       // Initialize agent if needed
       if (!this.agent) {
@@ -316,6 +335,17 @@ class GlobalExploration {
       }, 60000); // Every minute
     }
 
+    // Start background save timer (saves every 5 minutes as backup)
+    if (this.backgroundSaveTimer) {
+      clearInterval(this.backgroundSaveTimer);
+    }
+    this.backgroundSaveTimer = setInterval(async () => {
+      if (this.pendingSave && this.agent) {
+        console.log('Background save triggered (5-minute interval)');
+        await this.saveState(true);
+      }
+    }, this.backgroundSaveInterval);
+
     // Broadcast to all clients
     this.broadcast('exploration-started', {
       startLocation: START_LOCATION,
@@ -334,7 +364,7 @@ class GlobalExploration {
         this.addToHistory(stepData);
         this.cacheScreenshots(stepData);
         
-        // Save state after each step
+        // Save state periodically (not every step)
         await this.saveState();
         
         // Schedule next step
@@ -357,12 +387,24 @@ class GlobalExploration {
     return { success: true };
   }
 
-  stopExploration() {
+  async stopExploration() {
     if (this.explorationInterval) {
       clearTimeout(this.explorationInterval);
       this.explorationInterval = null;
     }
     this.isExploring = false;
+    
+    // Clear background save timer
+    if (this.backgroundSaveTimer) {
+      clearInterval(this.backgroundSaveTimer);
+      this.backgroundSaveTimer = null;
+    }
+    
+    // Force save when stopping
+    if (this.pendingSave) {
+      await this.saveState(true);
+    }
+    
     this.broadcast('exploration-stopped', {});
   }
 
@@ -383,15 +425,15 @@ class GlobalExploration {
     this.addToHistory(stepData);
     this.cacheScreenshots(stepData);
     
-    // Save state after single step
-    await this.saveState();
+    // Force save after manual step
+    await this.saveState(true);
     
     this.broadcast('step-complete', {});
     return { success: true };
   }
 
   async resetExploration() {
-    this.stopExploration();
+    await this.stopExploration();
     
     // Clean up all screenshots from the current run before resetting
     if (this.agent && this.agent.runId) {
@@ -590,7 +632,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('stop-exploration', (data) => {
+  socket.on('stop-exploration', async (data) => {
     // Check for admin token
     const token = data?.token;
     if (!verifyAdminToken(token)) {
@@ -598,7 +640,7 @@ io.on('connection', (socket) => {
       return;
     }
     
-    globalExploration.stopExploration();
+    await globalExploration.stopExploration();
   });
 
   socket.on('take-single-step', async (data) => {
@@ -639,10 +681,14 @@ io.on('connection', (socket) => {
       return;
     }
     
+    console.log('📂 User requested to load saved state...');
     const result = await globalExploration.loadState();
+    
     if (result.error) {
+      console.log(`❌ Failed to load state: ${result.error}`);
       socket.emit('error', { message: result.error });
     } else {
+      console.log(`✅ Successfully loaded state: ${result.stepCount} steps, ${result.locationsVisited} locations, ${result.graphSize} nodes`);
       socket.emit('save-loaded', result);
     }
   });
@@ -658,9 +704,29 @@ server.listen(PORT, HOST, () => {
   console.log(`🚀 Server listening on ${HOST}:${PORT}`);
   console.log(`📍 Starting location: ${START_LOCATION.lat}, ${START_LOCATION.lng}`);
   console.log(`⏱️  Step interval: ${STEP_INTERVAL}ms`);
+  console.log(`💾 Save interval: Every ${SAVE_INTERVAL} steps`);
   console.log(`📜 Decision history limit: ${DECISION_HISTORY_LIMIT} entries`);
   console.log(`🔐 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔑 Google Maps API: ${process.env.GOOGLE_MAPS_API_KEY ? 'Configured' : 'NOT CONFIGURED'}`);
   console.log(`🔑 OpenAI API: ${process.env.OPENAI_API_KEY ? 'Configured' : 'NOT CONFIGURED'}`);
   console.log(`🔑 Admin Password: ${process.env.CONTROL_PASSWORD ? 'Configured' : 'NOT CONFIGURED'}`);
+});
+
+// Graceful shutdown handling
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, saving state and shutting down...');
+  await globalExploration.stopExploration();
+  if (globalExploration.pendingSave || globalExploration.agent) {
+    await globalExploration.saveState(true);
+  }
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received, saving state and shutting down...');
+  await globalExploration.stopExploration();
+  if (globalExploration.pendingSave || globalExploration.agent) {
+    await globalExploration.saveState(true);
+  }
+  process.exit(0);
 });
