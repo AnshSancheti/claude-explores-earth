@@ -164,6 +164,128 @@ class GlobalExploration {
     const logPath = path.join(logsDir, `exploration-${timestamp}.jsonl`);
     return logPath;
   }
+  
+  // Save current state to a JSON file
+  async saveState() {
+    if (!this.agent || !this.agent.coverage) return;
+    
+    const saveDir = path.join(ROOT_DIR, 'runs', 'saves');
+    if (!fs.existsSync(saveDir)) {
+      fs.mkdirSync(saveDir, { recursive: true });
+    }
+    
+    const saveData = {
+      runId: this.agent.runId,
+      lastUpdated: new Date().toISOString(),
+      stepCount: this.agent.stepCount,
+      currentState: {
+        panoId: this.agent.currentPanoId,
+        position: this.agent.currentPosition,
+        heading: this.agent.currentHeading,
+        mode: this.agent.mode
+      },
+      stats: this.agent.coverage.getStats(),
+      graph: this.agent.coverage.serializeGraph(),
+      recentHistory: this.agent.coverage.recentHistory,
+      decisionHistory: this.decisionHistory.slice(-DECISION_HISTORY_LIMIT)
+      // Path removed - will be reconstructed from graph
+    };
+    
+    // Write to temp file first, then rename (atomic write)
+    const tempPath = path.join(saveDir, 'current-run.tmp.json');
+    const finalPath = path.join(saveDir, 'current-run.json');
+    
+    try {
+      fs.writeFileSync(tempPath, JSON.stringify(saveData, null, 2));
+      // Atomic rename
+      fs.renameSync(tempPath, finalPath);
+      console.log(`State saved: ${this.agent.stepCount} steps, ${Object.keys(saveData.graph).length} nodes`);
+    } catch (error) {
+      console.error('Failed to save state:', error);
+      // Clean up temp file if it exists
+      if (fs.existsSync(tempPath)) {
+        fs.unlinkSync(tempPath);
+      }
+    }
+  }
+  
+  // Load state from save file
+  async loadState() {
+    const savePath = path.join(ROOT_DIR, 'runs', 'saves', 'current-run.json');
+    
+    if (!fs.existsSync(savePath)) {
+      return { error: 'No save file found' };
+    }
+    
+    try {
+      const saveData = JSON.parse(fs.readFileSync(savePath, 'utf8'));
+      
+      // Stop current exploration
+      this.stopExploration();
+      
+      // Initialize agent if needed
+      if (!this.agent) {
+        await this.initialize();
+      }
+      
+      // Restore coverage state
+      this.agent.coverage.restoreFromSave(saveData);
+      
+      // Restore agent state
+      this.agent.runId = saveData.runId;
+      this.agent.stepCount = saveData.stepCount;
+      this.agent.currentPanoId = saveData.currentState.panoId;
+      this.agent.currentPosition = saveData.currentState.position;
+      this.agent.currentHeading = saveData.currentState.heading || 0;
+      this.agent.mode = saveData.currentState.mode || 'exploration';
+      
+      // Update screenshot service with restored runId
+      const { ScreenshotService } = await import('./utils/screenshot.js');
+      this.agent.screenshot = new ScreenshotService(this.agent.runId);
+      await this.agent.screenshot.initialize();
+      
+      // Restore decision history
+      this.decisionHistory = saveData.decisionHistory || [];
+      
+      // Navigate to saved position
+      if (this.agent.streetViewHeadless && this.agent.currentPanoId) {
+        await this.agent.streetViewHeadless.navigateToPano(this.agent.currentPanoId);
+      }
+      
+      // Reconstruct path from graph for minimap (all nodes in graph are visited)
+      const reconstructedPath = Array.from(this.agent.coverage.graph.entries())
+        .filter(([id, node]) => node.timestamp)  // All have timestamps
+        .sort((a, b) => a[1].timestamp - b[1].timestamp)
+        .map(([id, node]) => ({
+          lat: node.lat,
+          lng: node.lng,
+          panoId: id
+        }));
+      
+      // Broadcast restored state to all clients
+      this.broadcast('state-loaded', {
+        stepCount: this.agent.stepCount,
+        position: this.agent.currentPosition,
+        panoId: this.agent.currentPanoId,
+        stats: this.agent.coverage.getStats(),
+        fullPath: reconstructedPath,  // Send reconstructed path for minimap
+        decisionHistory: this.decisionHistory
+      });
+      
+      console.log(`State loaded: ${this.agent.stepCount} steps, ${this.agent.coverage.visitedPanos.size} locations visited`);
+      
+      return { 
+        success: true,
+        stepCount: this.agent.stepCount,
+        locationsVisited: this.agent.coverage.visitedPanos.size,
+        graphSize: this.agent.coverage.graph.size
+      };
+      
+    } catch (error) {
+      console.error('Failed to load state:', error);
+      return { error: error.message };
+    }
+  }
 
   async initialize() {
     if (!this.agent) {
@@ -212,6 +334,9 @@ class GlobalExploration {
         this.addToHistory(stepData);
         this.cacheScreenshots(stepData);
         
+        // Save state after each step
+        await this.saveState();
+        
         // Schedule next step
         if (this.isExploring) {
           this.explorationInterval = setTimeout(runExplorationStep, STEP_INTERVAL);
@@ -257,6 +382,10 @@ class GlobalExploration {
     const stepData = await this.agent.exploreStep();
     this.addToHistory(stepData);
     this.cacheScreenshots(stepData);
+    
+    // Save state after single step
+    await this.saveState();
+    
     this.broadcast('step-complete', {});
     return { success: true };
   }
@@ -368,13 +497,26 @@ class GlobalExploration {
       };
     }
     
+    // Reconstruct path from graph for initial load (all nodes are visited)
+    let fullPath = [];
+    if (this.agent.coverage && this.agent.coverage.graph.size > 0) {
+      fullPath = Array.from(this.agent.coverage.graph.entries())
+        .filter(([id, node]) => node.timestamp)
+        .sort((a, b) => a[1].timestamp - b[1].timestamp)
+        .map(([id, node]) => ({
+          lat: node.lat,
+          lng: node.lng,
+          panoId: id
+        }));
+    }
+    
     return {
       isExploring: this.isExploring,
       position: this.agent.currentPosition,
       panoId: this.agent.currentPanoId,
       stats: this.agent.coverage ? this.agent.coverage.getStats() : {},
       stepCount: this.agent.stepCount,
-      fullPath: this.agent.coverage ? this.agent.coverage.path : []
+      fullPath  // Only sent on initial connection
     };
   }
 
@@ -487,6 +629,22 @@ io.on('connection', (socket) => {
     }
     
     await globalExploration.resetExploration();
+  });
+  
+  socket.on('load-save', async (data) => {
+    // Check for admin token
+    const token = data?.token;
+    if (!verifyAdminToken(token)) {
+      socket.emit('error', { message: 'Admin authentication required' });
+      return;
+    }
+    
+    const result = await globalExploration.loadState();
+    if (result.error) {
+      socket.emit('error', { message: result.error });
+    } else {
+      socket.emit('save-loaded', result);
+    }
   });
 
   socket.on('disconnect', () => {

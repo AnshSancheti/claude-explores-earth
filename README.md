@@ -227,3 +227,7 @@ For questions or support, please open an issue on GitHub.
 ---
 
 Built with ❤️ by developers who believe AI should explore the world
+
+## To-Do:
+- Thinking icon when agent is choosing
+- 

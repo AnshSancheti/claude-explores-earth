@@ -9,7 +9,7 @@ const ROOT_DIR = join(__dirname, '..', '..');
 
 export class Logger {
   constructor() {
-    this.logDir = join(ROOT_DIR, 'runs');
+    this.logDir = join(ROOT_DIR, 'runs', 'exploration_logs');
     this.logFile = join(this.logDir, `exploration-${Date.now()}.log`);
     this.initialize();
   }

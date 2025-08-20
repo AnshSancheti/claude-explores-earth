@@ -11,8 +11,9 @@ export class CoverageTracker {
     this.recentHistory = []; // Last N panoramas visited (for loop detection)
     this.maxHistorySize = 10;
     
-    // Graph for pathfinding
-    this.graph = new Map(); // panoId -> Set of connected panoIds
+    // Graph structure with full node information
+    // panoId -> { lat, lng, visited, neighbors: Set, timestamp }
+    this.graph = new Map();
   }
 
   addVisited(panoId, position, links = []) {
@@ -31,8 +32,35 @@ export class CoverageTracker {
     // Remove from frontier since we've now visited it
     this.frontier.delete(panoId);
     
-    // Add unvisited links to frontier
+    // Only store visited nodes in the graph
+    let node = this.graph.get(panoId);
+    if (!node) {
+      node = {
+        lat: position.lat,
+        lng: position.lng,
+        neighbors: new Set(),
+        timestamp: Date.now()
+      };
+      this.graph.set(panoId, node);
+    } else {
+      // Update position and timestamp if revisiting
+      node.lat = position.lat;
+      node.lng = position.lng;
+      node.timestamp = Date.now();
+    }
+    
+    // Process all links - add ALL neighbors (visited and unvisited)
     links.forEach(link => {
+      // Add to current node's neighbors
+      node.neighbors.add(link.pano);
+      
+      // If neighbor is already visited, add reverse connection
+      const neighborNode = this.graph.get(link.pano);
+      if (neighborNode) {
+        neighborNode.neighbors.add(panoId);
+      }
+      
+      // Update frontier (unvisited neighbors)
       if (!this.visitedPanos.has(link.pano) && !this.frontier.has(link.pano)) {
         this.frontier.set(link.pano, {
           discoveredFrom: panoId,
@@ -40,12 +68,6 @@ export class CoverageTracker {
           description: link.description
         });
       }
-      
-      // Build graph for pathfinding
-      if (!this.graph.has(panoId)) {
-        this.graph.set(panoId, new Set());
-      }
-      this.graph.get(panoId).add(link.pano);
     });
     
     if (this.lastPosition) {
@@ -118,5 +140,131 @@ export class CoverageTracker {
     this.visitCounts.clear();
     this.recentHistory = [];
     this.graph.clear();
+  }
+  
+  // Serialize the graph for saving (converts Sets to Arrays, rounds coordinates)
+  serializeGraph() {
+    const serialized = {};
+    for (const [panoId, node] of this.graph.entries()) {
+      // Only include visited nodes (all nodes in graph are visited now)
+      serialized[panoId] = {
+        lat: parseFloat(node.lat.toFixed(6)),  // Round to 6 decimal places
+        lng: parseFloat(node.lng.toFixed(6)),  // ~11cm precision
+        neighbors: Array.from(node.neighbors),
+        timestamp: node.timestamp
+      };
+    }
+    return serialized;
+  }
+  
+  // Restore graph from saved data
+  restoreFromSave(saveData) {
+    // Clear current state
+    this.reset();
+    
+    // Restore graph (all nodes in saved graph are visited)
+    if (saveData.graph) {
+      for (const [panoId, node] of Object.entries(saveData.graph)) {
+        this.graph.set(panoId, {
+          lat: node.lat,
+          lng: node.lng,
+          neighbors: new Set(node.neighbors),
+          timestamp: node.timestamp
+        });
+        
+        // All nodes in graph are visited
+        this.visitedPanos.add(panoId);
+      }
+      
+      // Rebuild frontier by finding neighbors not in graph
+      for (const [panoId, node] of this.graph.entries()) {
+        for (const neighborId of node.neighbors) {
+          if (!this.graph.has(neighborId)) {
+            // This neighbor is unvisited (frontier)
+            if (!this.frontier.has(neighborId)) {
+              this.frontier.set(neighborId, {
+                discoveredFrom: panoId,
+                heading: null,  // We don't have this info anymore
+                description: null
+              });
+            }
+          }
+        }
+      }
+    }
+    
+    // Rebuild path from visited nodes sorted by timestamp
+    const visitedNodes = [];
+    for (const [panoId, node] of this.graph.entries()) {
+      if (node.timestamp) {
+        visitedNodes.push({
+          panoId,
+          lat: node.lat,
+          lng: node.lng,
+          timestamp: node.timestamp
+        });
+      }
+    }
+    this.path = visitedNodes.sort((a, b) => a.timestamp - b.timestamp);
+    
+    // Restore stats
+    if (saveData.stats) {
+      this.totalDistance = saveData.stats.distanceTraveled || 0;
+    }
+    
+    // Restore recent history if provided
+    if (saveData.recentHistory) {
+      this.recentHistory = saveData.recentHistory;
+    }
+    
+    // Set last position
+    if (this.path.length > 0) {
+      const lastNode = this.path[this.path.length - 1];
+      this.lastPosition = { lat: lastNode.lat, lng: lastNode.lng };
+    }
+  }
+  
+  // Find frontier nodes using BFS from current position
+  findFrontierNodes(currentPanoId, maxNodes = 50) {
+    const frontier = [];
+    const visited = new Set();
+    const queue = [{ panoId: currentPanoId, distance: 0 }];
+    
+    while (queue.length > 0 && frontier.length < maxNodes) {
+      const { panoId, distance } = queue.shift();
+      if (visited.has(panoId)) continue;
+      visited.add(panoId);
+      
+      const node = this.graph.get(panoId);
+      if (!node) {
+        // This panoId is not in graph, so it's unvisited (frontier)
+        frontier.push({ 
+          panoId, 
+          distance,
+          lat: null,  // We don't have position for unvisited nodes
+          lng: null
+        });
+        continue;  // Can't explore neighbors of unvisited node
+      }
+      
+      // Check neighbors for frontier nodes
+      for (const neighborId of node.neighbors) {
+        if (!this.graph.has(neighborId) && !visited.has(neighborId)) {
+          // Neighbor is not in graph = unvisited = frontier
+          frontier.push({
+            panoId: neighborId,
+            distance: distance + 1,
+            lat: null,
+            lng: null
+          });
+          visited.add(neighborId);  // Mark as seen to avoid duplicates
+        } else if (this.graph.has(neighborId) && !visited.has(neighborId)) {
+          // Neighbor is visited, continue BFS
+          queue.push({ panoId: neighborId, distance: distance + 1 });
+        }
+      }
+    }
+    
+    return frontier;
   }
 }

@@ -278,26 +278,25 @@ export class ExplorationAgent {
       
       console.log(`Step ${currentStep} (${this.mode}): Broadcasting ${thumbnailUrls.length} thumbnail${thumbnailUrls.length !== 1 ? 's' : ''}`);
       
-      // Prepare step data for broadcasting and caching
+      // Prepare minimal step data for decision history
       const stepData = {
         stepCount: currentStep,
-        decision: {
-          reasoning: decision.reasoning,
-          selectedPanoId: decision.selectedPanoId,
-          direction: parseFloat(selectedLink.heading)
-        },
+        reasoning: decision.reasoning,
         panoId: selectedLink.pano,
-        screenshots: thumbnailUrls,
-        newPosition: this.currentPosition,
-        stats: this.coverage.getStats(),
+        direction: parseFloat(selectedLink.heading),
         mode: this.mode,
-        frontierSize: this.coverage.getFrontierSize(),
-        fullPath: this.coverage.path,
-        timestamp: new Date().toISOString()
+        screenshots: thumbnailUrls
+      };
+      
+      // Prepare broadcast data with additional info for UI updates
+      const broadcastData = {
+        ...stepData,
+        newPosition: this.currentPosition,  // Send position delta
+        stats: this.coverage.getStats()      // Send updated stats
       };
       
       // Broadcast to all connected clients
-      this.globalExploration.broadcast('move-decision', stepData);
+      this.globalExploration.broadcast('move-decision', broadcastData);
       
       this.logger.log('exploration-step', {
         step: currentStep,

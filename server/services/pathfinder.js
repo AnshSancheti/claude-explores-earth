@@ -21,8 +21,9 @@ export class Pathfinder {
     while (queue.length > 0) {
       const { panoId, path, distance } = queue.shift();
       
-      // Get connected panoramas from graph
-      const connections = this.coverage.graph.get(panoId) || new Set();
+      // Get connected panoramas from graph (new structure)
+      const node = this.coverage.graph.get(panoId);
+      const connections = node ? node.neighbors : new Set();
       
       for (const nextPanoId of connections) {
         if (visited.has(nextPanoId)) continue;
@@ -113,7 +114,8 @@ export class Pathfinder {
       
       if (depth >= maxDepth) continue;
       
-      const connections = this.coverage.graph.get(panoId) || new Set();
+      const node = this.coverage.graph.get(panoId);
+      const connections = node ? node.neighbors : new Set();
       
       for (const nextPanoId of connections) {
         if (visited.has(nextPanoId)) continue;

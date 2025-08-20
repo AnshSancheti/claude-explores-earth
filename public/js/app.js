@@ -122,7 +122,7 @@ class ExplorationApp {
       console.log('Move decision', data);
       this.mapManager.updatePosition(data.newPosition);
       if (this.streetViewManager.panorama) {
-        this.streetViewManager.updatePosition(data.panoId, data.decision.direction);
+        this.streetViewManager.updatePosition(data.panoId, data.direction);
       }
       this.uiManager.updateStats(data.stats);
       this.uiManager.updateStep(data.stepCount);
@@ -163,6 +163,42 @@ class ExplorationApp {
       console.log(`Connected clients: ${data.count}`);
       // Could display this in the UI if desired
     });
+    
+    // Handle save file loaded
+    this.socket.on('save-loaded', (data) => {
+      console.log('Save file loaded:', data);
+      alert(`Save loaded successfully!\nStep: ${data.stepCount}\nLocations visited: ${data.locationsVisited}\nGraph size: ${data.graphSize} nodes`);
+    });
+    
+    // Handle state restoration broadcast
+    this.socket.on('state-loaded', (data) => {
+      console.log('State restored:', data);
+      
+      // Update UI with loaded state
+      this.uiManager.updateStats(data.stats);
+      this.uiManager.updateStep(data.stepCount);
+      
+      // Clear and reload decision history
+      this.uiManager.clearDecisionLog();
+      if (data.decisionHistory && data.decisionHistory.length > 0) {
+        data.decisionHistory.forEach(entry => {
+          this.uiManager.addDecisionEntry(entry);
+        });
+      }
+      
+      // Update map with full path
+      if (data.fullPath && data.fullPath.length > 0) {
+        this.mapManager.reset();
+        data.fullPath.forEach(position => {
+          this.mapManager.updatePosition(position);
+        });
+      }
+      
+      // Update Street View to loaded position
+      if (data.panoId && this.streetViewManager.panorama) {
+        this.streetViewManager.updatePosition(data.panoId, 0);
+      }
+    });
   }
 
   setupEventListeners() {
@@ -180,6 +216,10 @@ class ExplorationApp {
 
     this.uiManager.resetBtn.addEventListener('click', () => {
       this.resetExploration();
+    });
+    
+    this.uiManager.loadBtn.addEventListener('click', () => {
+      this.loadSave();
     });
     
     // Keyboard shortcuts
@@ -358,6 +398,18 @@ class ExplorationApp {
         return;
       }
       this.socket.emit('reset-exploration', { token });
+    }
+  }
+  
+  loadSave() {
+    const token = this.getAuthToken();
+    if (!token) {
+      this.uiManager.showError('Admin authentication required');
+      return;
+    }
+    
+    if (confirm('Load saved exploration state? This will reset the current exploration.')) {
+      this.socket.emit('load-save', { token });
     }
   }
   

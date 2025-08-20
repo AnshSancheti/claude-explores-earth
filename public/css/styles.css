@@ -264,6 +264,19 @@ h1 {
   transform: translateY(-2px);
 }
 
+.btn-success {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(76, 175, 80, 0.3);
+  color: #4caf50;
+}
+
+.btn-success:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: #4caf50;
+  box-shadow: 0 4px 20px rgba(76, 175, 80, 0.3);
+  transform: translateY(-2px);
+}
+
 /* Admin button styles */
 .btn-admin {
   width: 40px;

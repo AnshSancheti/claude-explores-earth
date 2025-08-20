@@ -8,6 +8,7 @@ class UIManager {
     this.stepBtn = document.getElementById('stepBtn');
     this.stopBtn = document.getElementById('stopBtn');
     this.resetBtn = document.getElementById('resetBtn');
+    this.loadBtn = document.getElementById('loadBtn');
     
     // Track the last pathfinding group
     this.lastPathfindingGroup = null;
@@ -56,7 +57,7 @@ class UIManager {
           <span class="decision-step">${modeIndicator} Step ${data.stepCount}</span>
           <span class="decision-time">${time}</span>
         </div>
-        <div class="decision-reasoning">${escapeHtml(data.decision.reasoning)}</div>
+        <div class="decision-reasoning">${escapeHtml(data.reasoning)}</div>
         <div class="decision-screenshots">
           ${data.screenshots.map(s => {
             // Generate Google Maps Street View URL
@@ -105,7 +106,7 @@ class UIManager {
       </div>
       <div class="pathfinding-details" style="display: none;">
         <div class="pathfinding-step-detail">
-          Step ${data.stepCount}: ${escapeHtml(data.decision.reasoning)}
+          Step ${data.stepCount}: ${escapeHtml(data.reasoning)}
         </div>
       </div>
     `;
@@ -135,7 +136,7 @@ class UIManager {
     const details = group.querySelector('.pathfinding-details');
     const newDetail = document.createElement('div');
     newDetail.className = 'pathfinding-step-detail';
-    newDetail.textContent = `Step ${data.stepCount}: ${data.decision.reasoning}`;
+    newDetail.textContent = `Step ${data.stepCount}: ${data.reasoning}`;
     details.appendChild(newDetail);
   }
 
