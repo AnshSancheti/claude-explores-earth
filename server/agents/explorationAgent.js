@@ -224,6 +224,9 @@ export class ExplorationAgent {
             mode: this.mode
           });
           
+          // Clear base64 data from screenshots after AI decision to save memory
+          screenshots.forEach(s => delete s.base64);
+          
           selectedLink = links.find(l => l.pano === decision.selectedPanoId);
         }
       }

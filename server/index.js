@@ -147,11 +147,12 @@ class GlobalExploration {
     this.explorationInterval = null;
     this.connectedClients = new Set();
     this.decisionHistory = [];
-    this.screenshotCache = new Map(); // Cache screenshots by step
+    this.screenshotCache = new Map(); // Cache only screenshot URLs, not data
     this.logger = new Logger();
     this.persistentLogger = this.createPersistentLogger();
-    this.maxHistoryInMemory = 1000; // Cap memory usage
-    this.cacheSize = DECISION_HISTORY_LIMIT * 3;
+    // Keep enough history for new clients to see recent decisions with screenshots
+    this.maxHistoryInMemory = Math.max(DECISION_HISTORY_LIMIT * 2, 50); 
+    this.cacheSize = this.maxHistoryInMemory; // Match cache to history size
   }
 
   createPersistentLogger() {
@@ -181,6 +182,16 @@ class GlobalExploration {
     
     if (!this.agent) {
       await this.initialize();
+    }
+    
+    // Force garbage collection periodically if available (V8 only)
+    if (global.gc) {
+      setInterval(() => {
+        if (global.gc) {
+          console.log('Running garbage collection...');
+          global.gc();
+        }
+      }, 60000); // Every minute
     }
 
     // Broadcast to all clients
@@ -253,6 +264,19 @@ class GlobalExploration {
   async resetExploration() {
     this.stopExploration();
     
+    // Clean up all screenshots from the current run before resetting
+    if (this.agent && this.agent.runId) {
+      try {
+        const runDir = path.join(ROOT_DIR, 'runs', 'shots', this.agent.runId);
+        if (fs.existsSync(runDir)) {
+          fs.rmSync(runDir, { recursive: true, force: true });
+          console.log(`Cleaned up all screenshots for run ${this.agent.runId}`);
+        }
+      } catch (error) {
+        console.error('Error cleaning up run screenshots:', error);
+      }
+    }
+    
     // Clear all history and cache
     this.decisionHistory = [];
     this.screenshotCache.clear();
@@ -269,28 +293,62 @@ class GlobalExploration {
   }
 
   addToHistory(stepData) {
+    // stepData.screenshots already contains thumbnail URLs without base64
+    // Just store it as-is since base64 was already removed in explorationAgent
+    
     // Add to memory history
     this.decisionHistory.push(stepData);
     
-    // Cap memory usage
+    // Cap memory usage and clean up old screenshots
     if (this.decisionHistory.length > this.maxHistoryInMemory) {
-      this.decisionHistory.shift();
+      const removedEntry = this.decisionHistory.shift();
+      // Clean up old screenshot files from disk
+      this.cleanupOldScreenshots(removedEntry);
     }
     
     // Write to persistent log
-    fs.appendFileSync(this.persistentLogger, JSON.stringify(stepData) + '\n');
+    const logData = {
+      ...stepData,
+      timestamp: stepData.timestamp || new Date().toISOString()
+    };
+    fs.appendFileSync(this.persistentLogger, JSON.stringify(logData) + '\n');
   }
 
   cacheScreenshots(stepData) {
     if (stepData.screenshots) {
-      // Add new screenshots to cache
-      this.screenshotCache.set(stepData.stepCount, stepData.screenshots);
+      // Only cache URLs, not base64 data
+      const urls = stepData.screenshots.map(s => s.filename);
+      this.screenshotCache.set(stepData.stepCount, urls);
       
-      // Remove old screenshots beyond cache limit
+      // Aggressively prune old screenshots
       if (this.screenshotCache.size > this.cacheSize) {
         const oldestStep = Math.min(...this.screenshotCache.keys());
         this.screenshotCache.delete(oldestStep);
       }
+    }
+  }
+  
+  cleanupOldScreenshots(entry) {
+    if (!entry || !entry.screenshots || !this.agent) return;
+    
+    try {
+      // Get the screenshot directory for this step
+      const stepDir = path.join(
+        ROOT_DIR, 
+        'runs', 
+        'shots', 
+        this.agent.runId, 
+        entry.stepCount.toString()
+      );
+      
+      // Check if directory exists before attempting deletion
+      if (fs.existsSync(stepDir)) {
+        // Remove the entire step directory
+        fs.rmSync(stepDir, { recursive: true, force: true });
+        console.log(`Cleaned up screenshots for step ${entry.stepCount}`);
+      }
+    } catch (error) {
+      console.error(`Error cleaning up screenshots for step ${entry.stepCount}:`, error);
     }
   }
 

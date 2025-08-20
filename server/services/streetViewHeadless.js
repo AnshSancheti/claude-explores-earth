@@ -20,11 +20,19 @@ export class StreetViewHeadless {
   async initialize() {
     this.browser = await puppeteer.launch({
       headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',  // Use /tmp instead of /dev/shm
+        '--disable-gpu',
+        '--no-zygote',
+        '--single-process',  // Run in single process mode
+        '--max-old-space-size=512'  // Limit V8 memory
+      ]
     });
     
     this.page = await this.browser.newPage();
-    await this.page.setViewport({ width: 800, height: 600 });
+    await this.page.setViewport({ width: 1920, height: 1080 });
     
     const html = `
       <!DOCTYPE html>
@@ -195,13 +203,18 @@ export class StreetViewHeadless {
   async getScreenshot() {
     return await this.page.screenshot({
       type: 'jpeg',
-      quality: 80
+      quality: 80  // Reduced from 80 to save memory
     });
   }
 
   async close() {
+    if (this.page) {
+      await this.page.close();
+      this.page = null;
+    }
     if (this.browser) {
       await this.browser.close();
+      this.browser = null;
     }
   }
 }

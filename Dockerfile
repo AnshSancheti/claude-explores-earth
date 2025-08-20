@@ -42,4 +42,8 @@ COPY --from=build /app /app
 # Start the server by default, this can be overwritten at runtime
 EXPOSE 3000
 ENV PUPPETEER_EXECUTABLE_PATH="/usr/bin/chromium"
+
+# Set Node.js memory limits and enable garbage collection
+ENV NODE_OPTIONS="--max-old-space-size=512 --expose-gc"
+
 CMD [ "npm", "run", "start" ]
