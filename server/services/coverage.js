@@ -94,7 +94,7 @@ export class CoverageTracker {
   isInLoop(panoId) {
     // Check if we've been to this pano multiple times recently
     const recentOccurrences = this.recentHistory.filter(id => id === panoId).length;
-    return recentOccurrences >= 2;
+    return recentOccurrences >= 1;
   }
   
   getVisitCount(panoId) {

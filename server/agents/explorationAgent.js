@@ -107,9 +107,9 @@ export class ExplorationAgent {
       
       // Determine mode and select next move
       if (isStuck && this.coverage.hasFrontier()) {
-        // Switch to pathfinding mode
+        // Switch to pathfinding mode - no screenshots needed
         this.mode = 'pathfinding';
-        console.log('Stuck - switching to pathfinding mode');
+        console.log('Visited all links - switching to pathfinding mode (no screenshots)');
         
         const pathInfo = this.pathfinder.findPathToNearestFrontier(this.currentPanoId);
         if (pathInfo) {
@@ -118,9 +118,11 @@ export class ExplorationAgent {
           if (selectedLink) {
             decision = {
               selectedPanoId: selectedLink.pano,
-              reasoning: `Pathfinding to frontier (${pathInfo.pathLength} steps away)`
+              reasoning: `Pathfinding to frontier (step ${pathInfo.currentStep}/${pathInfo.totalSteps})`
             };
             console.log(`Pathfinding: Next step to ${selectedLink.pano}`);
+            // No screenshots in pathfinding mode
+            screenshots = [];
           }
         } else {
           // No path found, try escape heuristic
@@ -130,6 +132,8 @@ export class ExplorationAgent {
               selectedPanoId: selectedLink.pano,
               reasoning: 'Escaping local area using heuristic'
             };
+            // No screenshots in pathfinding mode
+            screenshots = [];
           }
         }
       }
@@ -144,35 +148,18 @@ export class ExplorationAgent {
         
         // Check if only one valid link exists - cost saving mechanism
         if (targetLinks.length === 1) {
-          this.mode = 'pathfinding'; // Use pathfinding mode for single-link steps
+          this.mode = 'pathfinding'; // Use pathfinding mode for single-link steps (no screenshots)
           selectedLink = targetLinks[0];
-          
-          // Still capture screenshot for display
-          const heading = parseFloat(selectedLink.heading);
-          await this.streetViewHeadless.setHeading(heading);
-          
-          const screenshotData = await this.screenshot.capture(
-            currentStep,
-            heading,
-            await this.streetViewHeadless.getScreenshot()
-          );
-          
-          screenshots = [{
-            direction: heading,
-            filename: screenshotData.filename,
-            panoId: selectedLink.pano,
-            description: selectedLink.description || '',
-            visited: this.coverage.hasVisited(selectedLink.pano),
-            base64: screenshotData.base64,
-            position: this.currentPosition
-          }];
           
           decision = {
             selectedPanoId: selectedLink.pano,
             reasoning: 'Only one available path - proceeding automatically'
           };
           
-          console.log(`✓ Single link detected - auto-navigating to ${selectedLink.pano} (cost-saving mode)`);
+          // No screenshots for single-link pathfinding
+          screenshots = [];
+          
+          console.log(`✓ Single link detected - auto-navigating to ${selectedLink.pano} (no screenshots)`);
         } else {
           // Multiple links available - use AI for decision
           this.mode = 'exploration';
@@ -201,10 +188,12 @@ export class ExplorationAgent {
             screenshots.push({
               direction: heading,
               filename: screenshotData.filename,
+              thumbFilename: screenshotData.thumbFilename,
+              filepath: screenshotData.filepath,  // Track for deletion
               panoId: link.pano,
               description: link.description || '',
               visited: this.coverage.hasVisited(link.pano),
-              base64: screenshotData.base64,
+              base64: screenshotData.base64,  // Full-size for AI
               position: this.currentPosition  // Add current position for Google Maps links
             });
             
@@ -224,8 +213,21 @@ export class ExplorationAgent {
             mode: this.mode
           });
           
-          // Clear base64 data from screenshots after AI decision to save memory
-          screenshots.forEach(s => delete s.base64);
+          // Clear base64 data and delete full-size files after AI decision
+          for (const s of screenshots) {
+            delete s.base64;  // Clear from memory
+            
+            // Delete full-size screenshot file, keep only thumbnail
+            if (s.filepath) {
+              try {
+                const fs = await import('fs/promises');
+                await fs.unlink(s.filepath);
+                console.log(`Deleted full-size screenshot: ${s.filename}`);
+              } catch (err) {
+                console.error(`Failed to delete full-size screenshot: ${s.filename}`, err);
+              }
+            }
+          }
           
           selectedLink = links.find(l => l.pano === decision.selectedPanoId);
         }
@@ -262,18 +264,19 @@ export class ExplorationAgent {
         }
         
         thumbnailUrls = screenshots.map(s => {
-          const url = `/runs/shots/${this.runId}/${currentStep}/${s.filename}`;
-          //console.log(`  Mapping: ${s.filename} -> ${url}`);
+          // Use thumbnail for client display
+          const thumbUrl = `/runs/shots/${this.runId}/${currentStep}/${s.thumbFilename}`;
+          //console.log(`  Mapping: ${s.thumbFilename} -> ${thumbUrl}`);
           return {
             direction: s.direction,
             visited: s.visited,
-            thumbnail: url,
+            thumbnail: thumbUrl,  // Send thumbnail URL to client
             position: s.position  // Include position for Google Maps links
           };
         });
       }
       
-      console.log(`Broadcasting ${thumbnailUrls.length} thumbnails for step ${currentStep}`);
+      console.log(`Step ${currentStep} (${this.mode}): Broadcasting ${thumbnailUrls.length} thumbnail${thumbnailUrls.length !== 1 ? 's' : ''}`);
       
       // Prepare step data for broadcasting and caching
       const stepData = {
