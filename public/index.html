@@ -31,13 +31,6 @@
           </div>
         </div>
         <div class="controls">
-          <!-- Admin lock icon (default state) -->
-          <button id="adminBtn" class="btn-admin" title="Admin Controls">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="currentColor">
-              <path d="M10 2a4 4 0 0 0-4 4v2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1V6a4 4 0 0 0-4-4zm-2 4a2 2 0 1 1 4 0v2H8V6zm2 7a1 1 0 0 1 1 1v2a1 1 0 0 1-2 0v-2a1 1 0 0 1 1-1z"/>
-            </svg>
-          </button>
-          
           <!-- Control buttons (hidden by default) -->
           <div id="controlButtons" class="control-buttons hidden">
             <button id="startBtn" class="btn btn-primary" title="Start">
@@ -65,11 +58,6 @@
                 <path d="M8 1 L8 10 M8 10 L5 7 M8 10 L11 7 M3 12 L13 12 L13 14 L3 14 Z" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </button>
-            <button id="lockBtn" class="btn btn-lock" title="Lock Controls">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a1.5 1.5 0 0 0-1.5 1.5v6A1.5 1.5 0 0 0 4 15h8a1.5 1.5 0 0 0 1.5-1.5v-6A1.5 1.5 0 0 0 12 6h-.5V4.5A3.5 3.5 0 0 0 8 1zm-2 3.5a2 2 0 1 1 4 0V6H6V4.5zM8 10a1 1 0 0 1 .5.86v2a.5.5 0 0 1-1 0v-2A1 1 0 0 1 8 10z"/>
-              </svg>
-            </button>
           </div>
         </div>
       </div>
@@ -78,8 +66,8 @@
     <div class="main-content">
       <div class="street-view-container">
         <div id="streetView"></div>
-        <!-- Compass Overlay -->
-        <div class="compass-overlay">
+        <!-- Compass Overlay (clickable for admin auth) -->
+        <div class="compass-overlay" id="compassOverlay" title="Admin Access">
           <div class="compass-needle" id="compassNeedle"></div>
         </div>
         <!-- Minimap Toggle (separate for mobile) -->

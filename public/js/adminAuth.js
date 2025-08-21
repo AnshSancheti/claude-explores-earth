@@ -14,16 +14,18 @@ class AdminAuth {
   }
 
   setupEventListeners() {
-    // Admin button click
-    const adminBtn = document.getElementById('adminBtn');
-    if (adminBtn) {
-      adminBtn.addEventListener('click', () => this.showModal());
-    }
-
-    // Lock button click
-    const lockBtn = document.getElementById('lockBtn');
-    if (lockBtn) {
-      lockBtn.addEventListener('click', () => this.lockControls());
+    // Compass overlay click - toggle admin access
+    const compassOverlay = document.getElementById('compassOverlay');
+    if (compassOverlay) {
+      compassOverlay.addEventListener('click', () => {
+        if (this.isAuthenticated) {
+          // If already authenticated, hide controls
+          this.hideControls();
+        } else {
+          // Show authentication modal
+          this.showModal();
+        }
+      });
     }
 
     // Enter key in password field
@@ -154,43 +156,29 @@ class AdminAuth {
   }
 
   showControls() {
-    const adminBtn = document.getElementById('adminBtn');
     const controlButtons = document.getElementById('controlButtons');
     
-    if (adminBtn && controlButtons) {
-      // Hide admin button
-      adminBtn.classList.add('hidden');
-      
+    if (controlButtons) {
       // Show control buttons with animation
       controlButtons.classList.remove('hidden');
       controlButtons.classList.add('show');
-      
-      // Update admin icon to unlocked state
-      const adminIcon = adminBtn.querySelector('svg');
-      if (adminIcon) {
-        adminIcon.innerHTML = '<path d="M10 2a4 4 0 0 0-4 4v2H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-1V6a4 4 0 0 0-4-4zm-2 4a2 2 0 1 1 4 0v2H8V6z"/>';
-      }
     }
   }
 
-  lockControls() {
-    const adminBtn = document.getElementById('adminBtn');
+  hideControls() {
     const controlButtons = document.getElementById('controlButtons');
     
-    if (adminBtn && controlButtons) {
+    if (controlButtons) {
       // Hide control buttons
       controlButtons.classList.remove('show');
       controlButtons.classList.add('hidden');
-      
-      // Show admin button
-      adminBtn.classList.remove('hidden');
       
       // Clear authentication
       this.isAuthenticated = false;
       this.authToken = null;
       localStorage.removeItem('adminAuth');
       
-      this.showSuccess('Controls locked');
+      this.showSuccess('Controls hidden');
     }
   }
 

@@ -277,46 +277,9 @@ h1 {
   transform: translateY(-2px);
 }
 
-/* Admin button styles */
-.btn-admin {
-  width: 40px;
-  height: 40px;
-  padding: 0;
-  border: 2px solid rgba(255, 193, 7, 0.3);
-  border-radius: 12px;
-  background: rgba(255, 193, 7, 0.1);
-  backdrop-filter: blur(10px);
-  color: var(--accent-yellow);
-  cursor: pointer;
-  transition: all 0.3s ease;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
+/* Admin button removed - using compass for auth now */
 
-.btn-admin:hover {
-  background: rgba(255, 193, 7, 0.2);
-  border-color: var(--accent-yellow);
-  box-shadow: 0 4px 20px rgba(255, 193, 7, 0.3);
-  transform: translateY(-2px) rotate(-5deg);
-}
-
-.btn-admin.hidden {
-  display: none;
-}
-
-.btn-lock {
-  background: rgba(255, 193, 7, 0.05);
-  border-color: rgba(255, 193, 7, 0.3);
-  color: var(--accent-yellow);
-}
-
-.btn-lock:hover:not(:disabled) {
-  background: rgba(255, 193, 7, 0.1);
-  border-color: var(--accent-yellow);
-  box-shadow: 0 4px 20px rgba(255, 193, 7, 0.3);
-  transform: translateY(-2px);
-}
+/* Lock button removed - compass acts as toggle */
 
 /* Main Content Area */
 .main-content {
@@ -352,7 +315,7 @@ h1 {
   z-index: 1;
 }
 
-/* Compass Overlay */
+/* Compass Overlay - secretly clickable for admin auth */
 .compass-overlay {
   position: absolute;
   top: 20px;
@@ -368,6 +331,12 @@ h1 {
   justify-content: center;
   z-index: 10;
   box-shadow: var(--shadow-lg);
+  cursor: pointer;
+  user-select: none;
+}
+
+.compass-overlay:active {
+  transform: scale(0.98);
 }
 
 .compass-needle {
@@ -1139,15 +1108,6 @@ h1 {
     height: 14px;
   }
   
-  .btn-admin {
-    width: 34px;
-    height: 34px;
-  }
-  
-  .btn-admin svg {
-    width: 18px;
-    height: 18px;
-  }
   
   .control-buttons {
     flex-direction: row;
