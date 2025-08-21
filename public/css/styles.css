@@ -1210,23 +1210,28 @@ h1 {
   .minimap-container {
     position: fixed;
     top: 50%;
-    left: -250px;  /* Increased from -200px */
+    left: -250px;  /* Start hidden off-screen at initial width */
     transform: translateY(-50%);
-    width: 250px;  /* Increased from 200px */
-    height: 200px; /* Increased from 150px */
-    min-width: 200px;  /* Mobile minimum */
-    min-height: 150px;
-    max-width: 300px;  /* Mobile maximum */
-    max-height: 250px;
+    width: 250px;  /* Initial width */
+    height: 200px; /* Initial height */
+    min-width: unset;  /* Remove min-width for smooth scaling */
+    min-height: unset; /* Remove min-height for smooth scaling */
+    max-width: 80vw;  /* Mobile maximum - 80% of viewport */
+    max-height: 300px;
     bottom: auto;
-    transition: left 0.3s ease;
+    transition: left 0.3s ease, width 0.3s ease, height 0.3s ease;
     z-index: 15;
     border-radius: 0 16px 16px 0;
-    resize: none; /* Disable resize on mobile */
+    resize: none; /* Disable CSS resize on mobile */
+  }
+  
+  /* Remove transition during drag for smooth movement */
+  .minimap-container.dragging {
+    transition: none !important;
   }
   
   .minimap-container.expanded {
-    left: 0;
+    /* Position handled by JavaScript now */
   }
   
   /* Hide resize handle on mobile */
@@ -1251,7 +1256,7 @@ h1 {
     border-radius: 0 8px 8px 0;
     align-items: center;
     justify-content: center;
-    cursor: move;
+    cursor: grab;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
     touch-action: none;
@@ -1260,6 +1265,19 @@ h1 {
     transition: background 0.3s ease, opacity 0.3s ease, left 0.3s ease;
     opacity: 0.8;
     flex-direction: column;
+  }
+  
+  /* Visual feedback while dragging */
+  .minimap-toggle.dragging {
+    cursor: grabbing;
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--accent-yellow);
+    transition: none !important;
+  }
+  
+  .minimap-toggle.dragging span {
+    transform: scale(1.1);
   }
   
   .minimap-toggle::before {
@@ -1280,7 +1298,7 @@ h1 {
   }
   
   .minimap-toggle.expanded {
-    left: 250px;  /* Updated to match new minimap width */
+    /* Position now handled by JavaScript dynamically */
     background: var(--glass-bg);
     backdrop-filter: blur(20px);
     border-color: var(--accent-yellow);
@@ -1354,15 +1372,17 @@ h1 {
   
   /* Keep minimap but make it smaller on very small screens */
   .minimap-container {
-    width: 200px;  /* Increased from 160px */
-    height: 150px; /* Increased from 120px */
+    width: 200px;  /* Default width */
+    height: 150px; /* Default height */
     left: -200px;
     min-width: 160px;  /* Very small screen minimum */
     min-height: 120px;
+    max-width: 80vw;  /* Still allow expansion on small screens */
+    max-height: 250px;
   }
   
   .minimap-container.expanded {
-    left: 0;
+    /* Position handled by JavaScript */
   }
   
   .minimap-toggle {
@@ -1371,7 +1391,7 @@ h1 {
   }
   
   .minimap-toggle.expanded {
-    left: 200px;  /* Updated to match new width */
+    /* Position handled by JavaScript */
   }
   
   .minimap-toggle span {
