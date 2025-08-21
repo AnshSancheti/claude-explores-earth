@@ -43,14 +43,15 @@ export class ExplorationAgent {
       panoData = await this.streetViewHeadless.getPanorama(this.startPanoId);
       // Update position from the panorama data
       this.currentPosition = {
-        lat: panoData.location.lat,
-        lng: panoData.location.lng
+        lat: panoData.position.lat,
+        lng: panoData.position.lng
       };
     } else {
       panoData = await this.streetViewHeadless.getPanorama(this.currentPosition);
     }
     
-    this.currentPanoId = panoData.pano_id;
+    this.currentPanoId = panoData.panoId;
+    this.streetViewHeadless.currentPanoId = this.currentPanoId;  // Track in Puppeteer for refresh
     this.coverage.addVisited(this.currentPanoId, this.currentPosition, panoData.links || []);
     
     // Broadcast to all connected clients
@@ -82,15 +83,29 @@ export class ExplorationAgent {
       this.stepCount = currentStep;
       console.log(`\n=== Starting step ${currentStep} ===`);
     
+      // Check if Puppeteer needs refresh to prevent memory buildup
+      if (this.streetViewHeadless.shouldRefresh(currentStep)) {
+        console.log(`📊 Memory check at step ${currentStep}: RSS=${(process.memoryUsage().rss / 1024 / 1024).toFixed(1)}MB, Heap=${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)}MB`);
+        
+        // Use page refresh for regular intervals, browser restart for major milestones
+        if (currentStep % 1000 === 0) {
+          // Full browser restart every 1000 steps
+          await this.streetViewHeadless.refreshBrowser();
+        } else {
+          // Page refresh every 500 steps or hourly
+          await this.streetViewHeadless.refreshPage();
+        }
+      }
+    
       // Get data for the current panorama directly (no coordinate conversion)
       const panoData = await this.streetViewHeadless.getCurrentPanorama();
       const links = panoData.links || [];
       
       // Update our tracking to ensure we're in sync
-      this.currentPanoId = panoData.pano_id;
+      this.currentPanoId = panoData.panoId;
       this.currentPosition = {
-        lat: panoData.location.lat,
-        lng: panoData.location.lng
+        lat: panoData.position.lat,
+        lng: panoData.position.lng
       };
       
       // Log current location details and frontier status
@@ -245,10 +260,10 @@ export class ExplorationAgent {
       const newPanoData = await this.streetViewHeadless.getCurrentPanorama();
       
       this.currentPosition = {
-        lat: newPanoData.location.lat,
-        lng: newPanoData.location.lng
+        lat: newPanoData.position.lat,
+        lng: newPanoData.position.lng
       };
-      this.currentPanoId = newPanoData.pano_id;  // Use the actual pano ID from the panorama
+      this.currentPanoId = newPanoData.panoId;  // Use the actual pano ID from the panorama
       
       // Update coverage with new panorama's links for frontier tracking
       const newLinks = newPanoData.links || [];

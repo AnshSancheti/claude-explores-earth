@@ -135,6 +135,18 @@ const PORT = process.env.PORT || 3000;
 const STEP_INTERVAL = parseInt(process.env.STEP_INTERVAL_MS) || 5000;
 const DECISION_HISTORY_LIMIT = parseInt(process.env.DECISION_HISTORY_LIMIT) || 20;
 const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL) || 500; // Save every N steps
+
+// Path simplification settings (configurable via environment variables)
+const PATH_SIMPLIFICATION = {
+  enabled: process.env.DISABLE_PATH_SIMPLIFICATION !== 'true',  // Set to false to disable
+  // Epsilon values in degrees (1 degree ≈ 111km at equator, ~85km longitude in NYC)
+  recentEpsilon: parseFloat(process.env.PATH_EPSILON_RECENT) || 0.000005,     // ~0.5m for recent paths
+  mediumEpsilon: parseFloat(process.env.PATH_EPSILON_MEDIUM) || 0.00002,      // ~2m for medium age
+  oldEpsilon: parseFloat(process.env.PATH_EPSILON_OLD) || 0.00005,            // ~5m for old paths
+  recentThreshold: 60 * 60 * 1000,      // 1 hour
+  mediumThreshold: 6 * 60 * 60 * 1000,  // 6 hours
+};
+
 const START_LOCATION = {
   lat: parseFloat(process.env.START_LAT),
   lng: parseFloat(process.env.START_LNG)
@@ -283,18 +295,8 @@ class GlobalExploration {
           timestamp: node.timestamp
         }));
       
-      // Simplify the path before sending to clients
-      const simplifiedPath = simplifyPathWithTiers(originalPath, {
-        recentThreshold: 60 * 60 * 1000,      // 1 hour
-        mediumThreshold: 6 * 60 * 60 * 1000,  // 6 hours
-        recentEpsilon: 0.000005,              // ~0.5m for recent
-        mediumEpsilon: 0.00002,               // ~2m for medium
-        oldEpsilon: 0.00005                   // ~5m for old
-      });
-      
-      // Log simplification stats
-      const stats = getSimplificationStats(originalPath, simplifiedPath);
-      console.log(`📍 Path simplification on load: ${stats.originalCount} → ${stats.simplifiedCount} points (${stats.reductionPercent}% reduction)`);
+      // Use the same simplification logic as initial state
+      const simplifiedPath = this.simplifyPath(originalPath);
       
       // Broadcast restored state to all clients
       this.broadcast('state-loaded', {
@@ -567,20 +569,8 @@ class GlobalExploration {
           timestamp: node.timestamp
         }));
       
-      // Simplify the path before sending to client
-      const simplifiedPath = simplifyPathWithTiers(originalPath, {
-        recentThreshold: 60 * 60 * 1000,      // 1 hour
-        mediumThreshold: 6 * 60 * 60 * 1000,  // 6 hours
-        recentEpsilon: 0.000005,              // ~0.5m for recent
-        mediumEpsilon: 0.00002,               // ~2m for medium
-        oldEpsilon: 0.00005                   // ~5m for old
-      });
-      
-      // Log statistics
-      const stats = getSimplificationStats(originalPath, simplifiedPath);
-      console.log(`📍 Path simplification: ${stats.originalCount} → ${stats.simplifiedCount} points (${stats.reductionPercent}% reduction, ${(stats.sizeSaved/1024).toFixed(1)}KB saved)`);
-      
-      fullPath = simplifiedPath;
+      // Use centralized simplification method
+      fullPath = this.simplifyPath(originalPath);
     }
     
     return {
@@ -591,6 +581,33 @@ class GlobalExploration {
       stepCount: this.agent.stepCount,
       fullPath  // Only sent on initial connection
     };
+  }
+
+  /**
+   * Centralized path simplification method
+   * Can be disabled or tuned via environment variables
+   */
+  simplifyPath(originalPath) {
+    // If simplification is disabled, return original path
+    if (!PATH_SIMPLIFICATION.enabled) {
+      console.log(`📍 Path simplification disabled: ${originalPath.length} points sent as-is`);
+      return originalPath;
+    }
+    
+    // Apply simplification with configured settings
+    const simplifiedPath = simplifyPathWithTiers(originalPath, {
+      recentThreshold: PATH_SIMPLIFICATION.recentThreshold,
+      mediumThreshold: PATH_SIMPLIFICATION.mediumThreshold,
+      recentEpsilon: PATH_SIMPLIFICATION.recentEpsilon,
+      mediumEpsilon: PATH_SIMPLIFICATION.mediumEpsilon,
+      oldEpsilon: PATH_SIMPLIFICATION.oldEpsilon
+    });
+    
+    // Log statistics
+    const stats = getSimplificationStats(originalPath, simplifiedPath);
+    console.log(`📍 Path simplification: ${stats.originalCount} → ${stats.simplifiedCount} points (${stats.reductionPercent}% reduction, ${(stats.sizeSaved/1024).toFixed(1)}KB saved)`);
+    
+    return simplifiedPath;
   }
 
   broadcast(event, data) {
@@ -737,6 +754,7 @@ server.listen(PORT, HOST, () => {
   console.log(`⏱️  Step interval: ${STEP_INTERVAL}ms`);
   console.log(`💾 Save interval: Every ${SAVE_INTERVAL} steps`);
   console.log(`📜 Decision history limit: ${DECISION_HISTORY_LIMIT} entries`);
+  console.log(`🗺️  Path simplification: ${PATH_SIMPLIFICATION.enabled ? `Enabled (epsilon: ${PATH_SIMPLIFICATION.recentEpsilon}/${PATH_SIMPLIFICATION.mediumEpsilon}/${PATH_SIMPLIFICATION.oldEpsilon})` : 'Disabled'}`);
   console.log(`🔐 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔑 Google Maps API: ${process.env.GOOGLE_MAPS_API_KEY ? 'Configured' : 'NOT CONFIGURED'}`);
   console.log(`🔑 OpenAI API: ${process.env.OPENAI_API_KEY ? 'Configured' : 'NOT CONFIGURED'}`);

@@ -4,4 +4,6 @@
 .env
 Dockerfile
 fly.toml
-/runs
+/runs/exploration_logs
+/runs/persistent_logs
+/runs/shots
