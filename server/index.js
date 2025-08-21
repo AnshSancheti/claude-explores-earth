@@ -7,6 +7,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import { ExplorationAgent } from './agents/explorationAgent.js';
 import { Logger } from './utils/logger.js';
+import { simplifyPathWithTiers, getSimplificationStats } from './utils/pathSimplification.js';
 import { productionSecurity } from './middleware/secureRuns.js';
 import fs from 'fs';
 import path from 'path';
@@ -272,14 +273,28 @@ class GlobalExploration {
       }
       
       // Reconstruct path from graph for minimap (all nodes in graph are visited)
-      const reconstructedPath = Array.from(this.agent.coverage.graph.entries())
+      const originalPath = Array.from(this.agent.coverage.graph.entries())
         .filter(([id, node]) => node.timestamp)  // All have timestamps
         .sort((a, b) => a[1].timestamp - b[1].timestamp)
         .map(([id, node]) => ({
           lat: node.lat,
           lng: node.lng,
-          panoId: id
+          panoId: id,
+          timestamp: node.timestamp
         }));
+      
+      // Simplify the path before sending to clients
+      const simplifiedPath = simplifyPathWithTiers(originalPath, {
+        recentThreshold: 60 * 60 * 1000,      // 1 hour
+        mediumThreshold: 6 * 60 * 60 * 1000,  // 6 hours
+        recentEpsilon: 0.000005,              // ~0.5m for recent
+        mediumEpsilon: 0.00002,               // ~2m for medium
+        oldEpsilon: 0.00005                   // ~5m for old
+      });
+      
+      // Log simplification stats
+      const stats = getSimplificationStats(originalPath, simplifiedPath);
+      console.log(`📍 Path simplification on load: ${stats.originalCount} → ${stats.simplifiedCount} points (${stats.reductionPercent}% reduction)`);
       
       // Broadcast restored state to all clients
       this.broadcast('state-loaded', {
@@ -287,7 +302,7 @@ class GlobalExploration {
         position: this.agent.currentPosition,
         panoId: this.agent.currentPanoId,
         stats: this.agent.coverage.getStats(),
-        fullPath: reconstructedPath,  // Send reconstructed path for minimap
+        fullPath: simplifiedPath,  // Send simplified path for minimap
         decisionHistory: this.decisionHistory
       });
       
@@ -542,14 +557,30 @@ class GlobalExploration {
     // Reconstruct path from graph for initial load (all nodes are visited)
     let fullPath = [];
     if (this.agent.coverage && this.agent.coverage.graph.size > 0) {
-      fullPath = Array.from(this.agent.coverage.graph.entries())
+      const originalPath = Array.from(this.agent.coverage.graph.entries())
         .filter(([id, node]) => node.timestamp)
         .sort((a, b) => a[1].timestamp - b[1].timestamp)
         .map(([id, node]) => ({
           lat: node.lat,
           lng: node.lng,
-          panoId: id
+          panoId: id,
+          timestamp: node.timestamp
         }));
+      
+      // Simplify the path before sending to client
+      const simplifiedPath = simplifyPathWithTiers(originalPath, {
+        recentThreshold: 60 * 60 * 1000,      // 1 hour
+        mediumThreshold: 6 * 60 * 60 * 1000,  // 6 hours
+        recentEpsilon: 0.000005,              // ~0.5m for recent
+        mediumEpsilon: 0.00002,               // ~2m for medium
+        oldEpsilon: 0.00005                   // ~5m for old
+      });
+      
+      // Log statistics
+      const stats = getSimplificationStats(originalPath, simplifiedPath);
+      console.log(`📍 Path simplification: ${stats.originalCount} → ${stats.simplifiedCount} points (${stats.reductionPercent}% reduction, ${(stats.sizeSaved/1024).toFixed(1)}KB saved)`);
+      
+      fullPath = simplifiedPath;
     }
     
     return {
