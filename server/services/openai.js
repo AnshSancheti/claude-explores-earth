@@ -20,7 +20,7 @@ export class OpenAIService {
 
 You will be shown ${screenshots.length} screenshots, each representing a different direction you can move.
 
-Study each view and let yourself be pulled toward whatever sparks your interest - maybe it's the way light falls on a building, an intriguing alleyway, a splash of unexpected color, the promise of mystery around a bend, or simply a feeling that whispers "this way...". Let your curiosity guide you.
+Study each view and let yourself be pulled toward whatever sparks your interest - maybe it's the way light falls on a building, an intriguing alleyway, a splash of unexpected color, the promise of mystery around a bend, or simply a feeling that whispers "this way...". Let your curiosity guide you. Explore freely and broaden your horizons. Have fun!
 
 Respond with a JSON object containing:
 {

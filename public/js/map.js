@@ -10,6 +10,76 @@ class MapManager {
     this.mapLoaded = false;
     this.pendingUpdates = []; // Queue positions until map is ready
     this.userHasInteracted = false; // Track if user manually adjusted the map
+    this.initializeMinimapSize(); // Initialize saved size preferences
+  }
+  
+  initializeMinimapSize() {
+    // Only apply on desktop (not mobile)
+    if (window.innerWidth > 768) {
+      const container = document.getElementById('minimapContainer');
+      const resizeHandle = document.getElementById('minimapResizeHandle');
+      if (!container || !resizeHandle) return;
+      
+      // Restore saved size from localStorage
+      const savedWidth = localStorage.getItem('minimapWidth');
+      const savedHeight = localStorage.getItem('minimapHeight');
+      
+      if (savedWidth && savedHeight) {
+        container.style.width = savedWidth + 'px';
+        container.style.height = savedHeight + 'px';
+      }
+      
+      // Custom resize from top-right corner
+      let isResizing = false;
+      let startX, startY, startWidth, startHeight;
+      
+      resizeHandle.addEventListener('mousedown', (e) => {
+        isResizing = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        startWidth = parseInt(window.getComputedStyle(container).width, 10);
+        startHeight = parseInt(window.getComputedStyle(container).height, 10);
+        
+        // Prevent text selection while resizing
+        e.preventDefault();
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'nwse-resize';
+      });
+      
+      document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+        
+        // Calculate new size (resize from top-right)
+        const newWidth = startWidth + (e.clientX - startX);
+        const newHeight = startHeight - (e.clientY - startY);
+        
+        // Apply constraints
+        const constrainedWidth = Math.min(Math.max(newWidth, 280), 600);
+        const constrainedHeight = Math.min(Math.max(newHeight, 180), 450);
+        
+        container.style.width = constrainedWidth + 'px';
+        container.style.height = constrainedHeight + 'px';
+        
+        // Trigger map resize
+        if (this.map) {
+          this.map.resize();
+        }
+      });
+      
+      document.addEventListener('mouseup', () => {
+        if (isResizing) {
+          isResizing = false;
+          document.body.style.userSelect = '';
+          document.body.style.cursor = '';
+          
+          // Save new size
+          const width = parseInt(container.style.width, 10);
+          const height = parseInt(container.style.height, 10);
+          localStorage.setItem('minimapWidth', width);
+          localStorage.setItem('minimapHeight', height);
+        }
+      });
+    }
   }
 
   isReady() {

@@ -406,8 +406,12 @@ h1 {
   position: absolute;
   bottom: 20px;
   left: 20px;
-  width: 280px;
-  height: 180px;
+  width: 400px;  /* Increased from 280px */
+  height: 300px; /* Increased from 180px */
+  min-width: 280px;  /* Minimum size constraints */
+  min-height: 180px;
+  max-width: 600px;  /* Maximum size constraints */
+  max-height: 450px;
   background: var(--glass-bg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -416,6 +420,8 @@ h1 {
   overflow: hidden;
   z-index: 10;
   box-shadow: var(--shadow-xl);
+  /* resize: both removed - using custom handle instead */
+  transition: none; /* Disable transitions during resize */
 }
 
 .minimap-toggle {
@@ -428,11 +434,43 @@ h1 {
   background: #0a0a0a;
 }
 
+/* Custom resize handle for minimap - top right */
+.minimap-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 30px;
+  height: 30px;
+  cursor: nwse-resize;
+  z-index: 20;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.minimap-container:hover .minimap-resize-handle {
+  opacity: 1;
+}
+
+.minimap-resize-handle::before {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  background: linear-gradient(45deg, transparent 50%, var(--glass-border) 50%);
+  pointer-events: none;
+}
+
+.minimap-resize-handle:hover::before {
+  background: linear-gradient(45deg, transparent 50%, var(--accent-yellow) 50%);
+}
+
 /* Minimap Reset Button */
 .minimap-reset-btn {
   position: absolute;
   top: 10px;
-  right: 10px;
+  left: 10px;  /* Changed from right to left */
   width: 28px;
   height: 28px;
   background: var(--glass-bg);
@@ -1172,18 +1210,28 @@ h1 {
   .minimap-container {
     position: fixed;
     top: 50%;
-    left: -200px;
+    left: -250px;  /* Increased from -200px */
     transform: translateY(-50%);
-    width: 200px;
-    height: 150px;
+    width: 250px;  /* Increased from 200px */
+    height: 200px; /* Increased from 150px */
+    min-width: 200px;  /* Mobile minimum */
+    min-height: 150px;
+    max-width: 300px;  /* Mobile maximum */
+    max-height: 250px;
     bottom: auto;
     transition: left 0.3s ease;
     z-index: 15;
     border-radius: 0 16px 16px 0;
+    resize: none; /* Disable resize on mobile */
   }
   
   .minimap-container.expanded {
     left: 0;
+  }
+  
+  /* Hide resize handle on mobile */
+  .minimap-resize-handle {
+    display: none;
   }
   
   /* Mobile-only minimap toggle tab */
@@ -1232,7 +1280,7 @@ h1 {
   }
   
   .minimap-toggle.expanded {
-    left: 200px;
+    left: 250px;  /* Updated to match new minimap width */
     background: var(--glass-bg);
     backdrop-filter: blur(20px);
     border-color: var(--accent-yellow);
@@ -1306,9 +1354,11 @@ h1 {
   
   /* Keep minimap but make it smaller on very small screens */
   .minimap-container {
-    width: 160px;
-    height: 120px;
-    left: -160px;
+    width: 200px;  /* Increased from 160px */
+    height: 150px; /* Increased from 120px */
+    left: -200px;
+    min-width: 160px;  /* Very small screen minimum */
+    min-height: 120px;
   }
   
   .minimap-container.expanded {
@@ -1321,7 +1371,7 @@ h1 {
   }
   
   .minimap-toggle.expanded {
-    left: 160px;
+    left: 200px;  /* Updated to match new width */
   }
   
   .minimap-toggle span {
