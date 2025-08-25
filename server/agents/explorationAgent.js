@@ -31,6 +31,9 @@ export class ExplorationAgent {
     this.mode = 'exploration'; // 'exploration' or 'pathfinding'
     this.pathToFrontier = null;
     this.stuckCounter = 0;
+    
+    // Movement history for AI context (keep last 20 moves)
+    this.recentMovements = [];
   }
 
   async initialize() {
@@ -225,7 +228,8 @@ export class ExplorationAgent {
             visitedPanos,
             stats: this.coverage.getStats(),
             stepNumber: currentStep,
-            mode: this.mode
+            mode: this.mode,
+            recentMovements: this.recentMovements  // Pass movement history
           });
           
           // Clear base64 data and delete full-size files after AI decision
@@ -255,6 +259,10 @@ export class ExplorationAgent {
       // Log successful AI selection
       console.log(`✓ AI successfully selected panoId: ${selectedLink.pano} | Reasoning: ${decision.reasoning}`);
       
+      // Track the movement BEFORE navigating
+      const previousPanoId = this.currentPanoId;
+      const previousPosition = { ...this.currentPosition };
+      
       await this.streetViewHeadless.navigateToPano(selectedLink.pano);
       // Get the current panorama data after navigation (ensures we have the actual displayed pano)
       const newPanoData = await this.streetViewHeadless.getCurrentPanorama();
@@ -264,6 +272,22 @@ export class ExplorationAgent {
         lng: newPanoData.position.lng
       };
       this.currentPanoId = newPanoData.panoId;  // Use the actual pano ID from the panorama
+      
+      // Add this movement to history
+      this.recentMovements.push({
+        from: previousPanoId,
+        to: this.currentPanoId,
+        fromPosition: previousPosition,
+        toPosition: { ...this.currentPosition },
+        heading: selectedLink.heading,
+        step: currentStep,
+        reasoning: decision.reasoning
+      });
+      
+      // Keep only last 20 movements
+      if (this.recentMovements.length > 20) {
+        this.recentMovements.shift();
+      }
       
       // Update coverage with new panorama's links for frontier tracking
       const newLinks = newPanoData.links || [];

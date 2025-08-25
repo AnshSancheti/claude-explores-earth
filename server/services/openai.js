@@ -7,7 +7,7 @@ export class OpenAIService {
     });
   }
 
-  async decideNextMove({ currentPosition, screenshots, links, visitedPanos, stats, stepNumber }) {
+  async decideNextMove({ currentPosition, screenshots, links, visitedPanos, stats, stepNumber, recentMovements }) {
     const imageContents = screenshots.map((screenshot, index) => ({
       type: "image_url",
       image_url: {
@@ -20,7 +20,16 @@ export class OpenAIService {
 
 You will be shown ${screenshots.length} screenshots, each representing a different direction you can move.
 
-Study each view and let yourself be pulled toward whatever sparks your interest - maybe it's the way light falls on a building, an intriguing alleyway, a splash of unexpected color, the promise of mystery around a bend, or simply a feeling that whispers "this way...". Let your curiosity guide you. Explore freely and broaden your horizons. Have fun!
+Study each view and let yourself be pulled toward whatever sparks your interest - maybe it's the way light falls on an object, an intriguing alleyway, a splash of unexpected color, the promise of mystery around a bend, or simply a feeling that whispers "this way...". Let your curiosity guide you. Choose based on pure instinct and aesthetic pull. Wander far.
+
+${recentMovements && recentMovements.length > 0 ? `
+You have recently traveled through these locations (most recent first):
+${recentMovements.slice(-5).reverse().map(m => 
+  `- From ${m.from} to ${m.to}`
+).join('\n')}
+
+Use this context to avoid getting stuck in loops. If you notice you're revisiting the same places repeatedly, choose a direction that breaks the pattern.
+` : ''}
 
 Respond with a JSON object containing:
 {
@@ -41,7 +50,15 @@ Respond with a JSON object containing:
             content: [
               {
                 type: "text",
-                text: `Here are ${screenshots.length} screenshots from different directions. Choose which one to explore next by returning its index (0-${screenshots.length - 1}).`
+                text: `Here are ${screenshots.length} screenshots from different directions. Choose which one to explore next by returning its index (0-${screenshots.length - 1}).${
+                  recentMovements && recentMovements.length > 3 ? 
+                  `\n\nMovement pattern analysis:\n` +
+                  `- You've made ${recentMovements.length} recent moves\n` +
+                  `- Recent locations visited: ${[...new Set(recentMovements.slice(-10).flatMap(m => [m.from, m.to]))].length} unique places in last 10 moves\n` +
+                  (recentMovements.slice(-4).some(m => recentMovements.slice(-4).filter(m2 => m2.to === m.from).length > 1) ? 
+                    `- Warning: You appear to be revisiting the same locations` : '')
+                  : ''
+                }`
               },
               ...imageContents
             ]
