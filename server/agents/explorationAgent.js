@@ -3,6 +3,7 @@ import { OpenAIService } from '../services/openai.js';
 import { CoverageTracker } from '../services/coverage.js';
 import { Pathfinder } from '../services/pathfinder.js';
 import { ScreenshotService } from '../utils/screenshot.js';
+import { projectPosition } from '../utils/geoUtils.js';
 import { v4 as uuidv4 } from 'uuid';
 
 export class ExplorationAgent {
@@ -34,6 +35,13 @@ export class ExplorationAgent {
     
     // Movement history for AI context (keep last 20 moves)
     this.recentMovements = [];
+    
+    // Track last navigation heading for dead-end recovery (null until first navigation)
+    this.lastNavigationHeading = null;
+    
+    // Dead-end recovery configuration
+    this.maxDeadEndDistance = parseInt(process.env.MAX_DEAD_END_DISTANCE) || 200;
+    this.deadEndStepSize = 10; // meters per step
   }
 
   async initialize() {
@@ -101,8 +109,8 @@ export class ExplorationAgent {
       }
     
       // Get data for the current panorama directly (no coordinate conversion)
-      const panoData = await this.streetViewHeadless.getCurrentPanorama();
-      const links = panoData.links || [];
+      let panoData = await this.streetViewHeadless.getCurrentPanorama();
+      let links = panoData.links || [];
       
       // Update our tracking to ensure we're in sync
       this.currentPanoId = panoData.panoId;
@@ -110,6 +118,44 @@ export class ExplorationAgent {
         lat: panoData.position.lat,
         lng: panoData.position.lng
       };
+      
+      // Handle dead-end panoramas (no outgoing links)
+      let deadEndRecovery = false;
+      let deadEndDistance = 0;
+      
+      if (links.length === 0 && this.lastNavigationHeading !== null) {
+        console.log(`⚠️ Dead-end panorama detected at ${this.currentPanoId}, attempting to continue in heading ${this.lastNavigationHeading}°...`);
+        
+        // Store original position for broadcast
+        const originalPanoId = this.currentPanoId;
+        
+        // Try to find a valid panorama by continuing in the same direction
+        const recoveredPano = await this.recoverFromDeadEnd();
+        
+        if (recoveredPano) {
+          // Successfully found a panorama with links
+          panoData = recoveredPano;
+          links = panoData.links || [];
+          
+          // Update position to the recovered panorama
+          this.currentPanoId = panoData.panoId;
+          this.currentPosition = {
+            lat: panoData.position.lat,
+            lng: panoData.position.lng
+          };
+          
+          // Mark that we recovered from a dead-end
+          deadEndRecovery = true;
+          // Calculate approximate distance traveled during recovery
+          deadEndDistance = this.recentMovements.length > 0 ? 
+            parseInt(this.recentMovements[this.recentMovements.length - 1].reasoning.match(/(\d+)m/)?.[1] || 0) : 0;
+          
+          console.log(`✓ Recovered from dead-end, now at ${this.currentPanoId} with ${links.length} available links`);
+        } else {
+          console.error('❌ Could not recover from dead-end after maximum distance');
+          // Continue with empty links - will throw error below
+        }
+      }
       
       // Log current location details and frontier status
       console.log(`Current location - PanoID: ${this.currentPanoId}, Lat: ${this.currentPosition.lat.toFixed(6)}, Lng: ${this.currentPosition.lng.toFixed(6)}`);
@@ -122,6 +168,26 @@ export class ExplorationAgent {
       let selectedLink = null;
       let decision = null;
       let screenshots = [];  // Declare at higher scope to avoid reference error
+      
+      // If we just recovered from a dead-end, broadcast that special state
+      if (deadEndRecovery) {
+        // Create a special broadcast for dead-end recovery
+        const recoveryData = {
+          stepCount: currentStep,
+          reasoning: `Navigating through dead-end (${deadEndDistance}m of sparse coverage)`,
+          panoId: this.currentPanoId,
+          direction: this.lastNavigationHeading,
+          mode: 'dead-end-recovery',
+          screenshots: [],  // No screenshots during recovery
+          newPosition: this.currentPosition,
+          stats: this.coverage.getStats()
+        };
+        
+        // Broadcast the recovery
+        this.globalExploration.broadcast('move-decision', recoveryData);
+        
+        // Now continue normal exploration from the recovered position
+      }
       
       // Determine mode and select next move
       if (isStuck && this.coverage.hasFrontier()) {
@@ -158,6 +224,12 @@ export class ExplorationAgent {
       
       // If not stuck or no pathfinding solution, use normal exploration
       if (!selectedLink) {
+        // Check if we have no links at all (dead-end with no recovery possible)
+        if (links.length === 0) {
+          console.error('❌ No available links and cannot recover. This may be a dead-end panorama loaded from a save.');
+          throw new Error('No available navigation options from current panorama');
+        }
+        
         const unvisitedLinks = links.filter(link => 
           !this.coverage.hasVisited(link.pano)
         );
@@ -263,6 +335,9 @@ export class ExplorationAgent {
       const previousPanoId = this.currentPanoId;
       const previousPosition = { ...this.currentPosition };
       
+      // Store the heading for potential dead-end recovery
+      this.lastNavigationHeading = parseFloat(selectedLink.heading);
+      
       await this.streetViewHeadless.navigateToPano(selectedLink.pano);
       // Get the current panorama data after navigation (ensures we have the actual displayed pano)
       const newPanoData = await this.streetViewHeadless.getCurrentPanorama();
@@ -356,6 +431,73 @@ export class ExplorationAgent {
     }
   }
 
+  /**
+   * Attempt to recover from a dead-end panorama by continuing in the same direction
+   * @returns {Object|null} Recovered panorama data with links, or null if recovery failed
+   */
+  async recoverFromDeadEnd() {
+    const maxAttempts = Math.floor(this.maxDeadEndDistance / this.deadEndStepSize);
+    let currentPos = { ...this.currentPosition };
+    let attemptedPositions = [];
+    
+    // Track the original dead-end for movement history
+    const deadEndPanoId = this.currentPanoId;
+    const deadEndPosition = { ...this.currentPosition };
+    
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      // Project forward by stepSize in the last navigation heading
+      currentPos = projectPosition(currentPos, this.lastNavigationHeading, this.deadEndStepSize);
+      attemptedPositions.push({ ...currentPos });
+      
+      console.log(`  Attempt ${attempt + 1}: Checking position ${currentPos.lat.toFixed(6)}, ${currentPos.lng.toFixed(6)} (${(attempt + 1) * this.deadEndStepSize}m forward)`);
+      
+      try {
+        // Try to get panorama at the projected position
+        const testPano = await this.streetViewHeadless.getPanorama(currentPos);
+        
+        if (testPano && testPano.links && testPano.links.length > 0) {
+          console.log(`  ✓ Found valid panorama ${testPano.panoId} after ${(attempt + 1) * this.deadEndStepSize}m with ${testPano.links.length} links`);
+          
+          // Navigate to the recovered panorama
+          await this.streetViewHeadless.navigateToPano(testPano.panoId);
+          
+          // Add the dead-end recovery movement to history
+          this.recentMovements.push({
+            from: deadEndPanoId,
+            to: testPano.panoId,
+            fromPosition: deadEndPosition,
+            toPosition: {
+              lat: testPano.position.lat,
+              lng: testPano.position.lng
+            },
+            heading: this.lastNavigationHeading,
+            step: this.stepCount,
+            reasoning: `Navigating through dead-end (recovered after ${(attempt + 1) * this.deadEndStepSize}m)`
+          });
+          
+          // Keep only last 20 movements
+          if (this.recentMovements.length > 20) {
+            this.recentMovements.shift();
+          }
+          
+          // Add the dead-end panorama to visited (even though it has no links)
+          this.coverage.addVisited(deadEndPanoId, deadEndPosition, []);
+          
+          // Add the recovered panorama to visited
+          this.coverage.addVisited(testPano.panoId, testPano.position, testPano.links);
+          
+          return testPano;
+        }
+      } catch (error) {
+        // No panorama at this position, continue searching
+        console.log(`  No panorama found at this position`);
+      }
+    }
+    
+    console.log(`  ❌ Could not find valid panorama after ${this.maxDeadEndDistance}m`);
+    return null;
+  }
+
   async reset() {
     // Reset position and state
     this.currentPosition = {
@@ -366,6 +508,8 @@ export class ExplorationAgent {
     this.currentHeading = 0;
     this.stepCount = 0;
     this.coverage.reset();
+    this.lastNavigationHeading = null;  // Reset to null, not 0
+    this.recentMovements = [];
     
     // Generate new run ID for new exploration
     this.runId = uuidv4();

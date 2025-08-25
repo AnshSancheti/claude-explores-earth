@@ -310,6 +310,23 @@ class GlobalExploration {
       
       console.log(`State loaded: ${this.agent.stepCount} steps, ${this.agent.coverage.visitedPanos.size} locations visited`);
       
+      // Check if we loaded into a dead-end panorama
+      const currentPano = await this.agent.streetViewHeadless.getCurrentPanorama();
+      if (!currentPano.links || currentPano.links.length === 0) {
+        console.warn('⚠️ Loaded into a dead-end panorama. Attempting to find a valid starting point...');
+        
+        // Try to use the last known good heading from movement history
+        if (this.agent.recentMovements && this.agent.recentMovements.length > 0) {
+          const lastMove = this.agent.recentMovements[this.agent.recentMovements.length - 1];
+          this.agent.lastNavigationHeading = lastMove.heading || 0;
+          console.log(`Using last known heading: ${this.agent.lastNavigationHeading}°`);
+        } else {
+          // Default to north if no history
+          this.agent.lastNavigationHeading = 0;
+          console.log('No movement history available, defaulting to north (0°)');
+        }
+      }
+      
       return { 
         success: true,
         stepCount: this.agent.stepCount,
@@ -755,6 +772,7 @@ server.listen(PORT, HOST, () => {
   console.log(`💾 Save interval: Every ${SAVE_INTERVAL} steps`);
   console.log(`📜 Decision history limit: ${DECISION_HISTORY_LIMIT} entries`);
   console.log(`🗺️  Path simplification: ${PATH_SIMPLIFICATION.enabled ? `Enabled (epsilon: ${PATH_SIMPLIFICATION.recentEpsilon}/${PATH_SIMPLIFICATION.mediumEpsilon}/${PATH_SIMPLIFICATION.oldEpsilon})` : 'Disabled'}`);
+  console.log(`🚧 Dead-end recovery: ${process.env.MAX_DEAD_END_DISTANCE || 200}m max distance`);
   console.log(`🔐 Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`🔑 Google Maps API: ${process.env.GOOGLE_MAPS_API_KEY ? 'Configured' : 'NOT CONFIGURED'}`);
   console.log(`🔑 OpenAI API: ${process.env.OPENAI_API_KEY ? 'Configured' : 'NOT CONFIGURED'}`);

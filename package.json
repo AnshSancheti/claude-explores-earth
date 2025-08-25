@@ -20,5 +20,24 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.3"
+  },
+  "nodemonConfig": {
+    "ignore": [
+      "runs/*",
+      "*.log",
+      "current-run*.json",
+      "runs/shots/*",
+      "runs/saves/*",
+      "runs/exploration-*.log",
+      "runs/persistent_logs/*",
+      "*.jpg",
+      "*.png"
+    ],
+    "watch": [
+      "server/**/*",
+      "public/**/*"
+    ],
+    "ext": "js,json,html,css",
+    "delay": "1000"
   }
 }
