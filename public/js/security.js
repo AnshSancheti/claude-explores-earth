@@ -1,5 +1,5 @@
 /**
- * Security utilities for the DorAI application
+ * Security utilities for the Scout application
  */
 
 /**

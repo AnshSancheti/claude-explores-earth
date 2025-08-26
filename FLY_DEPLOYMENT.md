@@ -1,4 +1,4 @@
-# Fly.io Deployment Guide for DorAI
+# Fly.io Deployment Guide for Scout
 
 ## Issue Fixed
 The application was failing with "instance refused connection" because:

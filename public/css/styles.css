@@ -40,7 +40,7 @@ body {
 
 /* Glass Header */
 header {
-  background: rgba(20, 20, 20, 0.4);
+  background: rgba(2, 4, 8, 0.6);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-bottom: 1px solid rgba(255, 255, 255, 0.15);
@@ -81,8 +81,18 @@ header::before {
 
 .brand {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.02);
 }
 
 h1 {
@@ -472,7 +482,7 @@ h1 {
 /* Glass Sidebar */
 .sidebar {
   width: 280px;
-  background: rgba(20, 20, 20, 0.4);
+  background: rgba(2, 4, 8, 0.6);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   border-left: 1px solid rgba(255, 255, 255, 0.15);
@@ -1061,6 +1071,11 @@ h1 {
     flex: 0 0 auto;
   }
   
+  .brand-icon {
+    width: 28px;
+    height: 28px;
+  }
+  
   h1 {
     font-size: 20px;
   }
@@ -1295,6 +1310,11 @@ h1 {
 }
 
 @media (max-width: 480px) {
+  .brand-icon {
+    width: 24px;
+    height: 24px;
+  }
+  
   h1 {
     font-size: 18px;
   }
