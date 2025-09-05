@@ -4,3 +4,8 @@ runs/
 .DS_Store
 *.log
 npm-debug.log*
+AGENTS.md
+CLAUDE.md
+FLY_DEPLOYMENT.md
+Dockerfile
+fly.toml

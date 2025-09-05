@@ -8,7 +8,6 @@ import cors from 'cors';
 import { ExplorationAgent } from './agents/explorationAgent.js';
 import { Logger } from './utils/logger.js';
 import { simplifyPathWithTiers, getSimplificationStats } from './utils/pathSimplification.js';
-import { productionSecurity } from './middleware/secureRuns.js';
 import fs from 'fs';
 import path from 'path';
 
