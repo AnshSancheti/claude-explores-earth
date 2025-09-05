@@ -112,7 +112,7 @@ class UIManager {
       </div>
       <div class="pathfinding-details" style="display: none;">
         <div class="pathfinding-step-detail">
-          Step ${data.stepCount}: ${escapeHtml(data.reasoning)}
+          Step ${data.stepCount}: ${escapeHtml(data.reasoning)}${data.clusterReposition ? ' <span class="reposition-badge">reposition</span>' : ''}
         </div>
       </div>
     `;
@@ -159,8 +159,9 @@ class UIManager {
     const details = group.querySelector('.pathfinding-details');
     const newDetail = document.createElement('div');
     newDetail.className = 'pathfinding-step-detail';
-    newDetail.textContent = `Step ${data.stepCount}: ${data.reasoning}`;
-    details.appendChild(newDetail);
+    newDetail.innerHTML = `Step ${data.stepCount}: ${escapeHtml(data.reasoning)}${data.clusterReposition ? ' <span class="reposition-badge">reposition</span>' : ''}`;
+    // Prepend for reverse chronological order (latest on top when expanded)
+    details.insertBefore(newDetail, details.firstChild);
   }
 
   static togglePathfindingGroup(header) {

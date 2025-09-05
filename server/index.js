@@ -262,6 +262,10 @@ class GlobalExploration {
       
       // Restore coverage state
       this.agent.coverage.restoreFromSave(saveData);
+      // Rebuild pano clusters from restored graph (not persisted)
+      if (this.agent.clusterIndex) {
+        this.agent.clusterIndex.rebuildFromGraph(this.agent.coverage.graph);
+      }
       
       // Restore agent state
       this.agent.runId = saveData.runId;

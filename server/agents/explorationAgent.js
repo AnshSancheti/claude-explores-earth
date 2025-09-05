@@ -2,6 +2,7 @@ import { StreetViewHeadless } from '../services/streetViewHeadless.js';
 import { OpenAIService } from '../services/openai.js';
 import { CoverageTracker } from '../services/coverage.js';
 import { Pathfinder } from '../services/pathfinder.js';
+import { PanoClusterIndex } from '../services/panoClusterIndex.js';
 import { ScreenshotService } from '../utils/screenshot.js';
 import { projectPosition } from '../utils/geoUtils.js';
 import { v4 as uuidv4 } from 'uuid';
@@ -18,6 +19,7 @@ export class ExplorationAgent {
     this.ai = new OpenAIService();
     this.coverage = new CoverageTracker();
     this.pathfinder = new Pathfinder(this.coverage);
+    this.clusterIndex = new PanoClusterIndex();
     this.screenshot = new ScreenshotService(this.runId);
     
     this.currentPosition = {
@@ -64,6 +66,8 @@ export class ExplorationAgent {
     this.currentPanoId = panoData.panoId;
     this.streetViewHeadless.currentPanoId = this.currentPanoId;  // Track in Puppeteer for refresh
     this.coverage.addVisited(this.currentPanoId, this.currentPosition, panoData.links || []);
+    // Build initial clusters from the current visited graph
+    this.clusterIndex.rebuildFromGraph(this.coverage.graph);
     
     // Broadcast to all connected clients
     this.globalExploration.broadcast('position-update', {
@@ -167,6 +171,7 @@ export class ExplorationAgent {
       let selectedLink = null;
       let decision = null;
       let remainingPathSteps = null; // For UI hint when pathfinding
+      let clusterReposition = false; // Flag for intra-cluster repositioning
       let screenshots = [];  // Declare at higher scope to avoid reference error
       
       // If we just recovered from a dead-end, broadcast that special state
@@ -196,7 +201,19 @@ export class ExplorationAgent {
         this.mode = 'pathfinding';
         console.log('Visited all links - switching to pathfinding mode (no screenshots)');
         
-        const pathInfo = this.pathfinder.findPathToNearestFrontier(this.currentPanoId);
+        // First try clustered pathfinding to mitigate A/A' splits
+        let pathInfo = this.pathfinder.findPathToNearestFrontierClustered(
+          this.currentPanoId,
+          links,
+          this.clusterIndex
+        );
+        // Fallback to legacy pathfinding if clustered approach couldn't produce a valid next hop
+        if (!pathInfo) {
+          console.log('Clustered pathfinding did not produce a first hop; trying legacy BFS...');
+          pathInfo = this.pathfinder.findPathToNearestFrontier(this.currentPanoId);
+        } else if (pathInfo && typeof pathInfo.reposition === 'boolean') {
+          clusterReposition = pathInfo.reposition;
+        }
         if (pathInfo) {
           // Find the link that leads to the next step in path
           selectedLink = links.find(l => l.pano === pathInfo.nextStep);
@@ -204,7 +221,9 @@ export class ExplorationAgent {
             decision = {
               selectedPanoId: selectedLink.pano,
               // Recalculate path each step; report remaining steps for clarity
-              reasoning: `Pathfinding to frontier (remaining ${pathInfo.pathLength} step${pathInfo.pathLength === 1 ? '' : 's'})`
+              reasoning: pathInfo.reposition
+                ? `Pathfinding (cluster reposition) — remaining ${pathInfo.pathLength} step${pathInfo.pathLength === 1 ? '' : 's'}`
+                : `Pathfinding to frontier — remaining ${pathInfo.pathLength} step${pathInfo.pathLength === 1 ? '' : 's'}`
             };
             remainingPathSteps = pathInfo.pathLength;
             console.log(`Pathfinding: Next step to ${selectedLink.pano}`);
@@ -213,6 +232,7 @@ export class ExplorationAgent {
           }
         } else {
           // No path found, try escape heuristic
+          console.log('No path to frontier via clustered or legacy BFS. Using escape heuristic.');
           selectedLink = this.pathfinder.findBestEscapeDirection(this.currentPanoId, links);
           if (selectedLink) {
             decision = {
@@ -370,6 +390,10 @@ export class ExplorationAgent {
       // Update coverage with new panorama's links for frontier tracking
       const newLinks = newPanoData.links || [];
       this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
+      // Record the actual traversal edge even if Google resolved to a different panoId (A → A')
+      this.coverage.ensureDirectedEdge(previousPanoId, this.currentPanoId);
+      // Keep cluster index updated incrementally
+      this.clusterIndex.updatePano(this.currentPanoId, this.currentPosition);
       
       // Process screenshots for all modes (exploration, pathfinding, single-link)
       let thumbnailUrls = [];
@@ -399,11 +423,12 @@ export class ExplorationAgent {
       const stepData = {
         stepCount: currentStep,
         reasoning: decision.reasoning,
-        panoId: selectedLink.pano,
+        panoId: this.currentPanoId,
         direction: parseFloat(selectedLink.heading),
         mode: this.mode,
         screenshots: thumbnailUrls,
-        remainingPathSteps: remainingPathSteps
+        remainingPathSteps: remainingPathSteps,
+        clusterReposition: clusterReposition
       };
       
       // Prepare broadcast data with additional info for UI updates
@@ -489,7 +514,9 @@ export class ExplorationAgent {
           
           // Add the recovered panorama to visited
           this.coverage.addVisited(testPano.panoId, testPano.position, testPano.links);
-          
+          // Record the traversal from the dead-end to the recovered pano (actual movement edge)
+          this.coverage.ensureDirectedEdge(deadEndPanoId, testPano.panoId);
+
           return testPano;
         }
       } catch (error) {

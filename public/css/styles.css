@@ -720,6 +720,17 @@ h1 {
   color: rgba(255, 193, 7, 0.5);
 }
 
+.reposition-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  color: var(--accent-yellow);
+  border: 1px solid rgba(255, 193, 7, 0.35);
+  background: linear-gradient(135deg, rgba(255, 193, 7, 0.15), rgba(255, 193, 7, 0.08));
+}
+
 /* Enhance exploration entries to stand out more */
 .exploration-entry {
   background: var(--bg-tertiary);

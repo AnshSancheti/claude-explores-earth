@@ -16,6 +16,15 @@ export class CoverageTracker {
     this.graph = new Map();
   }
 
+  // Ensure a directed edge exists in the visited graph from one pano to another.
+  // Useful to record the actual traversal even if Google resolved the target panoId differently (A → A').
+  ensureDirectedEdge(fromPanoId, toPanoId) {
+    if (!fromPanoId || !toPanoId) return;
+    const fromNode = this.graph.get(fromPanoId);
+    if (!fromNode) return; // Only record if source is already in graph (visited)
+    fromNode.neighbors.add(toPanoId);
+  }
+
   addVisited(panoId, position, links = []) {
     this.visitedPanos.add(panoId);
     this.path.push({ ...position, panoId, timestamp: Date.now() });
