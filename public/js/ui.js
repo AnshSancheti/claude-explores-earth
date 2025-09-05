@@ -95,12 +95,18 @@ class UIManager {
     
     const time = new Date().toLocaleTimeString();
     
+    const remaining = Number.isFinite(data.remainingPathSteps) ? data.remainingPathSteps : null;
+    const remainingLabel = remaining !== null 
+      ? `<span class="pathfinding-count">Frontier: ${remaining} step${remaining === 1 ? '' : 's'} away</span>`
+      : '';
+
     group.innerHTML = `
       <div class="decision-header pathfinding-header" onclick="UIManager.togglePathfindingGroup(this)">
         <span class="decision-step">
           <span class="mode-indicator pathfinding">🧭</span>
           <span class="step-range">Step ${data.stepCount}</span>
         </span>
+        ${remainingLabel}
         <span class="expand-icon">▶</span>
         <span class="decision-time">${time}</span>
       </div>
@@ -124,6 +130,7 @@ class UIManager {
     // Update the header
     const stepRange = group.querySelector('.step-range');
     const time = group.querySelector('.decision-time');
+    let count = group.querySelector('.pathfinding-count');
     
     if (stepCount === 1) {
       stepRange.textContent = `Step ${startStep}`;
@@ -131,6 +138,22 @@ class UIManager {
       stepRange.textContent = `Steps ${startStep}-${endStep}`;
     }
     time.textContent = new Date().toLocaleTimeString();
+    // Update or create the remaining steps label
+    const remaining = Number.isFinite(data.remainingPathSteps) ? data.remainingPathSteps : null;
+    if (remaining !== null) {
+      const text = `Frontier: ${remaining} step${remaining === 1 ? '' : 's'} away`;
+      if (!count) {
+        count = document.createElement('span');
+        count.className = 'pathfinding-count';
+        // Insert after step-range
+        const stepSpan = group.querySelector('.decision-step');
+        stepSpan.insertAdjacentElement('afterend', count);
+      }
+      count.textContent = text;
+    } else if (count) {
+      // Remove label if not applicable
+      count.remove();
+    }
     
     // Add the new step to the details
     const details = group.querySelector('.pathfinding-details');

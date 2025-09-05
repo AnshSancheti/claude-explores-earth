@@ -161,12 +161,12 @@ export class ExplorationAgent {
       console.log(`Current location - PanoID: ${this.currentPanoId}, Lat: ${this.currentPosition.lat.toFixed(6)}, Lng: ${this.currentPosition.lng.toFixed(6)}`);
       console.log(`Frontier size: ${this.coverage.getFrontierSize()}, Mode: ${this.mode}`);
       
-      // Check if we're stuck in a loop
-      const isStuck = this.coverage.isInLoop(this.currentPanoId) && 
-                      links.every(link => this.coverage.hasVisited(link.pano));
+      // Determine if all outgoing links from current pano are already visited
+      const allLinksVisited = (links.length > 0) && links.every(link => this.coverage.hasVisited(link.pano));
       
       let selectedLink = null;
       let decision = null;
+      let remainingPathSteps = null; // For UI hint when pathfinding
       let screenshots = [];  // Declare at higher scope to avoid reference error
       
       // If we just recovered from a dead-end, broadcast that special state
@@ -190,7 +190,8 @@ export class ExplorationAgent {
       }
       
       // Determine mode and select next move
-      if (isStuck && this.coverage.hasFrontier()) {
+      // Enter pathfinding mode whenever all links are visited and any frontier exists
+      if (allLinksVisited && this.coverage.hasFrontier()) {
         // Switch to pathfinding mode - no screenshots needed
         this.mode = 'pathfinding';
         console.log('Visited all links - switching to pathfinding mode (no screenshots)');
@@ -202,8 +203,10 @@ export class ExplorationAgent {
           if (selectedLink) {
             decision = {
               selectedPanoId: selectedLink.pano,
-              reasoning: `Pathfinding to frontier (step ${pathInfo.currentStep}/${pathInfo.totalSteps})`
+              // Recalculate path each step; report remaining steps for clarity
+              reasoning: `Pathfinding to frontier (remaining ${pathInfo.pathLength} step${pathInfo.pathLength === 1 ? '' : 's'})`
             };
+            remainingPathSteps = pathInfo.pathLength;
             console.log(`Pathfinding: Next step to ${selectedLink.pano}`);
             // No screenshots in pathfinding mode
             screenshots = [];
@@ -399,7 +402,8 @@ export class ExplorationAgent {
         panoId: selectedLink.pano,
         direction: parseFloat(selectedLink.heading),
         mode: this.mode,
-        screenshots: thumbnailUrls
+        screenshots: thumbnailUrls,
+        remainingPathSteps: remainingPathSteps
       };
       
       // Prepare broadcast data with additional info for UI updates
@@ -414,8 +418,8 @@ export class ExplorationAgent {
       
       this.logger.log('exploration-step', {
         step: currentStep,
-        from: this.currentPanoId,
-        to: selectedLink.pano,
+        from: previousPanoId,
+        to: this.currentPanoId,
         decision: decision.reasoning,
         position: this.currentPosition,
         stats: this.coverage.getStats()
