@@ -140,11 +140,11 @@ const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL) || 500; // Save every 
 const PATH_SIMPLIFICATION = {
   enabled: process.env.DISABLE_PATH_SIMPLIFICATION !== 'true',  // Set to false to disable
   // Epsilon values in degrees (1 degree ≈ 111km at equator, ~85km longitude in NYC)
-  recentEpsilon: parseFloat(process.env.PATH_EPSILON_RECENT) || 0.000005,     // ~0.5m for recent paths
-  mediumEpsilon: parseFloat(process.env.PATH_EPSILON_MEDIUM) || 0.00002,      // ~2m for medium age
-  oldEpsilon: parseFloat(process.env.PATH_EPSILON_OLD) || 0.00005,            // ~5m for old paths
-  recentThreshold: 60 * 60 * 1000,      // 1 hour
-  mediumThreshold: 6 * 60 * 60 * 1000,  // 6 hours
+  recentEpsilon: parseFloat(process.env.PATH_EPSILON_RECENT) || 0.00001,     // ~1m for recent paths
+  mediumEpsilon: parseFloat(process.env.PATH_EPSILON_MEDIUM) || 0.00005,      // ~5m for medium age
+  oldEpsilon: parseFloat(process.env.PATH_EPSILON_OLD) || 0.0001,            // ~10m for old paths
+  recentThreshold: 15 * 60 * 1000,      // 15 minutes
+  mediumThreshold: 1 * 60 * 60 * 1000,  // 1 hour
 };
 
 const START_LOCATION = {
