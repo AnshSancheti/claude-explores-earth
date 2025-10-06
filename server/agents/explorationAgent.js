@@ -212,6 +212,12 @@ export class ExplorationAgent {
             screenshots = [];
           }
         } else {
+          // Frontier exists but is unreachable via visited graph; fall back to teleport
+          const teleportStep = await this.teleportToFrontier(currentStep);
+          if (teleportStep) {
+            return teleportStep;
+          }
+          
           // No path found, try escape heuristic
           selectedLink = this.pathfinder.findBestEscapeDirection(this.currentPanoId, links);
           if (selectedLink) {
@@ -500,6 +506,139 @@ export class ExplorationAgent {
     
     console.log(`  ❌ Could not find valid panorama after ${this.maxDeadEndDistance}m`);
     return null;
+  }
+
+  async teleportToFrontier(currentStep) {
+    const frontiers = this.coverage.getFrontiers();
+    if (!frontiers || frontiers.length === 0) {
+      console.warn('Teleport requested but no frontier candidates available.');
+      return null;
+    }
+
+    let closestFrontier = null;
+    let closestPosition = null;
+    let closestDistance = Infinity;
+
+    for (const frontier of frontiers) {
+      const node = this.coverage.graph.get(frontier.panoId);
+      if (!node || typeof node.lat !== 'number' || typeof node.lng !== 'number') {
+        continue;
+      }
+
+      const candidatePosition = { lat: node.lat, lng: node.lng };
+      const distance = this.coverage.calculateDistance(this.currentPosition, candidatePosition);
+
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestFrontier = frontier;
+        closestPosition = candidatePosition;
+      }
+    }
+
+    let closestPanoData = null;
+    if (!closestFrontier) {
+      console.warn('No frontier coordinates cached in graph; falling back to random frontier.');
+      const fallbackFrontier = frontiers[Math.floor(Math.random() * frontiers.length)];
+      if (!fallbackFrontier) {
+        return null;
+      }
+      try {
+        console.log(`Fetching Street View metadata for fallback frontier ${fallbackFrontier.panoId}`);
+        closestPanoData = await this.streetViewHeadless.getPanorama(fallbackFrontier.panoId);
+        if (closestPanoData && closestPanoData.position) {
+          closestFrontier = fallbackFrontier;
+          closestPosition = {
+            lat: closestPanoData.position.lat,
+            lng: closestPanoData.position.lng
+          };
+          closestDistance = this.coverage.calculateDistance(this.currentPosition, closestPosition);
+        }
+      } catch (error) {
+        console.error(`Failed to evaluate fallback frontier ${fallbackFrontier.panoId}:`, error.message);
+        return null;
+      }
+    }
+
+    if (!closestFrontier || !closestPosition) {
+      console.warn('Teleport requested but no frontier metadata available after fallback.');
+      return null;
+    }
+
+    console.log(`No path to frontier found. Teleporting to closest frontier ${closestFrontier.panoId} (${Math.round(closestDistance)}m away).`);
+
+    const previousPanoId = this.currentPanoId;
+    const previousPosition = { ...this.currentPosition };
+
+    try {
+      await this.streetViewHeadless.navigateToPano(closestFrontier.panoId);
+      // Reuse previously fetched data when possible, but confirm via current panorama call
+      const newPanoData = closestPanoData ?? await this.streetViewHeadless.getCurrentPanorama();
+      if (!closestPanoData || !closestPosition) {
+        closestPosition = {
+          lat: newPanoData.position.lat,
+          lng: newPanoData.position.lng
+        };
+        closestDistance = this.coverage.calculateDistance(this.currentPosition, closestPosition);
+      }
+
+      this.currentPanoId = newPanoData.panoId;
+      this.currentPosition = {
+        lat: newPanoData.position.lat,
+        lng: newPanoData.position.lng
+      };
+
+      // Teleport resets directional context until next navigation
+      this.lastNavigationHeading = null;
+
+      const newLinks = newPanoData.links || [];
+      this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
+
+      const decisionReasoning = `Teleporting to unreachable frontier (${closestFrontier.panoId})`;
+
+      this.recentMovements.push({
+        from: previousPanoId,
+        to: this.currentPanoId,
+        fromPosition: previousPosition,
+        toPosition: { ...this.currentPosition },
+        heading: null,
+        step: currentStep,
+        reasoning: decisionReasoning
+      });
+      if (this.recentMovements.length > 20) {
+        this.recentMovements.shift();
+      }
+
+      const stepData = {
+        stepCount: currentStep,
+        reasoning: decisionReasoning,
+        panoId: this.currentPanoId,
+        direction: 0,
+        mode: 'pathfinding',
+        screenshots: [],
+        remainingPathSteps: null
+      };
+
+      const broadcastData = {
+        ...stepData,
+        newPosition: this.currentPosition,
+        stats: this.coverage.getStats()
+      };
+
+      this.globalExploration.broadcast('move-decision', broadcastData);
+      this.logger.log('exploration-step', {
+        step: currentStep,
+        from: previousPanoId,
+        to: this.currentPanoId,
+        decision: decisionReasoning,
+        position: this.currentPosition,
+        stats: this.coverage.getStats()
+      });
+
+      return stepData;
+    } catch (error) {
+      console.error(`Failed to teleport to frontier ${closestFrontier?.panoId || 'unknown'}:`, error.message);
+      return null;
+    }
   }
 
   async reset() {

@@ -126,11 +126,18 @@ export class CoverageTracker {
   getFrontierSize() {
     return this.frontier.size;
   }
-  
+
   hasFrontier() {
     return this.frontier.size > 0;
   }
-  
+
+  getFrontiers() {
+    return Array.from(this.frontier.entries()).map(([panoId, data]) => ({
+      panoId,
+      ...data
+    }));
+  }
+
   reset() {
     this.visitedPanos.clear();
     this.path = [];
