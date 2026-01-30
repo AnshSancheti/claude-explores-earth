@@ -537,8 +537,8 @@ export class ExplorationAgent {
 
     let closestPanoData = null;
     if (!closestFrontier) {
-      console.warn('No frontier coordinates cached in graph; falling back to random frontier.');
-      const fallbackFrontier = frontiers[Math.floor(Math.random() * frontiers.length)];
+      console.warn('No frontier coordinates cached in graph; falling back to last frontier.');
+      const fallbackFrontier = frontiers[frontiers.length - 1];
       if (!fallbackFrontier) {
         return null;
       }
