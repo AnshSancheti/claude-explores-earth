@@ -10,6 +10,7 @@ import { Logger } from './utils/logger.js';
 import { simplifyPathWithTiers, getSimplificationStats } from './utils/pathSimplification.js';
 import fs from 'fs';
 import path from 'path';
+import { createCanvas } from 'canvas';
 import { verifySignature } from './utils/urlSigner.js';
 
 dotenv.config();
@@ -144,6 +145,8 @@ const PORT = process.env.PORT || 3000;
 const STEP_INTERVAL = parseInt(process.env.STEP_INTERVAL_MS) || 5000;
 const DECISION_HISTORY_LIMIT = parseInt(process.env.DECISION_HISTORY_LIMIT) || 20;
 const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL) || 500; // Save every N steps
+const TILE_TAIL_POINTS = parseInt(process.env.TILE_RECENT_TAIL_POINTS) || 1500; // recent points kept as vector
+const TILE_MAX_CACHE = parseInt(process.env.TILE_MAX_CACHE) || 256;
 
 // Path simplification settings (configurable via environment variables)
 const PATH_SIMPLIFICATION = {
@@ -183,6 +186,8 @@ class GlobalExploration {
     this.pendingSave = false;
     this.backgroundSaveTimer = null;
     this.backgroundSaveInterval = 5 * 60 * 1000; // 5 minutes in milliseconds
+    // Tile cache for archived path rendering
+    this.tileCache = new Map(); // key: `${z}/${x}/${y}@${archivedCount}` -> Buffer
   }
 
   createPersistentLogger() {
@@ -665,6 +670,107 @@ class GlobalExploration {
 
 // Initialize global exploration
 const globalExploration = new GlobalExploration();
+
+// Tile rendering helpers
+function lonLatToWorldPixels(lng, lat, z) {
+  const tile = 256;
+  const scale = tile * Math.pow(2, z);
+  const x = (lng + 180) / 360 * scale;
+  const sinLat = Math.sin((lat * Math.PI) / 180);
+  const y = (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * scale;
+  return [x, y];
+}
+
+function getArchivedCount(agent) {
+  if (!agent || !agent.coverage) return 0;
+  const len = agent.coverage.path.length;
+  return Math.max(0, len - TILE_TAIL_POINTS);
+}
+
+function drawArchiveTile(agent, z, x, y) {
+  const archivedCount = getArchivedCount(agent);
+  if (archivedCount < 2) {
+    const c = createCanvas(256, 256);
+    return c.toBuffer('image/png');
+  }
+  const pathArr = agent.coverage.path; // [{lat,lng,...}]
+  const canvas = createCanvas(256, 256);
+  const ctx = canvas.getContext('2d');
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#f44336';
+  ctx.globalAlpha = 0.8;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  const tileOriginX = x * 256;
+  const tileOriginY = y * 256;
+
+  let prevPx = null;
+  for (let i = 0; i < archivedCount - 1; i++) {
+    const a = pathArr[i];
+    const b = pathArr[i + 1];
+    if (!a || !b) continue;
+    const [awx, awy] = lonLatToWorldPixels(a.lng, a.lat, z);
+    const [bwx, bwy] = lonLatToWorldPixels(b.lng, b.lat, z);
+    const ax = awx - tileOriginX;
+    const ay = awy - tileOriginY;
+    const bx = bwx - tileOriginX;
+    const by = bwy - tileOriginY;
+    const minX = Math.min(ax, bx) - 2;
+    const maxX = Math.max(ax, bx) + 2;
+    const minY = Math.min(ay, by) - 2;
+    const maxY = Math.max(ay, by) + 2;
+    if (maxX < 0 || maxY < 0 || minX > 256 || minY > 256) {
+      continue; // no intersection with tile
+    }
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+  }
+
+  return canvas.toBuffer('image/png');
+}
+
+// Simple LRU eviction for tile cache
+function cacheSet(map, key, value) {
+  if (map.has(key)) map.delete(key);
+  map.set(key, value);
+  if (map.size > TILE_MAX_CACHE) {
+    const firstKey = map.keys().next().value;
+    map.delete(firstKey);
+  }
+}
+
+// Raster tiles for archived path
+app.get('/tiles/:z/:x/:y.png', (req, res) => {
+  const agent = globalExploration.agent;
+  if (!agent || !agent.coverage) {
+    res.type('image/png').send(createCanvas(256, 256).toBuffer('image/png'));
+    return;
+  }
+  const z = parseInt(req.params.z, 10);
+  const x = parseInt(req.params.x, 10);
+  const y = parseInt(req.params.y, 10);
+  if (!Number.isFinite(z) || !Number.isFinite(x) || !Number.isFinite(y)) {
+    return res.status(400).send('bad tile');
+  }
+  const archivedCount = getArchivedCount(agent);
+  const cacheKey = `${z}/${x}/${y}@${archivedCount}`;
+  const cached = globalExploration.tileCache.get(cacheKey);
+  if (cached) {
+    res.type('image/png').send(cached);
+    return;
+  }
+  try {
+    const buf = drawArchiveTile(agent, z, x, y);
+    cacheSet(globalExploration.tileCache, cacheKey, buf);
+    res.type('image/png').send(buf);
+  } catch (e) {
+    console.error('Tile render error:', e);
+    res.status(500).send('tile error');
+  }
+});
 
 // Lightweight health and metrics endpoints
 app.get('/healthz', (req, res) => {

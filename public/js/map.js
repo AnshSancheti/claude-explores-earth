@@ -113,6 +113,7 @@ class MapManager {
         this.addStartMarker();
         this.addCurrentMarker();
         this.initializePath();
+        this.addArchiveTiles();
         this.addResetButton();
         this.mapLoaded = true;
         
@@ -134,6 +135,39 @@ class MapManager {
       });
     } catch (error) {
       console.error('Failed to initialize minimap:', error);
+    }
+  }
+
+  addArchiveTiles() {
+    try {
+      if (!this.map.getSource('archive-tiles')) {
+        this.map.addSource('archive-tiles', {
+          type: 'raster',
+          tiles: ['/tiles/{z}/{x}/{y}.png'],
+          tileSize: 256
+        });
+      }
+      // Place below the live path layer if present
+      const beforeId = this.map.getLayer('path-layer') ? 'path-layer' : undefined;
+      if (!this.map.getLayer('archive-tiles-layer')) {
+        if (beforeId) {
+          this.map.addLayer({
+            id: 'archive-tiles-layer',
+            type: 'raster',
+            source: 'archive-tiles',
+            paint: { 'raster-opacity': 0.8 }
+          }, beforeId);
+        } else {
+          this.map.addLayer({
+            id: 'archive-tiles-layer',
+            type: 'raster',
+            source: 'archive-tiles',
+            paint: { 'raster-opacity': 0.8 }
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Failed to add archive tiles:', e);
     }
   }
 
