@@ -44,9 +44,7 @@ export class ExplorationAgent {
     this.maxDeadEndDistance = parseInt(process.env.MAX_DEAD_END_DISTANCE) || 200;
     this.deadEndStepSize = 10; // meters per step
 
-    // Single-link probe configuration
-    this.singleLinkProbeRadius = parseFloat(process.env.SINGLE_LINK_PROBE_RADIUS_M) || 3;
-    this.singleLinkProbeRays = parseInt(process.env.SINGLE_LINK_PROBE_RAYS) || 8; // 360/8=45°
+    // Single-link probe removed per request
   }
 
   async initialize() {
@@ -323,12 +321,6 @@ export class ExplorationAgent {
         
         // Check if only one valid link exists - verify via nearby probes before auto-moving
         if (targetLinks.length === 1) {
-          // Try to find an alternate pano nearby with more exits (Street View link bug workaround)
-          const probeResult = await this.probeAlternateExits(currentStep, links);
-          if (probeResult) {
-            return probeResult; // Performed a reposition step
-          }
-
           this.mode = 'pathfinding'; // Use pathfinding mode for single-link steps (no screenshots)
           selectedLink = targetLinks[0];
           
@@ -581,38 +573,7 @@ export class ExplorationAgent {
   }
 
   // Probe small radius around current position for alternate panos with more exits
-  async probeAlternateExits(currentStep, currentLinks) {
-    const rays = Math.max(4, this.singleLinkProbeRays);
-    const radius = Math.max(1, this.singleLinkProbeRadius);
-
-    let best = null;
-    let bestScore = -1;
-    const headings = Array.from({ length: rays }, (_, i) => i * (360 / rays));
-
-    for (const h of headings) {
-      try {
-        const pos = projectPosition(this.currentPosition, h, radius);
-        const pano = await this.streetViewHeadless.getPanorama(pos);
-        if (!pano) continue;
-        if (!pano.panoId || pano.panoId === this.currentPanoId) continue;
-        const links = pano.links || [];
-        const unvisited = links.filter(l => !this.coverage.hasVisited(l.pano)).length;
-        const score = links.length + unvisited; // prefer more options and unvisited
-        if ((links.length > 1 || unvisited > 0) && score > bestScore) {
-          best = pano;
-          bestScore = score;
-        }
-      } catch (e) {
-        // ignore probe errors
-      }
-    }
-
-    if (best) {
-      return await this.#repositionWithinCluster(currentStep, best.panoId, 'Probe nearby for additional exits');
-    }
-
-    return null;
-  }
+  // probeAlternateExits removed per request
 
   /**
    * Attempt to recover from a dead-end panorama by continuing in the same direction
