@@ -10,6 +10,7 @@ import { Logger } from './utils/logger.js';
 import { simplifyPathWithTiers, getSimplificationStats } from './utils/pathSimplification.js';
 import fs from 'fs';
 import path from 'path';
+import { verifySignature } from './utils/urlSigner.js';
 
 dotenv.config();
 
@@ -72,11 +73,20 @@ app.use(express.json());
 // Serve static files
 app.use(express.static(join(ROOT_DIR, 'public')));
 
-// Protected routes for sensitive data
-// In development: Allow all access for testing
-// In production: Allow read-only access to recent files (for screenshots in decision log)
-const runsMiddleware = express.static(join(ROOT_DIR, 'runs'));
-app.use('/runs', runsMiddleware);
+// Protected routes for sensitive data (/runs)
+// In production with URL_SIGNING_SECRET, require signed URLs; otherwise allow
+const runsDirectory = join(ROOT_DIR, 'runs');
+const runsMiddleware = express.static(runsDirectory);
+app.use('/runs', (req, res, next) => {
+  const enforce = process.env.NODE_ENV === 'production' && !!process.env.URL_SIGNING_SECRET;
+  if (!enforce) return next();
+  const fullPath = req.baseUrl + req.path; // ensures path starts with /runs
+  const { exp, sig } = req.query;
+  if (!verifySignature(fullPath, exp, sig)) {
+    return res.status(403).send('Forbidden');
+  }
+  next();
+}, runsMiddleware);
 
 // Admin authentication endpoint
 app.post('/api/admin/auth', express.json(), (req, res) => {
@@ -655,6 +665,25 @@ class GlobalExploration {
 
 // Initialize global exploration
 const globalExploration = new GlobalExploration();
+
+// Lightweight health and metrics endpoints
+app.get('/healthz', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+app.get('/metrics', (req, res) => {
+  const agent = globalExploration.agent;
+  const stats = agent && agent.coverage ? agent.coverage.getStats() : { locationsVisited: 0, distanceTraveled: 0, pathLength: 0 };
+  res.json({
+    uptimeSec: Math.floor(process.uptime()),
+    clientsConnected: globalExploration.connectedClients.size,
+    isExploring: globalExploration.isExploring,
+    stepCount: agent ? agent.stepCount : 0,
+    locationsVisited: stats.locationsVisited,
+    distanceTraveled: stats.distanceTraveled,
+    pathLength: stats.pathLength
+  });
+});
 
 // Helper function to verify admin token
 function verifyAdminToken(token) {

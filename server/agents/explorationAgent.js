@@ -3,6 +3,7 @@ import { OpenAIService } from '../services/openai.js';
 import { CoverageTracker } from '../services/coverage.js';
 import { Pathfinder } from '../services/pathfinder.js';
 import { ScreenshotService } from '../utils/screenshot.js';
+import { maybeSignPath } from '../utils/urlSigner.js';
 import { projectPosition } from '../utils/geoUtils.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -422,7 +423,8 @@ export class ExplorationAgent {
         
         thumbnailUrls = screenshots.map(s => {
           // Use thumbnail for client display
-          const thumbUrl = `/runs/shots/${this.runId}/${currentStep}/${s.thumbFilename}`;
+          const rawThumb = `/runs/shots/${this.runId}/${currentStep}/${s.thumbFilename}`;
+          const thumbUrl = maybeSignPath(rawThumb, 3600);
           //console.log(`  Mapping: ${s.thumbFilename} -> ${thumbUrl}`);
           return {
             direction: s.direction,
