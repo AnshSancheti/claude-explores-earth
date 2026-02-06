@@ -187,11 +187,33 @@ export class ExplorationAgent {
         this.globalExploration.broadcast('move-decision', recoveryData);
         
         // Now continue normal exploration from the recovered position
+        // Clear any previously planned path
+        this.pathToFrontier = null;
       }
       
       // Determine mode and select next move
+      // If we have a planned route to a frontier, follow it first
+      if (this.pathToFrontier && Array.isArray(this.pathToFrontier) && this.pathToFrontier.length > 0) {
+        const nextPlanned = this.pathToFrontier[0];
+        const plannedLink = links.find(l => l.pano === nextPlanned);
+        if (plannedLink) {
+          this.mode = 'pathfinding';
+          selectedLink = plannedLink;
+          remainingPathSteps = this.pathToFrontier.length;
+          decision = {
+            selectedPanoId: selectedLink.pano,
+            reasoning: `Pathfinding to frontier (remaining ${remainingPathSteps} step${remainingPathSteps === 1 ? '' : 's'})`
+          };
+          screenshots = [];
+        } else {
+          // Planned next hop is not available from here; invalidate and recompute below
+          console.log('Path plan invalidated: next hop not in current links. Recomputing.');
+          this.pathToFrontier = null;
+        }
+      }
+
       // Enter pathfinding mode whenever all links are visited and any frontier exists
-      if (allLinksVisited && this.coverage.hasFrontier()) {
+      if (!selectedLink && allLinksVisited && this.coverage.hasFrontier()) {
         // Switch to pathfinding mode - no screenshots needed
         this.mode = 'pathfinding';
         console.log('Visited all links - switching to pathfinding mode (no screenshots)');
@@ -210,6 +232,8 @@ export class ExplorationAgent {
             console.log(`Pathfinding: Next step to ${selectedLink.pano}`);
             // No screenshots in pathfinding mode
             screenshots = [];
+            // Persist full route; first hop will be consumed after navigation
+            this.pathToFrontier = Array.isArray(pathInfo.fullPath) ? [...pathInfo.fullPath] : null;
           }
         } else {
           // Frontier exists but is unreachable via visited graph; fall back to teleport
@@ -243,6 +267,11 @@ export class ExplorationAgent {
           !this.coverage.hasVisited(link.pano)
         );
         
+        // If unvisited links exist, prefer exploration and clear any stale path plan
+        if (unvisitedLinks.length > 0 && this.pathToFrontier) {
+          this.pathToFrontier = null;
+        }
+
         const targetLinks = unvisitedLinks.length > 0 ? unvisitedLinks : links;
         
         // Check if only one valid link exists - cost saving mechanism
@@ -347,6 +376,11 @@ export class ExplorationAgent {
       // Store the heading for potential dead-end recovery
       this.lastNavigationHeading = parseFloat(selectedLink.heading);
       
+      // If following a planned route, consume the hop now
+      if (this.pathToFrontier && this.pathToFrontier.length > 0 && this.pathToFrontier[0] === selectedLink.pano) {
+        this.pathToFrontier.shift();
+      }
+
       await this.streetViewHeadless.navigateToPano(selectedLink.pano);
       // Get the current panorama data after navigation (ensures we have the actual displayed pano)
       const newPanoData = await this.streetViewHeadless.getCurrentPanorama();
@@ -509,6 +543,8 @@ export class ExplorationAgent {
   }
 
   async teleportToFrontier(currentStep) {
+    // Teleport invalidates any existing route plan
+    this.pathToFrontier = null;
     const frontiers = this.coverage.getFrontiers();
     if (!frontiers || frontiers.length === 0) {
       console.warn('Teleport requested but no frontier candidates available.');
@@ -653,6 +689,7 @@ export class ExplorationAgent {
     this.coverage.reset();
     this.lastNavigationHeading = null;  // Reset to null, not 0
     this.recentMovements = [];
+    this.pathToFrontier = null;
     
     // Generate new run ID for new exploration
     this.runId = uuidv4();
