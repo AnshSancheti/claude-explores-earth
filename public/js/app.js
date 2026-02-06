@@ -91,11 +91,8 @@ class ExplorationApp {
       
       // Update minimap with full path if available
       if (data.fullPath && data.fullPath.length > 0) {
-        console.log(`Loading ${data.fullPath.length} path points to minimap`);
-        // MapManager will queue these if map isn't ready yet
-        data.fullPath.forEach(position => {
-          this.mapManager.updatePosition(position);
-        });
+        console.log(`Loading ${data.fullPath.length} path points to minimap (batched)`);
+        this.mapManager.loadFullPath(data.fullPath);
       }
       
       // Always update current position if provided (even if we have fullPath)
@@ -189,9 +186,7 @@ class ExplorationApp {
       // Update map with full path
       if (data.fullPath && data.fullPath.length > 0) {
         this.mapManager.reset();
-        data.fullPath.forEach(position => {
-          this.mapManager.updatePosition(position);
-        });
+        this.mapManager.loadFullPath(data.fullPath);
       }
       
       // Update Street View to loaded position
