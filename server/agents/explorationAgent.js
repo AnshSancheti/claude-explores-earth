@@ -237,6 +237,48 @@ export class ExplorationAgent {
             this.pathToFrontier = Array.isArray(pathInfo.fullPath) ? [...pathInfo.fullPath] : null;
           }
         } else {
+          // Try cluster-aware routing before teleporting
+          const clustered = this.pathfinder.findClusteredPathToFrontier(this.currentPanoId);
+          if (clustered) {
+            console.log(`Cluster route: ${clustered.clusterPathLength} clusters, expanded=${clustered.expanded}`);
+            const isBoundaryHere = clustered.nextCluster === clustered.startCluster;
+            let hop = null;
+            if (isBoundaryHere) {
+              // Prefer any unvisited neighbor from current pano if available
+              const unvisitedFromCurrent = links.find(l => !this.coverage.hasVisited(l.pano));
+              if (unvisitedFromCurrent) {
+                hop = unvisitedFromCurrent;
+              } else {
+                // Reposition within cluster to a member that has unvisited neighbor
+                const target = clustered.fromCandidates.find(id => id !== this.currentPanoId) || clustered.fromCandidates[0];
+                if (target && target !== this.currentPanoId) {
+                  return await this.#repositionWithinCluster(currentStep, target, 'Reposition within cluster to reach boundary');
+                }
+              }
+            } else {
+              // Look for a link to next cluster from current pano
+              const linkToNextCluster = links.find(l => clustered.toCandidates.includes(l.pano));
+              if (linkToNextCluster) {
+                hop = linkToNextCluster;
+              } else {
+                // Reposition to a member in current cluster that has an edge to next cluster
+                const target = clustered.fromCandidates.find(id => id !== this.currentPanoId) || clustered.fromCandidates[0];
+                if (target && target !== this.currentPanoId) {
+                  return await this.#repositionWithinCluster(currentStep, target, 'Reposition within cluster to exit toward frontier');
+                }
+              }
+            }
+
+            if (hop) {
+              selectedLink = hop;
+              decision = {
+                selectedPanoId: selectedLink.pano,
+                reasoning: isBoundaryHere ? 'Boundary in cluster: taking unvisited exit' : 'Cluster pathfinding: exiting cluster toward frontier'
+              };
+              screenshots = [];
+            }
+          }
+
           // Frontier exists but is unreachable via visited graph; fall back to teleport
           const teleportStep = await this.teleportToFrontier(currentStep);
           if (teleportStep) {
@@ -474,6 +516,57 @@ export class ExplorationAgent {
       // Always clear the lock when done
       this.isStepExecuting = false;
       console.log(`=== Completed step ${this.stepCount} ===`);
+    }
+  }
+
+  // Perform a single-step, no-screenshot intra-cluster reposition
+  async #repositionWithinCluster(currentStep, targetPanoId, reason) {
+    const previousPanoId = this.currentPanoId;
+    const previousPosition = { ...this.currentPosition };
+    try {
+      await this.streetViewHeadless.navigateToPano(targetPanoId);
+      const newPanoData = await this.streetViewHeadless.getCurrentPanorama();
+      this.currentPanoId = newPanoData.panoId;
+      this.currentPosition = { lat: newPanoData.position.lat, lng: newPanoData.position.lng };
+      this.lastNavigationHeading = null; // reset directional context
+      const newLinks = newPanoData.links || [];
+      this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
+
+      this.recentMovements.push({
+        from: previousPanoId,
+        to: this.currentPanoId,
+        fromPosition: previousPosition,
+        toPosition: { ...this.currentPosition },
+        heading: null,
+        step: currentStep,
+        reasoning: reason
+      });
+      if (this.recentMovements.length > 20) this.recentMovements.shift();
+
+      const stepData = {
+        stepCount: currentStep,
+        reasoning: reason,
+        panoId: this.currentPanoId,
+        direction: 0,
+        mode: 'pathfinding',
+        screenshots: [],
+        remainingPathSteps: null
+      };
+      const broadcastData = { ...stepData, newPosition: this.currentPosition, stats: this.coverage.getStats() };
+      this.globalExploration.broadcast('move-decision', broadcastData);
+
+      this.logger.log('exploration-step', {
+        step: currentStep,
+        from: previousPanoId,
+        to: this.currentPanoId,
+        decision: reason,
+        position: this.currentPosition,
+        stats: this.coverage.getStats()
+      });
+      return stepData;
+    } catch (e) {
+      console.error('Failed intra-cluster reposition:', e.message);
+      return null;
     }
   }
 
