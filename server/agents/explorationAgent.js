@@ -230,7 +230,7 @@ export class ExplorationAgent {
               reasoning: `Pathfinding to frontier (remaining ${pathInfo.pathLength} step${pathInfo.pathLength === 1 ? '' : 's'})`
             };
             remainingPathSteps = pathInfo.pathLength;
-            console.log(`Pathfinding: Next step to ${selectedLink.pano}`);
+            console.log(`Pathfinding: Next step to ${selectedLink.pano} (route=${pathInfo.pathLength}, expanded=${pathInfo.expanded})`);
             // No screenshots in pathfinding mode
             screenshots = [];
             // Persist full route; first hop will be consumed after navigation

@@ -17,9 +17,11 @@ export class Pathfinder {
     // BFS to find shortest path to any frontier panorama
     const queue = [{ panoId: startPanoId, path: [], distance: 0 }];
     const visited = new Set([startPanoId]);
+    let expanded = 0;
     
     while (queue.length > 0) {
       const { panoId, path, distance } = queue.shift();
+      expanded++;
       
       // Get connected panoramas from graph (new structure)
       const node = this.coverage.graph.get(panoId);
@@ -38,7 +40,8 @@ export class Pathfinder {
             targetPanoId: nextPanoId,
             nextStep: path.length > 0 ? path[0] : nextPanoId,
             pathLength: newPath.length,
-            fullPath: newPath
+            fullPath: newPath,
+            expanded
           };
         }
         
