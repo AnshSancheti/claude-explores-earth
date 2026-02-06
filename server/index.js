@@ -9,6 +9,7 @@ import { ExplorationAgent } from './agents/explorationAgent.js';
 import { Logger } from './utils/logger.js';
 import { simplifyPathWithTiers, getSimplificationStats } from './utils/pathSimplification.js';
 import fs from 'fs';
+import * as fsp from 'fs/promises';
 import path from 'path';
 import { createCanvas } from 'canvas';
 import { verifySignature } from './utils/urlSigner.js';
@@ -147,6 +148,7 @@ const DECISION_HISTORY_LIMIT = parseInt(process.env.DECISION_HISTORY_LIMIT) || 2
 const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL) || 500; // Save every N steps
 const TILE_TAIL_POINTS = parseInt(process.env.TILE_RECENT_TAIL_POINTS) || 1500; // recent points kept as vector
 const TILE_MAX_CACHE = parseInt(process.env.TILE_MAX_CACHE) || 256;
+const TILE_VERSION_STEP = parseInt(process.env.TILE_VERSION_STEP) || 1000; // archive version increments every N archived points
 
 // Path simplification settings (configurable via environment variables)
 const PATH_SIMPLIFICATION = {
@@ -687,6 +689,12 @@ function getArchivedCount(agent) {
   return Math.max(0, len - TILE_TAIL_POINTS);
 }
 
+function getArchiveVersion(agent) {
+  const archived = getArchivedCount(agent);
+  if (archived <= 0) return 0;
+  return Math.floor(archived / Math.max(1, TILE_VERSION_STEP));
+}
+
 function drawArchiveTile(agent, z, x, y) {
   const archivedCount = getArchivedCount(agent);
   if (archivedCount < 2) {
@@ -755,21 +763,39 @@ app.get('/tiles/:z/:x/:y.png', (req, res) => {
   if (!Number.isFinite(z) || !Number.isFinite(x) || !Number.isFinite(y)) {
     return res.status(400).send('bad tile');
   }
+  const version = getArchiveVersion(agent);
   const archivedCount = getArchivedCount(agent);
-  const cacheKey = `${z}/${x}/${y}@${archivedCount}`;
+  const cacheKey = `${z}/${x}/${y}@v${version}`;
   const cached = globalExploration.tileCache.get(cacheKey);
   if (cached) {
     res.type('image/png').send(cached);
     return;
   }
-  try {
-    const buf = drawArchiveTile(agent, z, x, y);
-    cacheSet(globalExploration.tileCache, cacheKey, buf);
-    res.type('image/png').send(buf);
-  } catch (e) {
-    console.error('Tile render error:', e);
-    res.status(500).send('tile error');
-  }
+  const runId = agent.runId || 'current';
+  const filePath = path.join(ROOT_DIR, 'runs', 'tiles', runId, String(version), String(z), String(x), `${y}.png`);
+  // Attempt to read from disk cache
+  fs.readFile(filePath, (err, data) => {
+    if (!err && data) {
+      cacheSet(globalExploration.tileCache, cacheKey, data);
+      res.type('image/png').send(data);
+      return;
+    }
+    // Render, write to disk, and serve
+    try {
+      const buf = drawArchiveTile(agent, z, x, y);
+      const dir = path.dirname(filePath);
+      fsp.mkdir(dir, { recursive: true })
+        .then(() => fsp.writeFile(filePath, buf))
+        .catch(() => {})
+        .finally(() => {
+          cacheSet(globalExploration.tileCache, cacheKey, buf);
+          res.type('image/png').send(buf);
+        });
+    } catch (e) {
+      console.error('Tile render error:', e);
+      res.status(500).send('tile error');
+    }
+  });
 });
 
 // Lightweight health and metrics endpoints
