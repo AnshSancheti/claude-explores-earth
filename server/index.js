@@ -786,6 +786,20 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('save-now', async (data) => {
+    const token = data?.token;
+    if (!verifyAdminToken(token)) {
+      socket.emit('error', { message: 'Admin authentication required' });
+      return;
+    }
+    try {
+      await globalExploration.saveState(true);
+      socket.emit('save-complete', { success: true, stepCount: globalExploration.agent?.stepCount || 0 });
+    } catch (e) {
+      socket.emit('error', { message: 'Failed to save state' });
+    }
+  });
+
   socket.on('disconnect', () => {
     globalExploration.removeClient(socket.id);
   });

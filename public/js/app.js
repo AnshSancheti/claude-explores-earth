@@ -167,6 +167,11 @@ class ExplorationApp {
       alert(`Save loaded successfully!\nStep: ${data.stepCount}\nLocations visited: ${data.locationsVisited}\nGraph size: ${data.graphSize} nodes`);
     });
     
+    this.socket.on('save-complete', (data) => {
+      console.log('State saved:', data);
+      this.uiManager.showSuccess('State saved');
+    });
+    
     // Handle state restoration broadcast
     this.socket.on('state-loaded', (data) => {
       console.log('State restored:', data);
@@ -216,6 +221,12 @@ class ExplorationApp {
     this.uiManager.loadBtn.addEventListener('click', () => {
       this.loadSave();
     });
+    
+    if (this.uiManager.saveBtn) {
+      this.uiManager.saveBtn.addEventListener('click', () => {
+        this.saveNow();
+      });
+    }
     
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
@@ -406,6 +417,15 @@ class ExplorationApp {
     if (confirm('Load saved exploration state? This will reset the current exploration.')) {
       this.socket.emit('load-save', { token });
     }
+  }
+  
+  saveNow() {
+    const token = this.getAuthToken();
+    if (!token) {
+      this.uiManager.showError('Admin authentication required');
+      return;
+    }
+    this.socket.emit('save-now', { token });
   }
   
   toggleFullscreen() {
