@@ -314,6 +314,11 @@ class GlobalExploration {
       // Use the same simplification logic as initial state
       const simplifiedPath = this.simplifyPath(originalPath);
       
+      // Clear in-memory tile cache; tiles will be re-generated for this run/version
+      if (this.tileCache) {
+        this.tileCache.clear();
+      }
+
       // Broadcast restored state to all clients
       this.broadcast('state-loaded', {
         stepCount: this.agent.stepCount,
@@ -501,6 +506,9 @@ class GlobalExploration {
     // Clear all history and cache
     this.decisionHistory = [];
     this.screenshotCache.clear();
+    if (this.tileCache) {
+      this.tileCache.clear();
+    }
     
     // Reset the agent
     if (this.agent) {
