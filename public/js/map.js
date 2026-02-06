@@ -155,14 +155,14 @@ class MapManager {
             id: 'archive-tiles-layer',
             type: 'raster',
             source: 'archive-tiles',
-            paint: { 'raster-opacity': 0.8 }
+            paint: { 'raster-opacity': 0.8, 'raster-resampling': 'nearest' }
           }, beforeId);
         } else {
           this.map.addLayer({
             id: 'archive-tiles-layer',
             type: 'raster',
             source: 'archive-tiles',
-            paint: { 'raster-opacity': 0.8 }
+            paint: { 'raster-opacity': 0.8, 'raster-resampling': 'nearest' }
           });
         }
       }

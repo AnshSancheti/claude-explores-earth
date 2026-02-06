@@ -712,7 +712,18 @@ function drawArchiveTile(agent, z, x, y) {
   const pathArr = agent.coverage.path; // [{lat,lng,...}]
   const canvas = createCanvas(256, 256);
   const ctx = canvas.getContext('2d');
-  ctx.lineWidth = 2;
+  // Scale stroke width with zoom so lines remain visible when zoomed in
+  function strokeWidthForZoom(zoom) {
+    if (zoom >= 20) return 12;
+    if (zoom >= 19) return 10;
+    if (zoom >= 18) return 8;
+    if (zoom >= 17) return 6;
+    if (zoom >= 16) return 4;
+    if (zoom >= 15) return 3;
+    return 2;
+  }
+  const strokeWidth = strokeWidthForZoom(z);
+  ctx.lineWidth = strokeWidth;
   ctx.strokeStyle = '#f44336';
   ctx.globalAlpha = 0.8;
   ctx.lineJoin = 'round';
@@ -732,10 +743,11 @@ function drawArchiveTile(agent, z, x, y) {
     const ay = awy - tileOriginY;
     const bx = bwx - tileOriginX;
     const by = bwy - tileOriginY;
-    const minX = Math.min(ax, bx) - 2;
-    const maxX = Math.max(ax, bx) + 2;
-    const minY = Math.min(ay, by) - 2;
-    const maxY = Math.max(ay, by) + 2;
+    const margin = strokeWidth;
+    const minX = Math.min(ax, bx) - margin;
+    const maxX = Math.max(ax, bx) + margin;
+    const minY = Math.min(ay, by) - margin;
+    const maxY = Math.max(ay, by) + margin;
     if (maxX < 0 || maxY < 0 || minX > 256 || minY > 256) {
       continue; // no intersection with tile
     }
