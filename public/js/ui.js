@@ -9,6 +9,7 @@ class UIManager {
     this.stopBtn = document.getElementById('stopBtn');
     this.resetBtn = document.getElementById('resetBtn');
     this.loadBtn = document.getElementById('loadBtn');
+    this.saveBtn = document.getElementById('saveBtn');
     
     // Track the last pathfinding group
     this.lastPathfindingGroup = null;
@@ -186,6 +187,7 @@ class UIManager {
     this.stepBtn.disabled = isExploring;
     this.stopBtn.disabled = !isExploring;
     this.resetBtn.disabled = isExploring;
+    // Save is allowed in either state
   }
   
   setStepButtonState(disabled) {

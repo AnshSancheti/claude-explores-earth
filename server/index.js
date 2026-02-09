@@ -9,7 +9,10 @@ import { ExplorationAgent } from './agents/explorationAgent.js';
 import { Logger } from './utils/logger.js';
 import { simplifyPathWithTiers, getSimplificationStats } from './utils/pathSimplification.js';
 import fs from 'fs';
+import * as fsp from 'fs/promises';
 import path from 'path';
+import { createCanvas } from 'canvas';
+import { verifySignature } from './utils/urlSigner.js';
 
 dotenv.config();
 
@@ -72,11 +75,20 @@ app.use(express.json());
 // Serve static files
 app.use(express.static(join(ROOT_DIR, 'public')));
 
-// Protected routes for sensitive data
-// In development: Allow all access for testing
-// In production: Allow read-only access to recent files (for screenshots in decision log)
-const runsMiddleware = express.static(join(ROOT_DIR, 'runs'));
-app.use('/runs', runsMiddleware);
+// Protected routes for sensitive data (/runs)
+// In production with URL_SIGNING_SECRET, require signed URLs; otherwise allow
+const runsDirectory = join(ROOT_DIR, 'runs');
+const runsMiddleware = express.static(runsDirectory);
+app.use('/runs', (req, res, next) => {
+  const enforce = process.env.NODE_ENV === 'production' && !!process.env.URL_SIGNING_SECRET;
+  if (!enforce) return next();
+  const fullPath = req.baseUrl + req.path; // ensures path starts with /runs
+  const { exp, sig } = req.query;
+  if (!verifySignature(fullPath, exp, sig)) {
+    return res.status(403).send('Forbidden');
+  }
+  next();
+}, runsMiddleware);
 
 // Admin authentication endpoint
 app.post('/api/admin/auth', express.json(), (req, res) => {
@@ -134,6 +146,9 @@ const PORT = process.env.PORT || 3000;
 const STEP_INTERVAL = parseInt(process.env.STEP_INTERVAL_MS) || 5000;
 const DECISION_HISTORY_LIMIT = parseInt(process.env.DECISION_HISTORY_LIMIT) || 20;
 const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL) || 500; // Save every N steps
+const TILE_TAIL_POINTS = parseInt(process.env.TILE_RECENT_TAIL_POINTS) || 1500; // recent points kept as vector
+const TILE_MAX_CACHE = parseInt(process.env.TILE_MAX_CACHE) || 256;
+const TILE_VERSION_STEP = parseInt(process.env.TILE_VERSION_STEP) || 1000; // archive version increments every N archived points
 
 // Path simplification settings (configurable via environment variables)
 const PATH_SIMPLIFICATION = {
@@ -173,6 +188,8 @@ class GlobalExploration {
     this.pendingSave = false;
     this.backgroundSaveTimer = null;
     this.backgroundSaveInterval = 5 * 60 * 1000; // 5 minutes in milliseconds
+    // Tile cache for archived path rendering
+    this.tileCache = new Map(); // key: `${z}/${x}/${y}@${archivedCount}` -> Buffer
   }
 
   createPersistentLogger() {
@@ -297,6 +314,11 @@ class GlobalExploration {
       // Use the same simplification logic as initial state
       const simplifiedPath = this.simplifyPath(originalPath);
       
+      // Clear in-memory tile cache; tiles will be re-generated for this run/version
+      if (this.tileCache) {
+        this.tileCache.clear();
+      }
+
       // Broadcast restored state to all clients
       this.broadcast('state-loaded', {
         stepCount: this.agent.stepCount,
@@ -484,6 +506,9 @@ class GlobalExploration {
     // Clear all history and cache
     this.decisionHistory = [];
     this.screenshotCache.clear();
+    if (this.tileCache) {
+      this.tileCache.clear();
+    }
     
     // Reset the agent
     if (this.agent) {
@@ -656,6 +681,162 @@ class GlobalExploration {
 // Initialize global exploration
 const globalExploration = new GlobalExploration();
 
+// Tile rendering helpers
+function lonLatToWorldPixels(lng, lat, z) {
+  const tile = 256;
+  const scale = tile * Math.pow(2, z);
+  const x = (lng + 180) / 360 * scale;
+  const sinLat = Math.sin((lat * Math.PI) / 180);
+  const y = (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * scale;
+  return [x, y];
+}
+
+function getArchivedCount(agent) {
+  if (!agent || !agent.coverage) return 0;
+  const len = agent.coverage.path.length;
+  return Math.max(0, len - TILE_TAIL_POINTS);
+}
+
+function getArchiveVersion(agent) {
+  const archived = getArchivedCount(agent);
+  if (archived <= 0) return 0;
+  return Math.floor(archived / Math.max(1, TILE_VERSION_STEP));
+}
+
+function drawArchiveTile(agent, z, x, y) {
+  const archivedCount = getArchivedCount(agent);
+  if (archivedCount < 2) {
+    const c = createCanvas(256, 256);
+    return c.toBuffer('image/png');
+  }
+  const pathArr = agent.coverage.path; // [{lat,lng,...}]
+  const canvas = createCanvas(256, 256);
+  const ctx = canvas.getContext('2d');
+  // Scale stroke width with zoom so lines remain visible when zoomed in
+  function strokeWidthForZoom(zoom) {
+    if (zoom >= 20) return 12;
+    if (zoom >= 19) return 10;
+    if (zoom >= 18) return 8;
+    if (zoom >= 17) return 6;
+    if (zoom >= 16) return 4;
+    if (zoom >= 15) return 3;
+    return 2;
+  }
+  const strokeWidth = strokeWidthForZoom(z);
+  ctx.lineWidth = strokeWidth;
+  ctx.strokeStyle = '#f44336';
+  ctx.globalAlpha = 0.8;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+
+  const tileOriginX = x * 256;
+  const tileOriginY = y * 256;
+
+  let prevPx = null;
+  for (let i = 0; i < archivedCount - 1; i++) {
+    const a = pathArr[i];
+    const b = pathArr[i + 1];
+    if (!a || !b) continue;
+    const [awx, awy] = lonLatToWorldPixels(a.lng, a.lat, z);
+    const [bwx, bwy] = lonLatToWorldPixels(b.lng, b.lat, z);
+    const ax = awx - tileOriginX;
+    const ay = awy - tileOriginY;
+    const bx = bwx - tileOriginX;
+    const by = bwy - tileOriginY;
+    const margin = strokeWidth;
+    const minX = Math.min(ax, bx) - margin;
+    const maxX = Math.max(ax, bx) + margin;
+    const minY = Math.min(ay, by) - margin;
+    const maxY = Math.max(ay, by) + margin;
+    if (maxX < 0 || maxY < 0 || minX > 256 || minY > 256) {
+      continue; // no intersection with tile
+    }
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+  }
+
+  return canvas.toBuffer('image/png');
+}
+
+// Simple LRU eviction for tile cache
+function cacheSet(map, key, value) {
+  if (map.has(key)) map.delete(key);
+  map.set(key, value);
+  if (map.size > TILE_MAX_CACHE) {
+    const firstKey = map.keys().next().value;
+    map.delete(firstKey);
+  }
+}
+
+// Raster tiles for archived path
+app.get('/tiles/:z/:x/:y.png', (req, res) => {
+  const agent = globalExploration.agent;
+  if (!agent || !agent.coverage) {
+    res.type('image/png').send(createCanvas(256, 256).toBuffer('image/png'));
+    return;
+  }
+  const z = parseInt(req.params.z, 10);
+  const x = parseInt(req.params.x, 10);
+  const y = parseInt(req.params.y, 10);
+  if (!Number.isFinite(z) || !Number.isFinite(x) || !Number.isFinite(y)) {
+    return res.status(400).send('bad tile');
+  }
+  const version = getArchiveVersion(agent);
+  const archivedCount = getArchivedCount(agent);
+  const cacheKey = `${z}/${x}/${y}@v${version}`;
+  const cached = globalExploration.tileCache.get(cacheKey);
+  if (cached) {
+    res.type('image/png').send(cached);
+    return;
+  }
+  const runId = agent.runId || 'current';
+  const filePath = path.join(ROOT_DIR, 'runs', 'tiles', runId, String(version), String(z), String(x), `${y}.png`);
+  // Attempt to read from disk cache
+  fs.readFile(filePath, (err, data) => {
+    if (!err && data) {
+      cacheSet(globalExploration.tileCache, cacheKey, data);
+      res.type('image/png').send(data);
+      return;
+    }
+    // Render, write to disk, and serve
+    try {
+      const buf = drawArchiveTile(agent, z, x, y);
+      const dir = path.dirname(filePath);
+      fsp.mkdir(dir, { recursive: true })
+        .then(() => fsp.writeFile(filePath, buf))
+        .catch(() => {})
+        .finally(() => {
+          cacheSet(globalExploration.tileCache, cacheKey, buf);
+          res.type('image/png').send(buf);
+        });
+    } catch (e) {
+      console.error('Tile render error:', e);
+      res.status(500).send('tile error');
+    }
+  });
+});
+
+// Lightweight health and metrics endpoints
+app.get('/healthz', (req, res) => {
+  res.json({ status: 'ok' });
+});
+
+app.get('/metrics', (req, res) => {
+  const agent = globalExploration.agent;
+  const stats = agent && agent.coverage ? agent.coverage.getStats() : { locationsVisited: 0, distanceTraveled: 0, pathLength: 0 };
+  res.json({
+    uptimeSec: Math.floor(process.uptime()),
+    clientsConnected: globalExploration.connectedClients.size,
+    isExploring: globalExploration.isExploring,
+    stepCount: agent ? agent.stepCount : 0,
+    locationsVisited: stats.locationsVisited,
+    distanceTraveled: stats.distanceTraveled,
+    pathLength: stats.pathLength
+  });
+});
+
 // Helper function to verify admin token
 function verifyAdminToken(token) {
   if (!token) return false;
@@ -754,6 +935,20 @@ io.on('connection', (socket) => {
     } else {
       console.log(`✅ Successfully loaded state: ${result.stepCount} steps, ${result.locationsVisited} locations, ${result.graphSize} nodes`);
       socket.emit('save-loaded', result);
+    }
+  });
+
+  socket.on('save-now', async (data) => {
+    const token = data?.token;
+    if (!verifyAdminToken(token)) {
+      socket.emit('error', { message: 'Admin authentication required' });
+      return;
+    }
+    try {
+      await globalExploration.saveState(true);
+      socket.emit('save-complete', { success: true, stepCount: globalExploration.agent?.stepCount || 0 });
+    } catch (e) {
+      socket.emit('error', { message: 'Failed to save state' });
     }
   });
 

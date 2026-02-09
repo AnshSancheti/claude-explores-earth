@@ -10,6 +10,8 @@ class MapManager {
     this.mapLoaded = false;
     this.pendingUpdates = []; // Queue positions until map is ready
     this.userHasInteracted = false; // Track if user manually adjusted the map
+    this.updatesSinceFit = 0; // Reduce expensive fit computations
+    this.fitEveryNUpdates = 20; // Fit bounds every N incremental updates
     this.initializeMinimapSize(); // Initialize saved size preferences
   }
   
@@ -111,6 +113,7 @@ class MapManager {
         this.addStartMarker();
         this.addCurrentMarker();
         this.initializePath();
+        this.addArchiveTiles();
         this.addResetButton();
         this.mapLoaded = true;
         
@@ -132,6 +135,71 @@ class MapManager {
       });
     } catch (error) {
       console.error('Failed to initialize minimap:', error);
+    }
+  }
+
+  addArchiveTiles() {
+    try {
+      if (!this.map.getSource('archive-tiles')) {
+        this.map.addSource('archive-tiles', {
+          type: 'raster',
+          tiles: ['/tiles/{z}/{x}/{y}.png'],
+          tileSize: 256
+        });
+      }
+      // Place below the live path layer if present
+      const beforeId = this.map.getLayer('path-layer') ? 'path-layer' : undefined;
+      if (!this.map.getLayer('archive-tiles-layer')) {
+        if (beforeId) {
+          this.map.addLayer({
+            id: 'archive-tiles-layer',
+            type: 'raster',
+            source: 'archive-tiles',
+            paint: { 'raster-opacity': 0.8, 'raster-resampling': 'nearest' }
+          }, beforeId);
+        } else {
+          this.map.addLayer({
+            id: 'archive-tiles-layer',
+            type: 'raster',
+            source: 'archive-tiles',
+            paint: { 'raster-opacity': 0.8, 'raster-resampling': 'nearest' }
+          });
+        }
+      }
+    } catch (e) {
+      console.error('Failed to add archive tiles:', e);
+    }
+  }
+
+  // Batch-load a full path in one render pass
+  loadFullPath(points) {
+    if (!points || points.length === 0) return;
+
+    // If map not ready, queue them for later processing
+    if (!this.isReady()) {
+      this.pendingUpdates.push(...points);
+      return;
+    }
+
+    // Replace coordinates with a single batch
+    this.pathCoordinates = points.map(p => [p.lng, p.lat]);
+
+    if (this.map.getSource('path')) {
+      this.map.getSource('path').setData({
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates: this.pathCoordinates
+        }
+      });
+    }
+
+    // Fit once on batch load
+    if (!this.userHasInteracted && this.pathCoordinates.length > 1) {
+      const bounds = this.pathCoordinates.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(this.pathCoordinates[0], this.pathCoordinates[0]));
+      this.map.fitBounds(bounds, { padding: 50, maxZoom: 16 });
+      this.updatesSinceFit = 0;
     }
   }
 
@@ -234,14 +302,18 @@ class MapManager {
   // Private method for actually updating position
   #doUpdatePosition(position) {
     const lngLat = [position.lng, position.lat];
-    
+
     // Only update marker if it exists
     if (this.currentMarker) {
       this.currentMarker.setLngLat(lngLat);
     }
-    
-    this.pathCoordinates.push(lngLat);
-    
+
+    // Deduplicate to avoid identical consecutive coordinates
+    const last = this.pathCoordinates[this.pathCoordinates.length - 1];
+    if (!last || last[0] !== lngLat[0] || last[1] !== lngLat[1]) {
+      this.pathCoordinates.push(lngLat);
+    }
+
     // Only update path if source exists
     if (this.map.getSource('path')) {
       this.map.getSource('path').setData({
@@ -253,23 +325,18 @@ class MapManager {
         }
       });
     }
-    
+
     // Only auto-fit bounds if user hasn't manually interacted with the map
     if (!this.userHasInteracted) {
       if (this.pathCoordinates.length > 1) {
-        const bounds = this.pathCoordinates.reduce((bounds, coord) => {
-          return bounds.extend(coord);
-        }, new maplibregl.LngLatBounds(this.pathCoordinates[0], this.pathCoordinates[0]));
-        
-        this.map.fitBounds(bounds, {
-          padding: 50,
-          maxZoom: 16
-        });
+        this.updatesSinceFit += 1;
+        if (this.updatesSinceFit >= this.fitEveryNUpdates) {
+          const bounds = this.pathCoordinates.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(this.pathCoordinates[0], this.pathCoordinates[0]));
+          this.map.fitBounds(bounds, { padding: 50, maxZoom: 16 });
+          this.updatesSinceFit = 0;
+        }
       } else {
-        this.map.flyTo({
-          center: lngLat,
-          zoom: 15
-        });
+        this.map.flyTo({ center: lngLat, zoom: 15 });
       }
     }
   }
@@ -278,6 +345,7 @@ class MapManager {
     this.pathCoordinates = [];
     this.pendingUpdates = []; // Clear any pending updates
     this.userHasInteracted = false; // Reset interaction tracking
+    this.updatesSinceFit = 0;
     
     if (this.map && this.map.getSource('path')) {
       this.map.getSource('path').setData({

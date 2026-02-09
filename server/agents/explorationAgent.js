@@ -3,6 +3,7 @@ import { OpenAIService } from '../services/openai.js';
 import { CoverageTracker } from '../services/coverage.js';
 import { Pathfinder } from '../services/pathfinder.js';
 import { ScreenshotService } from '../utils/screenshot.js';
+import { maybeSignPath } from '../utils/urlSigner.js';
 import { projectPosition } from '../utils/geoUtils.js';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -42,6 +43,8 @@ export class ExplorationAgent {
     // Dead-end recovery configuration
     this.maxDeadEndDistance = parseInt(process.env.MAX_DEAD_END_DISTANCE) || 200;
     this.deadEndStepSize = 10; // meters per step
+
+    // Single-link probe removed per request
   }
 
   async initialize() {
@@ -187,11 +190,33 @@ export class ExplorationAgent {
         this.globalExploration.broadcast('move-decision', recoveryData);
         
         // Now continue normal exploration from the recovered position
+        // Clear any previously planned path
+        this.pathToFrontier = null;
       }
       
       // Determine mode and select next move
+      // If we have a planned route to a frontier, follow it first
+      if (this.pathToFrontier && Array.isArray(this.pathToFrontier) && this.pathToFrontier.length > 0) {
+        const nextPlanned = this.pathToFrontier[0];
+        const plannedLink = links.find(l => l.pano === nextPlanned);
+        if (plannedLink) {
+          this.mode = 'pathfinding';
+          selectedLink = plannedLink;
+          remainingPathSteps = this.pathToFrontier.length;
+          decision = {
+            selectedPanoId: selectedLink.pano,
+            reasoning: `Pathfinding to frontier (remaining ${remainingPathSteps} step${remainingPathSteps === 1 ? '' : 's'})`
+          };
+          screenshots = [];
+        } else {
+          // Planned next hop is not available from here; invalidate and recompute below
+          console.log('Path plan invalidated: next hop not in current links. Recomputing.');
+          this.pathToFrontier = null;
+        }
+      }
+
       // Enter pathfinding mode whenever all links are visited and any frontier exists
-      if (allLinksVisited && this.coverage.hasFrontier()) {
+      if (!selectedLink && allLinksVisited && this.coverage.hasFrontier()) {
         // Switch to pathfinding mode - no screenshots needed
         this.mode = 'pathfinding';
         console.log('Visited all links - switching to pathfinding mode (no screenshots)');
@@ -207,11 +232,55 @@ export class ExplorationAgent {
               reasoning: `Pathfinding to frontier (remaining ${pathInfo.pathLength} step${pathInfo.pathLength === 1 ? '' : 's'})`
             };
             remainingPathSteps = pathInfo.pathLength;
-            console.log(`Pathfinding: Next step to ${selectedLink.pano}`);
+            console.log(`Pathfinding: Next step to ${selectedLink.pano} (route=${pathInfo.pathLength}, expanded=${pathInfo.expanded})`);
             // No screenshots in pathfinding mode
             screenshots = [];
+            // Persist full route; first hop will be consumed after navigation
+            this.pathToFrontier = Array.isArray(pathInfo.fullPath) ? [...pathInfo.fullPath] : null;
           }
         } else {
+          // Try cluster-aware routing before teleporting
+          const clustered = this.pathfinder.findClusteredPathToFrontier(this.currentPanoId);
+          if (clustered) {
+            console.log(`Cluster route: ${clustered.clusterPathLength} clusters, expanded=${clustered.expanded}`);
+            const isBoundaryHere = clustered.nextCluster === clustered.startCluster;
+            let hop = null;
+            if (isBoundaryHere) {
+              // Prefer any unvisited neighbor from current pano if available
+              const unvisitedFromCurrent = links.find(l => !this.coverage.hasVisited(l.pano));
+              if (unvisitedFromCurrent) {
+                hop = unvisitedFromCurrent;
+              } else {
+                // Reposition within cluster to a member that has unvisited neighbor
+                const target = clustered.fromCandidates.find(id => id !== this.currentPanoId) || clustered.fromCandidates[0];
+                if (target && target !== this.currentPanoId) {
+                  return await this.#repositionWithinCluster(currentStep, target, 'Reposition within cluster to reach boundary');
+                }
+              }
+            } else {
+              // Look for a link to next cluster from current pano
+              const linkToNextCluster = links.find(l => clustered.toCandidates.includes(l.pano));
+              if (linkToNextCluster) {
+                hop = linkToNextCluster;
+              } else {
+                // Reposition to a member in current cluster that has an edge to next cluster
+                const target = clustered.fromCandidates.find(id => id !== this.currentPanoId) || clustered.fromCandidates[0];
+                if (target && target !== this.currentPanoId) {
+                  return await this.#repositionWithinCluster(currentStep, target, 'Reposition within cluster to exit toward frontier');
+                }
+              }
+            }
+
+            if (hop) {
+              selectedLink = hop;
+              decision = {
+                selectedPanoId: selectedLink.pano,
+                reasoning: isBoundaryHere ? 'Boundary in cluster: taking unvisited exit' : 'Cluster pathfinding: exiting cluster toward frontier'
+              };
+              screenshots = [];
+            }
+          }
+
           // Frontier exists but is unreachable via visited graph; fall back to teleport
           const teleportStep = await this.teleportToFrontier(currentStep);
           if (teleportStep) {
@@ -243,9 +312,14 @@ export class ExplorationAgent {
           !this.coverage.hasVisited(link.pano)
         );
         
+        // If unvisited links exist, prefer exploration and clear any stale path plan
+        if (unvisitedLinks.length > 0 && this.pathToFrontier) {
+          this.pathToFrontier = null;
+        }
+
         const targetLinks = unvisitedLinks.length > 0 ? unvisitedLinks : links;
         
-        // Check if only one valid link exists - cost saving mechanism
+        // Check if only one valid link exists - verify via nearby probes before auto-moving
         if (targetLinks.length === 1) {
           this.mode = 'pathfinding'; // Use pathfinding mode for single-link steps (no screenshots)
           selectedLink = targetLinks[0];
@@ -347,6 +421,11 @@ export class ExplorationAgent {
       // Store the heading for potential dead-end recovery
       this.lastNavigationHeading = parseFloat(selectedLink.heading);
       
+      // If following a planned route, consume the hop now
+      if (this.pathToFrontier && this.pathToFrontier.length > 0 && this.pathToFrontier[0] === selectedLink.pano) {
+        this.pathToFrontier.shift();
+      }
+
       await this.streetViewHeadless.navigateToPano(selectedLink.pano);
       // Get the current panorama data after navigation (ensures we have the actual displayed pano)
       const newPanoData = await this.streetViewHeadless.getCurrentPanorama();
@@ -388,7 +467,8 @@ export class ExplorationAgent {
         
         thumbnailUrls = screenshots.map(s => {
           // Use thumbnail for client display
-          const thumbUrl = `/runs/shots/${this.runId}/${currentStep}/${s.thumbFilename}`;
+          const rawThumb = `/runs/shots/${this.runId}/${currentStep}/${s.thumbFilename}`;
+          const thumbUrl = maybeSignPath(rawThumb, 3600);
           //console.log(`  Mapping: ${s.thumbFilename} -> ${thumbUrl}`);
           return {
             direction: s.direction,
@@ -440,6 +520,60 @@ export class ExplorationAgent {
       console.log(`=== Completed step ${this.stepCount} ===`);
     }
   }
+
+  // Perform a single-step, no-screenshot intra-cluster reposition
+  async #repositionWithinCluster(currentStep, targetPanoId, reason) {
+    const previousPanoId = this.currentPanoId;
+    const previousPosition = { ...this.currentPosition };
+    try {
+      await this.streetViewHeadless.navigateToPano(targetPanoId);
+      const newPanoData = await this.streetViewHeadless.getCurrentPanorama();
+      this.currentPanoId = newPanoData.panoId;
+      this.currentPosition = { lat: newPanoData.position.lat, lng: newPanoData.position.lng };
+      this.lastNavigationHeading = null; // reset directional context
+      const newLinks = newPanoData.links || [];
+      this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
+
+      this.recentMovements.push({
+        from: previousPanoId,
+        to: this.currentPanoId,
+        fromPosition: previousPosition,
+        toPosition: { ...this.currentPosition },
+        heading: null,
+        step: currentStep,
+        reasoning: reason
+      });
+      if (this.recentMovements.length > 20) this.recentMovements.shift();
+
+      const stepData = {
+        stepCount: currentStep,
+        reasoning: reason,
+        panoId: this.currentPanoId,
+        direction: 0,
+        mode: 'pathfinding',
+        screenshots: [],
+        remainingPathSteps: null
+      };
+      const broadcastData = { ...stepData, newPosition: this.currentPosition, stats: this.coverage.getStats() };
+      this.globalExploration.broadcast('move-decision', broadcastData);
+
+      this.logger.log('exploration-step', {
+        step: currentStep,
+        from: previousPanoId,
+        to: this.currentPanoId,
+        decision: reason,
+        position: this.currentPosition,
+        stats: this.coverage.getStats()
+      });
+      return stepData;
+    } catch (e) {
+      console.error('Failed intra-cluster reposition:', e.message);
+      return null;
+    }
+  }
+
+  // Probe small radius around current position for alternate panos with more exits
+  // probeAlternateExits removed per request
 
   /**
    * Attempt to recover from a dead-end panorama by continuing in the same direction
@@ -509,6 +643,8 @@ export class ExplorationAgent {
   }
 
   async teleportToFrontier(currentStep) {
+    // Teleport invalidates any existing route plan
+    this.pathToFrontier = null;
     const frontiers = this.coverage.getFrontiers();
     if (!frontiers || frontiers.length === 0) {
       console.warn('Teleport requested but no frontier candidates available.');
@@ -653,6 +789,7 @@ export class ExplorationAgent {
     this.coverage.reset();
     this.lastNavigationHeading = null;  // Reset to null, not 0
     this.recentMovements = [];
+    this.pathToFrontier = null;
     
     // Generate new run ID for new exploration
     this.runId = uuidv4();

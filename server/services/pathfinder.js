@@ -1,6 +1,7 @@
 export class Pathfinder {
   constructor(coverage) {
     this.coverage = coverage;
+    this.clusterRadiusMeters = parseFloat(process.env.PATHFINDER_CLUSTER_RADIUS_M || '0');
   }
   
   /**
@@ -17,9 +18,11 @@ export class Pathfinder {
     // BFS to find shortest path to any frontier panorama
     const queue = [{ panoId: startPanoId, path: [], distance: 0 }];
     const visited = new Set([startPanoId]);
+    let expanded = 0;
     
     while (queue.length > 0) {
       const { panoId, path, distance } = queue.shift();
+      expanded++;
       
       // Get connected panoramas from graph (new structure)
       const node = this.coverage.graph.get(panoId);
@@ -38,7 +41,8 @@ export class Pathfinder {
             targetPanoId: nextPanoId,
             nextStep: path.length > 0 ? path[0] : nextPanoId,
             pathLength: newPath.length,
-            fullPath: newPath
+            fullPath: newPath,
+            expanded
           };
         }
         
@@ -132,5 +136,154 @@ export class Pathfinder {
     }
     
     return frontierCount;
+  }
+
+  /**
+   * Build clusters of visited pano nodes within clusterRadiusMeters
+   * Returns { clusterOf: Map<panoId,string>, clusters: Map<string,{members:Set<string>, hasBoundary:boolean}> , adjacency: Map<string,Set<string>> }
+   */
+  buildClusters() {
+    const radius = this.clusterRadiusMeters;
+    if (!radius || radius <= 0) return null;
+
+    const nodes = Array.from(this.coverage.graph.entries()).map(([panoId, node]) => ({ panoId, lat: node.lat, lng: node.lng }));
+    if (nodes.length === 0) return null;
+
+    const clusterOf = new Map();
+    const clusters = new Map();
+
+    let clusterIndex = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (clusterOf.has(n.panoId)) continue;
+      const clusterId = `c${clusterIndex++}`;
+      const members = new Set();
+      // BFS over proximity
+      const queue = [n];
+      clusterOf.set(n.panoId, clusterId);
+      members.add(n.panoId);
+      while (queue.length > 0) {
+        const cur = queue.shift();
+        for (let j = 0; j < nodes.length; j++) {
+          const m = nodes[j];
+          if (clusterOf.has(m.panoId)) continue;
+          const dist = this.coverage.calculateDistance({ lat: cur.lat, lng: cur.lng }, { lat: m.lat, lng: m.lng });
+          if (dist <= radius) {
+            clusterOf.set(m.panoId, clusterId);
+            members.add(m.panoId);
+            queue.push(m);
+          }
+        }
+      }
+      clusters.set(clusterId, { members, hasBoundary: false });
+    }
+
+    // Determine boundary clusters
+    for (const [clusterId, data] of clusters.entries()) {
+      for (const panoId of data.members) {
+        const node = this.coverage.graph.get(panoId);
+        if (!node) continue;
+        for (const nei of node.neighbors) {
+          if (!this.coverage.graph.has(nei)) {
+            data.hasBoundary = true;
+            break;
+          }
+        }
+        if (data.hasBoundary) break;
+      }
+    }
+
+    // Build adjacency between clusters via visited edges
+    const adjacency = new Map();
+    for (const cid of clusters.keys()) adjacency.set(cid, new Set());
+    for (const [panoId, node] of this.coverage.graph.entries()) {
+      const c1 = clusterOf.get(panoId);
+      for (const nei of node.neighbors) {
+        if (!this.coverage.graph.has(nei)) continue; // only through visited
+        const c2 = clusterOf.get(nei);
+        if (c1 && c2 && c1 !== c2) {
+          adjacency.get(c1).add(c2);
+          adjacency.get(c2).add(c1);
+        }
+      }
+    }
+
+    return { clusterOf, clusters, adjacency };
+  }
+
+  /**
+   * Cluster-aware pathfinding to nearest boundary cluster.
+   * Returns object with next cluster step and candidate from/to panoIds for exit.
+   */
+  findClusteredPathToFrontier(startPanoId) {
+    const built = this.buildClusters();
+    if (!built) return null;
+    const { clusterOf, clusters, adjacency } = built;
+    const startCluster = clusterOf.get(startPanoId);
+    if (!startCluster) return null;
+
+    // BFS across clusters
+    const visited = new Set([startCluster]);
+    const queue = [{ cid: startCluster, path: [startCluster] }];
+    let targetPath = null;
+    let expanded = 0;
+    while (queue.length > 0) {
+      const { cid, path } = queue.shift();
+      expanded++;
+      const cdata = clusters.get(cid);
+      if (cdata && cdata.hasBoundary) {
+        targetPath = path;
+        break;
+      }
+      for (const next of adjacency.get(cid) || []) {
+        if (visited.has(next)) continue;
+        visited.add(next);
+        queue.push({ cid: next, path: [...path, next] });
+      }
+    }
+    if (!targetPath) return null;
+
+    const nextCluster = targetPath.length > 1 ? targetPath[1] : targetPath[0];
+
+    // Determine exit candidates from current cluster
+    const fromCandidates = new Set();
+    const toCandidates = new Set();
+
+    if (nextCluster === startCluster) {
+      // Find members in start cluster that have unvisited neighbors
+      for (const panoId of clusters.get(startCluster).members) {
+        const node = this.coverage.graph.get(panoId);
+        if (!node) continue;
+        for (const nei of node.neighbors) {
+          if (!this.coverage.graph.has(nei)) {
+            fromCandidates.add(panoId);
+            break;
+          }
+        }
+      }
+    } else {
+      // Find members that connect to nextCluster via visited edge
+      for (const panoId of clusters.get(startCluster).members) {
+        const node = this.coverage.graph.get(panoId);
+        if (!node) continue;
+        for (const nei of node.neighbors) {
+          if (!this.coverage.graph.has(nei)) continue;
+          const neiCluster = clusterOf.get(nei);
+          if (neiCluster === nextCluster) {
+            fromCandidates.add(panoId);
+            toCandidates.add(nei);
+          }
+        }
+      }
+    }
+
+    return {
+      startCluster,
+      nextCluster,
+      clusterPathLength: targetPath.length,
+      fromCandidates: Array.from(fromCandidates),
+      toCandidates: Array.from(toCandidates),
+      expanded
+    };
   }
 }
