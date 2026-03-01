@@ -87,8 +87,77 @@ export class ExplorationAgent {
     this.repeatingLoopMinPeriod = parseOr(process.env.REPEATING_LOOP_MIN_PERIOD ?? '2', 2);
     this.repeatingLoopMaxPeriod = parseOr(process.env.REPEATING_LOOP_MAX_PERIOD ?? '6', 6);
     this.repeatingLoopMinRepeats = parseOr(process.env.REPEATING_LOOP_MIN_REPEATS ?? '3', 3);
+    this.narrativeHeartbeatSteps = parseOr(process.env.NARRATIVE_HEARTBEAT_STEPS ?? '5', 5);
+    this.explorerTone = process.env.EXPLORER_TONE ?? 'urban field notes';
 
     // Single-link probe removed per request
+  }
+
+  shouldEmitNarrative(eventType, stepNumber) {
+    const narrativeEvents = new Set([
+      'branch-choice',
+      'teleport-frontier',
+      'dead-end-recovery'
+    ]);
+
+    if (narrativeEvents.has(eventType)) return true;
+    if (this.narrativeHeartbeatSteps <= 0) return false;
+    return stepNumber % this.narrativeHeartbeatSteps === 0;
+  }
+
+  getRecentNarrativeLines(limit = 6) {
+    const mechanicalPrefix = [
+      'Autopilot:',
+      'Pathfinding',
+      'Only one available path',
+      'Single available path',
+      'Teleporting to unreachable frontier',
+      'Escaping local area using heuristic',
+      'Boundary in cluster',
+      'Cluster pathfinding'
+    ];
+
+    return this.recentMovements
+      .map((move) => move?.reasoning || '')
+      .filter((line) => {
+        if (!line) return false;
+        return !mechanicalPrefix.some((prefix) => line.startsWith(prefix));
+      })
+      .slice(-limit);
+  }
+
+  buildAutopilotDiaryLine({ stepNumber, eventType, remainingPathSteps, locationEntered }) {
+    if (eventType === 'teleport-frontier') {
+      return 'Jumped to a frontier seam where the mapped streets break and new coverage can continue.';
+    }
+
+    if (eventType === 'dead-end-recovery') {
+      return 'Sparse coverage ahead, but I stayed with the corridor until the street grid reopened.';
+    }
+
+    if (!this.shouldEmitNarrative(eventType, stepNumber)) {
+      return null;
+    }
+
+    if (locationEntered) {
+      const discoveryNotes = [
+        'Autopilot carried me into a fresh block with a different street rhythm and spacing.',
+        'A new cell opened up here, so the route is still net-expanding even while autopilot is engaged.',
+        'This stretch looked repetitive, but it did unlock a new patch of map coverage.'
+      ];
+      return discoveryNotes[stepNumber % discoveryNotes.length];
+    }
+
+    if (Number.isFinite(remainingPathSteps) && remainingPathSteps > 0) {
+      return `On autopilot for continuity; frontier is roughly ${remainingPathSteps} hop${remainingPathSteps === 1 ? '' : 's'} out.`;
+    }
+
+    const heartbeatNotes = [
+      'Autopilot is holding course to avoid local loops while the graph searches for the next meaningful branch.',
+      'No strong branch here, so I am preserving momentum through the corridor until the topology opens again.',
+      'Still in transit mode: following the stable route now to set up a better decision point ahead.'
+    ];
+    return heartbeatNotes[stepNumber % heartbeatNotes.length];
   }
 
   async initialize() {
@@ -235,13 +304,30 @@ export class ExplorationAgent {
       let decision = null;
       let remainingPathSteps = null; // For UI hint when pathfinding
       let screenshots = [];  // Declare at higher scope to avoid reference error
+      let actionReason = null;
+      let diaryLine = null;
+      let eventType = 'branch-choice';
+      let autoMove = false;
+      let fallbackCause = null;
       
       // If we just recovered from a dead-end, broadcast that special state
       if (deadEndRecovery) {
         // Create a special broadcast for dead-end recovery
+        const recoveryAction = `Navigating through dead-end (${deadEndDistance}m of sparse coverage)`;
+        const recoveryDiary = this.buildAutopilotDiaryLine({
+          stepNumber: currentStep,
+          eventType: 'dead-end-recovery',
+          remainingPathSteps: null,
+          locationEntered: true
+        });
         const recoveryData = {
           stepCount: currentStep,
-          reasoning: `Navigating through dead-end (${deadEndDistance}m of sparse coverage)`,
+          reasoning: recoveryDiary || recoveryAction,
+          actionReason: recoveryAction,
+          diaryLine: recoveryDiary,
+          eventType: 'dead-end-recovery',
+          autoMove: true,
+          fallbackCause: null,
           panoId: this.currentPanoId,
           direction: this.lastNavigationHeading,
           mode: 'dead-end-recovery',
@@ -267,9 +353,12 @@ export class ExplorationAgent {
           this.mode = 'pathfinding';
           selectedLink = plannedLink;
           remainingPathSteps = this.pathToFrontier.length;
+          actionReason = `Autopilot: following planned frontier route (${remainingPathSteps} step${remainingPathSteps === 1 ? '' : 's'} remaining)`;
+          eventType = 'autopilot-pathfinding';
+          autoMove = true;
           decision = {
             selectedPanoId: selectedLink.pano,
-            reasoning: `Pathfinding to frontier (remaining ${remainingPathSteps} step${remainingPathSteps === 1 ? '' : 's'})`
+            reasoning: actionReason
           };
           screenshots = [];
         } else {
@@ -290,10 +379,12 @@ export class ExplorationAgent {
           // Find the link that leads to the next step in path
           selectedLink = links.find(l => l.pano === pathInfo.nextStep);
           if (selectedLink) {
+            actionReason = `Autopilot: pathfinding to frontier (${pathInfo.pathLength} step${pathInfo.pathLength === 1 ? '' : 's'} remaining)`;
+            eventType = 'autopilot-pathfinding';
+            autoMove = true;
             decision = {
               selectedPanoId: selectedLink.pano,
-              // Recalculate path each step; report remaining steps for clarity
-              reasoning: `Pathfinding to frontier (remaining ${pathInfo.pathLength} step${pathInfo.pathLength === 1 ? '' : 's'})`
+              reasoning: actionReason
             };
             remainingPathSteps = pathInfo.pathLength;
             console.log(`Pathfinding: Next step to ${selectedLink.pano} (route=${pathInfo.pathLength}, expanded=${pathInfo.expanded})`);
@@ -341,9 +432,14 @@ export class ExplorationAgent {
 
             if (hop) {
               selectedLink = hop;
+              actionReason = isBoundaryHere
+                ? 'Autopilot: cluster boundary reached, taking unvisited exit'
+                : 'Autopilot: exiting cluster toward frontier';
+              eventType = 'autopilot-pathfinding';
+              autoMove = true;
               decision = {
                 selectedPanoId: selectedLink.pano,
-                reasoning: isBoundaryHere ? 'Boundary in cluster: taking unvisited exit' : 'Cluster pathfinding: exiting cluster toward frontier'
+                reasoning: actionReason
               };
               screenshots = [];
             }
@@ -362,9 +458,12 @@ export class ExplorationAgent {
           // No path found, try escape heuristic
           selectedLink = this.pathfinder.findBestEscapeDirection(this.currentPanoId, links);
           if (selectedLink) {
+            actionReason = 'Autopilot: escape heuristic selected a route out of the local loop';
+            eventType = 'autopilot-pathfinding';
+            autoMove = true;
             decision = {
               selectedPanoId: selectedLink.pano,
-              reasoning: 'Escaping local area using heuristic'
+              reasoning: actionReason
             };
             // No screenshots in pathfinding mode
             screenshots = [];
@@ -428,10 +527,13 @@ export class ExplorationAgent {
 
           this.mode = 'pathfinding'; // Use pathfinding mode for single-link steps (no screenshots)
           selectedLink = candidateLink;
+          actionReason = 'Autopilot: single available path, advancing corridor';
+          eventType = 'autopilot-single-link';
+          autoMove = true;
           
           decision = {
             selectedPanoId: selectedLink.pano,
-            reasoning: 'Only one available path - proceeding automatically'
+            reasoning: actionReason
           };
           
           // No screenshots for single-link pathfinding
@@ -441,6 +543,11 @@ export class ExplorationAgent {
         } else {
           // Multiple links available - use AI for decision
           this.mode = 'exploration';
+          eventType = 'branch-choice';
+          autoMove = false;
+          const stepIntent = typeof this.ai.getIntentForStep === 'function'
+            ? this.ai.getIntentForStep(currentStep)
+            : null;
           
           // Use the screenshots array declared at higher scope
           screenshots = [];
@@ -489,8 +596,13 @@ export class ExplorationAgent {
             stats: this.coverage.getStats(),
             stepNumber: currentStep,
             mode: this.mode,
-            recentMovements: this.recentMovements  // Pass movement history
+            recentMovements: this.recentMovements,  // Pass movement history
+            tone: this.explorerTone,
+            intent: stepIntent,
+            recentNarratives: this.getRecentNarrativeLines()
           });
+          actionReason = `Branch choice from ${cycleSafeLinks.length} visible option${cycleSafeLinks.length === 1 ? '' : 's'}`;
+          fallbackCause = decision.fallbackCause || null;
           
           // Clear base64 data and delete full-size files after AI decision
           for (const s of screenshots) {
@@ -533,8 +645,9 @@ export class ExplorationAgent {
         }
       }
       
-      // Log successful AI selection
-      console.log(`✓ AI successfully selected panoId: ${selectedLink.pano} | Reasoning: ${decision.reasoning}`);
+      // Log selected pano and reasoning payload
+      const fallbackHint = fallbackCause ? ` | fallbackCause: ${fallbackCause}` : '';
+      console.log(`✓ Selected panoId: ${selectedLink.pano} | Reasoning: ${decision.reasoning}${fallbackHint}`);
       
       // Track the movement BEFORE navigating
       const previousPanoId = this.currentPanoId;
@@ -578,6 +691,19 @@ export class ExplorationAgent {
       const newLinks = newPanoData.links || [];
       const visitInfo = this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
       this.stepsSinceNewCell = visitInfo?.isNewCell ? 0 : this.stepsSinceNewCell + 1;
+
+      actionReason = actionReason || decision.reasoning || 'Move selected';
+      if (autoMove) {
+        diaryLine = this.buildAutopilotDiaryLine({
+          stepNumber: currentStep,
+          eventType,
+          remainingPathSteps,
+          locationEntered: !!visitInfo?.isNewCell
+        });
+      } else {
+        diaryLine = decision.reasoning;
+      }
+      const renderedReasoning = diaryLine || actionReason;
       
       // Process screenshots for all modes (exploration, pathfinding, single-link)
       let thumbnailUrls = [];
@@ -607,7 +733,13 @@ export class ExplorationAgent {
       // Prepare minimal step data for decision history
       const stepData = {
         stepCount: currentStep,
-        reasoning: decision.reasoning,
+        reasoning: renderedReasoning,
+        actionReason,
+        diaryLine,
+        eventType,
+        autoMove,
+        fallbackCause,
+        sceneTag: decision.sceneTag || null,
         panoId: this.currentPanoId,
         direction: parseFloat(selectedLink.heading),
         mode: this.mode,
@@ -629,7 +761,12 @@ export class ExplorationAgent {
         step: currentStep,
         from: previousPanoId,
         to: this.currentPanoId,
-        decision: decision.reasoning,
+        decision: renderedReasoning,
+        actionReason,
+        eventType,
+        autoMove,
+        fallbackCause,
+        sceneTag: decision.sceneTag || null,
         position: this.currentPosition,
         stats: this.coverage.getStats()
       });
@@ -669,9 +806,23 @@ export class ExplorationAgent {
       });
       if (this.recentMovements.length > 20) this.recentMovements.shift();
 
+      const diaryLine = this.buildAutopilotDiaryLine({
+        stepNumber: currentStep,
+        eventType: 'autopilot-pathfinding',
+        remainingPathSteps: null,
+        locationEntered: !!visitInfo?.isNewCell
+      });
+      const renderedReasoning = diaryLine || reason;
+
       const stepData = {
         stepCount: currentStep,
-        reasoning: reason,
+        reasoning: renderedReasoning,
+        actionReason: reason,
+        diaryLine,
+        eventType: 'autopilot-pathfinding',
+        autoMove: true,
+        fallbackCause: null,
+        sceneTag: null,
         panoId: this.currentPanoId,
         direction: 0,
         mode: 'pathfinding',
@@ -685,7 +836,11 @@ export class ExplorationAgent {
         step: currentStep,
         from: previousPanoId,
         to: this.currentPanoId,
-        decision: reason,
+        decision: renderedReasoning,
+        actionReason: reason,
+        eventType: 'autopilot-pathfinding',
+        autoMove: true,
+        fallbackCause: null,
         position: this.currentPosition,
         stats: this.coverage.getStats()
       });
@@ -852,6 +1007,13 @@ export class ExplorationAgent {
       this.stepsSinceNewCell = visitInfo?.isNewCell ? 0 : this.stepsSinceNewCell + 1;
 
       const decisionReasoning = `Teleporting to unreachable frontier (${closestFrontier.panoId})`;
+      const diaryLine = this.buildAutopilotDiaryLine({
+        stepNumber: currentStep,
+        eventType: 'teleport-frontier',
+        remainingPathSteps: null,
+        locationEntered: !!visitInfo?.isNewCell
+      });
+      const renderedReasoning = diaryLine || decisionReasoning;
 
       this.recentMovements.push({
         from: previousPanoId,
@@ -868,7 +1030,13 @@ export class ExplorationAgent {
 
       const stepData = {
         stepCount: currentStep,
-        reasoning: decisionReasoning,
+        reasoning: renderedReasoning,
+        actionReason: decisionReasoning,
+        diaryLine,
+        eventType: 'teleport-frontier',
+        autoMove: true,
+        fallbackCause: null,
+        sceneTag: null,
         panoId: this.currentPanoId,
         direction: 0,
         mode: 'pathfinding',
@@ -887,7 +1055,11 @@ export class ExplorationAgent {
         step: currentStep,
         from: previousPanoId,
         to: this.currentPanoId,
-        decision: decisionReasoning,
+        decision: renderedReasoning,
+        actionReason: decisionReasoning,
+        eventType: 'teleport-frontier',
+        autoMove: true,
+        fallbackCause: null,
         position: this.currentPosition,
         stats: this.coverage.getStats()
       });

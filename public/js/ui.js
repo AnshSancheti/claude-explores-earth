@@ -11,8 +11,8 @@ class UIManager {
     this.loadBtn = document.getElementById('loadBtn');
     this.saveBtn = document.getElementById('saveBtn');
     
-    // Track the last pathfinding group
-    this.lastPathfindingGroup = null;
+    // Track the last autopilot summary group
+    this.lastAutopilotGroup = null;
   }
 
   updateStats(stats) {
@@ -26,41 +26,43 @@ class UIManager {
 
   addDecisionEntry(data) {
     console.log(`Received decision for step ${data.stepCount}, mode: ${data.mode}`);
-    
-    // Check if this is a pathfinding step
-    if (data.mode === 'pathfinding') {
-      // Check if we can group with the last pathfinding group
-      if (this.lastPathfindingGroup && 
-          this.lastPathfindingGroup.parentElement === this.decisionLog &&
-          this.lastPathfindingGroup === this.decisionLog.firstChild) {
-        // Update the existing pathfinding group
-        this.updatePathfindingGroup(this.lastPathfindingGroup, data);
+
+    if (this.isAutopilotStep(data)) {
+      if (
+        this.lastAutopilotGroup &&
+        this.lastAutopilotGroup.parentElement === this.decisionLog &&
+        this.lastAutopilotGroup === this.decisionLog.firstChild
+      ) {
+        this.updateAutopilotGroup(this.lastAutopilotGroup, data);
         return;
-      } else {
-        // Create a new pathfinding group
-        const group = this.createPathfindingGroup(data);
-        this.decisionLog.insertBefore(group, this.decisionLog.firstChild);
-        this.lastPathfindingGroup = group;
       }
+
+      const group = this.createAutopilotGroup(data);
+      this.decisionLog.insertBefore(group, this.decisionLog.firstChild);
+      this.lastAutopilotGroup = group;
     } else {
-      // This is an exploration step - show full details
-      this.lastPathfindingGroup = null; // Reset pathfinding group tracking
-      
+      this.lastAutopilotGroup = null;
+
       const entry = document.createElement('div');
       entry.className = 'decision-entry exploration-entry';
       entry.setAttribute('data-step', data.stepCount);
-      
       const time = new Date().toLocaleTimeString();
       const modeIndicator = '<span class="mode-indicator exploring">🔍</span>';
-      
+      const diaryLine = data.diaryLine || data.reasoning || '';
+      const actionReason = data.actionReason && data.actionReason !== diaryLine
+        ? `<div class="decision-action">${escapeHtml(data.actionReason)}</div>`
+        : '';
+      const screenshots = Array.isArray(data.screenshots) ? data.screenshots : [];
+
       entry.innerHTML = `
         <div class="decision-header">
           <span class="decision-step">${modeIndicator} Step ${data.stepCount}</span>
           <span class="decision-time">${time}</span>
         </div>
-        <div class="decision-reasoning">${escapeHtml(data.reasoning)}</div>
+        <div class="decision-reasoning">${escapeHtml(diaryLine)}</div>
+        ${actionReason}
         <div class="decision-screenshots">
-          ${data.screenshots.map(s => {
+          ${screenshots.map(s => {
             // Generate Google Maps Street View URL
             const lat = s.position ? s.position.lat : 0;
             const lng = s.position ? s.position.lng : 0;
@@ -88,57 +90,108 @@ class UIManager {
     }
   }
 
-  createPathfindingGroup(data) {
+  isAutopilotStep(data) {
+    return data.autoMove === true || data.mode === 'pathfinding';
+  }
+
+  shouldRecordAutopilotDetail(data) {
+    if (data.eventType === 'teleport-frontier' || data.eventType === 'dead-end-recovery') return true;
+    if (!data.diaryLine) return false;
+    return data.diaryLine !== data.actionReason;
+  }
+
+  buildAutopilotSummary(group) {
+    const total = parseInt(group.getAttribute('data-total-steps') || '0', 10);
+    const single = parseInt(group.getAttribute('data-single-link-count') || '0', 10);
+    const path = parseInt(group.getAttribute('data-pathfinding-count') || '0', 10);
+    const teleports = parseInt(group.getAttribute('data-teleport-count') || '0', 10);
+
+    const parts = [`${total} auto step${total === 1 ? '' : 's'}`];
+    if (single > 0) parts.push(`${single} corridor`);
+    if (path > 0) parts.push(`${path} frontier`);
+    if (teleports > 0) parts.push(`${teleports} teleport${teleports === 1 ? '' : 's'}`);
+    return parts.join(' · ');
+  }
+
+  updateAutopilotCounters(group, data) {
+    const increment = (name) => {
+      const current = parseInt(group.getAttribute(name) || '0', 10);
+      group.setAttribute(name, String(current + 1));
+    };
+
+    increment('data-total-steps');
+    if (data.eventType === 'autopilot-single-link') increment('data-single-link-count');
+    if (data.eventType === 'autopilot-pathfinding') increment('data-pathfinding-count');
+    if (data.eventType === 'teleport-frontier') increment('data-teleport-count');
+  }
+
+  appendAutopilotDetail(group, data) {
+    if (!this.shouldRecordAutopilotDetail(data)) return;
+    const details = group.querySelector('.pathfinding-details');
+    const detail = document.createElement('div');
+    detail.className = 'pathfinding-step-detail';
+    detail.textContent = `Step ${data.stepCount}: ${data.diaryLine || data.reasoning}`;
+    details.appendChild(detail);
+  }
+
+  createAutopilotGroup(data) {
     const group = document.createElement('div');
-    group.className = 'decision-entry pathfinding-group collapsed';
+    group.className = 'decision-entry pathfinding-group autopilot-group collapsed';
     group.setAttribute('data-start-step', data.stepCount);
     group.setAttribute('data-end-step', data.stepCount);
-    
+    group.setAttribute('data-total-steps', '0');
+    group.setAttribute('data-single-link-count', '0');
+    group.setAttribute('data-pathfinding-count', '0');
+    group.setAttribute('data-teleport-count', '0');
+
+    this.updateAutopilotCounters(group, data);
     const time = new Date().toLocaleTimeString();
-    
+    const summary = this.buildAutopilotSummary(group);
     const remaining = Number.isFinite(data.remainingPathSteps) ? data.remainingPathSteps : null;
     const remainingLabel = remaining !== null 
       ? `<span class="pathfinding-count">Frontier: ${remaining} step${remaining === 1 ? '' : 's'} away</span>`
       : '';
 
     group.innerHTML = `
-      <div class="decision-header pathfinding-header" onclick="UIManager.togglePathfindingGroup(this)">
+      <div class="decision-header pathfinding-header" onclick="UIManager.toggleAutopilotGroup(this)">
         <span class="decision-step">
           <span class="mode-indicator pathfinding">🧭</span>
           <span class="step-range">Step ${data.stepCount}</span>
         </span>
+        <span class="autopilot-summary">${summary}</span>
         ${remainingLabel}
         <span class="expand-icon">▶</span>
         <span class="decision-time">${time}</span>
       </div>
-      <div class="pathfinding-details" style="display: none;">
-        <div class="pathfinding-step-detail">
-          Step ${data.stepCount}: ${escapeHtml(data.reasoning)}
-        </div>
-      </div>
+      <div class="pathfinding-details" style="display: none;"></div>
     `;
-    
+
+    this.appendAutopilotDetail(group, data);
     return group;
   }
 
-  updatePathfindingGroup(group, data) {
+  updateAutopilotGroup(group, data) {
     const startStep = parseInt(group.getAttribute('data-start-step'));
     const endStep = data.stepCount;
     const stepCount = endStep - startStep + 1;
-    
+
     group.setAttribute('data-end-step', endStep);
-    
+    this.updateAutopilotCounters(group, data);
+
     // Update the header
     const stepRange = group.querySelector('.step-range');
     const time = group.querySelector('.decision-time');
+    const summary = group.querySelector('.autopilot-summary');
     let count = group.querySelector('.pathfinding-count');
-    
+
     if (stepCount === 1) {
       stepRange.textContent = `Step ${startStep}`;
     } else {
       stepRange.textContent = `Steps ${startStep}-${endStep}`;
     }
     time.textContent = new Date().toLocaleTimeString();
+    summary.textContent = this.buildAutopilotSummary(group);
+
     // Update or create the remaining steps label
     const remaining = Number.isFinite(data.remainingPathSteps) ? data.remainingPathSteps : null;
     if (remaining !== null) {
@@ -155,20 +208,15 @@ class UIManager {
       // Remove label if not applicable
       count.remove();
     }
-    
-    // Add the new step to the details
-    const details = group.querySelector('.pathfinding-details');
-    const newDetail = document.createElement('div');
-    newDetail.className = 'pathfinding-step-detail';
-    newDetail.textContent = `Step ${data.stepCount}: ${data.reasoning}`;
-    details.appendChild(newDetail);
+
+    this.appendAutopilotDetail(group, data);
   }
 
-  static togglePathfindingGroup(header) {
+  static toggleAutopilotGroup(header) {
     const group = header.parentElement;
     const details = group.querySelector('.pathfinding-details');
     const icon = header.querySelector('.expand-icon');
-    
+
     if (group.classList.contains('collapsed')) {
       group.classList.remove('collapsed');
       group.classList.add('expanded');
@@ -180,6 +228,10 @@ class UIManager {
       details.style.display = 'none';
       icon.textContent = '▶';
     }
+  }
+
+  static togglePathfindingGroup(header) {
+    UIManager.toggleAutopilotGroup(header);
   }
 
   setExplorationState(isExploring) {
@@ -196,7 +248,7 @@ class UIManager {
 
   clearDecisionLog() {
     this.decisionLog.innerHTML = '';
-    this.lastPathfindingGroup = null;
+    this.lastAutopilotGroup = null;
   }
 
   showError(message) {

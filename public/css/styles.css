@@ -631,6 +631,14 @@ h1 {
   margin-bottom: 8px;
 }
 
+.decision-action {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 8px;
+}
+
 .mode-indicator {
   padding: 2px 8px;
   border-radius: 20px;
@@ -690,6 +698,12 @@ h1 {
   font-weight: normal;
   margin-left: 8px;
   opacity: 0.7;
+}
+
+.autopilot-summary {
+  color: var(--text-secondary);
+  font-size: 10px;
+  opacity: 0.8;
 }
 
 .pathfinding-details {
