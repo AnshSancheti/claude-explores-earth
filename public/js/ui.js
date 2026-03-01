@@ -102,15 +102,7 @@ class UIManager {
 
   buildAutopilotSummary(group) {
     const total = parseInt(group.getAttribute('data-total-steps') || '0', 10);
-    const single = parseInt(group.getAttribute('data-single-link-count') || '0', 10);
-    const path = parseInt(group.getAttribute('data-pathfinding-count') || '0', 10);
-    const teleports = parseInt(group.getAttribute('data-teleport-count') || '0', 10);
-
-    const parts = [`${total} auto step${total === 1 ? '' : 's'}`];
-    if (single > 0) parts.push(`${single} corridor`);
-    if (path > 0) parts.push(`${path} frontier`);
-    if (teleports > 0) parts.push(`${teleports} teleport${teleports === 1 ? '' : 's'}`);
-    return parts.join(' · ');
+    return `${total} auto step${total === 1 ? '' : 's'}`;
   }
 
   updateAutopilotCounters(group, data) {

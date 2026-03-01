@@ -601,7 +601,7 @@ export class ExplorationAgent {
             intent: stepIntent,
             recentNarratives: this.getRecentNarrativeLines()
           });
-          actionReason = `Branch choice from ${cycleSafeLinks.length} visible option${cycleSafeLinks.length === 1 ? '' : 's'}`;
+          actionReason = 'Branch choice';
           fallbackCause = decision.fallbackCause || null;
           
           // Clear base64 data and delete full-size files after AI decision
