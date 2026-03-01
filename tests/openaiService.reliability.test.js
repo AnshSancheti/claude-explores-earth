@@ -104,6 +104,37 @@ test('retries when JSON has braces but invalid syntax', async () => {
   assert.equal(result.fallbackCause, null);
 });
 
+test('blank-content retry escalates completion token budget', async () => {
+  let calls = 0;
+  const requestedTokens = [];
+  const service = createServiceWithMock(async (req) => {
+    calls++;
+    requestedTokens.push(req.max_completion_tokens);
+    if (calls === 1) {
+      return {
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: req.max_completion_tokens,
+          total_tokens: 100 + req.max_completion_tokens
+        },
+        choices: [{ message: { content: '' } }]
+      };
+    }
+    return {
+      usage: { prompt_tokens: 90, completion_tokens: 20, total_tokens: 110 },
+      choices: [{ message: { content: JSON.stringify({ selectedIndex: 0, reasoning: 'Crosswalk activity and signage suggest an active route with fresh branches ahead.', sceneTag: 'busy crosswalk' }) } }]
+    };
+  });
+
+  const result = await service.decideNextMove(makeInput({ stepNumber: 51 }));
+
+  assert.equal(calls, 2);
+  assert.ok(requestedTokens[0] >= 600, 'initial token budget should be practical for GPT-5 reasoning output');
+  assert.ok(requestedTokens[1] > requestedTokens[0], 'retry should raise token budget after blank output');
+  assert.equal(result.selectedPanoId, 'A');
+  assert.equal(result.fallbackCause, null);
+});
+
 test('retries retryable API error and succeeds', async () => {
   let calls = 0;
   const service = createServiceWithMock(async () => {

@@ -14,7 +14,7 @@ export class OpenAIService {
     this.intentArcSteps = parseOr(process.env.INTENT_ARC_STEPS ?? '25', 25);
     this.defaultTone = process.env.EXPLORER_TONE ?? 'urban field notes';
     this.maxDecisionRetries = parseOr(process.env.OPENAI_DECISION_RETRIES ?? '1', 1);
-    this.decisionMaxTokens = parseOr(process.env.OPENAI_DECISION_MAX_TOKENS ?? '320', 320);
+    this.decisionMaxTokens = parseOr(process.env.OPENAI_DECISION_MAX_TOKENS ?? '1200', 1200);
     this.useJsonSchema = (process.env.OPENAI_DECISION_USE_JSON_SCHEMA ?? 'true') !== 'false';
 
     this.intentArcs = [
@@ -250,6 +250,9 @@ Respond with a JSON object containing:
     const maxAttempts = Math.max(1, this.maxDecisionRetries + 1);
     let lastError = null;
 
+    let attemptMaxTokens = this.decisionMaxTokens;
+    const maxRetryTokens = Math.max(attemptMaxTokens, 2400);
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const retryNote = attempt > 1
         ? '\n\nRetry note: previous output could not be used. Return only valid JSON matching the schema.'
@@ -284,7 +287,7 @@ Respond with a JSON object containing:
             }
           ],
           response_format: this.#buildResponseFormat(links.length),
-          max_completion_tokens: this.decisionMaxTokens
+          max_completion_tokens: attemptMaxTokens
         });
 
         if (response.usage) {
@@ -312,6 +315,11 @@ Respond with a JSON object containing:
         }
 
         if (attempt < maxAttempts && retryable) {
+          // GPT-5 chat completions can consume completion budget on reasoning tokens only.
+          // Escalate budget on blank-content parse failures so retries can produce JSON output.
+          if (parseFailure && /blank content|empty content/i.test(error?.message || '')) {
+            attemptMaxTokens = Math.min(maxRetryTokens, Math.max(attemptMaxTokens * 2, 600));
+          }
           continue;
         }
 
