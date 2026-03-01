@@ -131,8 +131,66 @@ export class StreetViewHeadless {
             });
           };
           
-          window.navigateToPano = (panoId) => {
-            panorama.setPano(panoId);
+          window.navigateToPano = (panoId, timeoutMs = 7000) => {
+            return new Promise((resolve) => {
+              const startPanoId = panorama.getPano();
+              let settled = false;
+              let settleTimer = null;
+              let timeoutHandle = null;
+              let listener = null;
+
+              const cleanup = () => {
+                if (settleTimer) {
+                  clearTimeout(settleTimer);
+                  settleTimer = null;
+                }
+                if (timeoutHandle) {
+                  clearTimeout(timeoutHandle);
+                  timeoutHandle = null;
+                }
+                if (listener) {
+                  listener.remove();
+                  listener = null;
+                }
+              };
+
+              const finish = (reason) => {
+                if (settled) return;
+                settled = true;
+                cleanup();
+                resolve({
+                  requestedPanoId: panoId,
+                  startPanoId: startPanoId || null,
+                  settledPanoId: panorama.getPano() || null,
+                  reason
+                });
+              };
+
+              if (startPanoId && startPanoId === panoId) {
+                finish('already-there');
+                return;
+              }
+
+              listener = panorama.addListener('pano_changed', () => {
+                const currentPanoId = panorama.getPano();
+                if (!currentPanoId) return;
+
+                // Exact match is ideal, but Street View can canonicalize to alias pano IDs.
+                if (currentPanoId === panoId) {
+                  finish('exact-match');
+                  return;
+                }
+
+                // If we changed away from start, allow a short settle period for alias transitions.
+                if (currentPanoId !== startPanoId) {
+                  if (settleTimer) clearTimeout(settleTimer);
+                  settleTimer = setTimeout(() => finish('alias-settled'), 250);
+                }
+              });
+
+              timeoutHandle = setTimeout(() => finish('timeout'), timeoutMs);
+              panorama.setPano(panoId);
+            });
           };
           
           window.setHeading = (heading) => {
@@ -144,6 +202,12 @@ export class StreetViewHeadless {
           
           window.getCurrentPano = () => {
             return panorama.getPano();
+          };
+
+          window.getCurrentPosition = () => {
+            const pos = panorama.getPosition && panorama.getPosition();
+            if (!pos) return null;
+            return { lat: pos.lat(), lng: pos.lng() };
           };
         </script>
         <script async defer 
@@ -167,10 +231,22 @@ export class StreetViewHeadless {
     }, position);
     
     if (!result) {
-      throw new Error('No panorama found at location');
+      const label = typeof position === 'string'
+        ? `pano:${position}`
+        : `lat:${position?.lat},lng:${position?.lng}`;
+      throw new Error(`No panorama found at location (${label})`);
     }
     
     return result;
+  }
+
+  async getCurrentPosition() {
+    return await this.page.evaluate(() => {
+      if (typeof window.getCurrentPosition === 'function') {
+        return window.getCurrentPosition();
+      }
+      return null;
+    });
   }
 
   async getCurrentPanorama() {
@@ -179,21 +255,42 @@ export class StreetViewHeadless {
       return window.getCurrentPano();
     });
     
-    if (!currentPanoId) {
-      throw new Error('No current panorama available');
+    // Prefer fetching by current pano ID, but fall back to current position when
+    // old/stale pano IDs no longer resolve in Google metadata.
+    if (currentPanoId) {
+      try {
+        const byPano = await this.getPanorama(currentPanoId);
+        this.currentPanoId = byPano.panoId;
+        return byPano;
+      } catch (error) {
+        console.warn(`Current pano lookup failed for ${currentPanoId}, falling back to position lookup: ${error.message}`);
+      }
     }
-    
-    // Fetch the data for this specific pano ID
-    return await this.getPanorama(currentPanoId);
+
+    const currentPosition = await this.getCurrentPosition();
+    if (currentPosition && Number.isFinite(currentPosition.lat) && Number.isFinite(currentPosition.lng)) {
+      const byPosition = await this.getPanorama(currentPosition);
+      this.currentPanoId = byPosition.panoId;
+      return byPosition;
+    }
+
+    throw new Error('No current panorama available');
   }
 
   async navigateToPano(panoId) {
-    await this.page.evaluate((id) => {
-      window.navigateToPano(id);
+    const navResult = await this.page.evaluate(async (id) => {
+      return await window.navigateToPano(id);
     }, panoId);
-    
-    this.currentPanoId = panoId;  // Track current position
-    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    const settledPanoId = navResult?.settledPanoId || await this.page.evaluate(() => window.getCurrentPano());
+    if (navResult?.reason === 'timeout') {
+      console.warn(`Street View navigation timed out for ${panoId}; settled at ${settledPanoId || 'unknown'}`);
+    } else if (settledPanoId && panoId !== settledPanoId) {
+      console.log(`Street View canonicalized pano ${panoId} -> ${settledPanoId} (${navResult?.reason || 'unknown'})`);
+    }
+
+    this.currentPanoId = settledPanoId || panoId;
+    return navResult;
   }
 
   async setHeading(heading) {
@@ -269,12 +366,74 @@ export class StreetViewHeadless {
               }
             );
             
-            window.navigateToPano = function(panoId) {
-              panorama.setPano(panoId);
+            window.navigateToPano = function(panoId, timeoutMs = 7000) {
+              return new Promise((resolve) => {
+                const startPanoId = panorama.getPano();
+                let settled = false;
+                let settleTimer = null;
+                let timeoutHandle = null;
+                let listener = null;
+
+                const cleanup = () => {
+                  if (settleTimer) {
+                    clearTimeout(settleTimer);
+                    settleTimer = null;
+                  }
+                  if (timeoutHandle) {
+                    clearTimeout(timeoutHandle);
+                    timeoutHandle = null;
+                  }
+                  if (listener) {
+                    listener.remove();
+                    listener = null;
+                  }
+                };
+
+                const finish = (reason) => {
+                  if (settled) return;
+                  settled = true;
+                  cleanup();
+                  resolve({
+                    requestedPanoId: panoId,
+                    startPanoId: startPanoId || null,
+                    settledPanoId: panorama.getPano() || null,
+                    reason
+                  });
+                };
+
+                if (startPanoId && startPanoId === panoId) {
+                  finish('already-there');
+                  return;
+                }
+
+                listener = panorama.addListener('pano_changed', () => {
+                  const currentPanoId = panorama.getPano();
+                  if (!currentPanoId) return;
+
+                  if (currentPanoId === panoId) {
+                    finish('exact-match');
+                    return;
+                  }
+
+                  if (currentPanoId !== startPanoId) {
+                    if (settleTimer) clearTimeout(settleTimer);
+                    settleTimer = setTimeout(() => finish('alias-settled'), 250);
+                  }
+                });
+
+                timeoutHandle = setTimeout(() => finish('timeout'), timeoutMs);
+                panorama.setPano(panoId);
+              });
             };
             
             window.getCurrentPano = function() {
               return panorama.getPano();
+            };
+            
+            window.getCurrentPosition = function() {
+              const pos = panorama.getPosition && panorama.getPosition();
+              if (!pos) return null;
+              return { lat: pos.lat(), lng: pos.lng() };
             };
             
             window.setHeading = function(heading) {

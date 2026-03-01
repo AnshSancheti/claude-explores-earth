@@ -7,6 +7,38 @@ import { maybeSignPath } from '../utils/urlSigner.js';
 import { projectPosition } from '../utils/geoUtils.js';
 import { v4 as uuidv4 } from 'uuid';
 
+export function selectClosestFrontierByDiscovery(frontiers, graph, currentPosition, calculateDistance) {
+  let closestFrontier = null;
+  let closestAnchorPosition = null;
+  let closestDistance = Infinity;
+
+  for (const frontier of frontiers) {
+    const discoveredFrom = frontier?.discoveredFrom;
+    if (!discoveredFrom) continue;
+
+    const node = graph.get(discoveredFrom);
+    if (!node || typeof node.lat !== 'number' || typeof node.lng !== 'number') {
+      continue;
+    }
+
+    const anchorPosition = { lat: node.lat, lng: node.lng };
+    const distance = calculateDistance(currentPosition, anchorPosition);
+
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestFrontier = frontier;
+      closestAnchorPosition = anchorPosition;
+    }
+  }
+
+  if (!closestFrontier) return null;
+  return {
+    frontier: closestFrontier,
+    anchorPosition: closestAnchorPosition,
+    distanceMeters: closestDistance
+  };
+}
+
 export class ExplorationAgent {
   constructor(globalExploration, logger) {
     this.globalExploration = globalExploration;  // Reference to global exploration for broadcasting
@@ -44,6 +76,18 @@ export class ExplorationAgent {
     this.maxDeadEndDistance = parseInt(process.env.MAX_DEAD_END_DISTANCE) || 200;
     this.deadEndStepSize = 10; // meters per step
 
+    // Spatial stagnation guard: force escape if we keep moving without entering new map cells.
+    this.stepsSinceNewCell = 0;
+    const parseOr = (value, fallback) => {
+      const parsed = parseInt(value, 10);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+    this.staleCellThresholdSteps = parseOr(process.env.STALE_CELL_THRESHOLD_STEPS ?? '120', 120);
+    this.loopWindowNodes = parseOr(process.env.SINGLE_LINK_LOOP_WINDOW_NODES ?? '6', 6);
+    this.repeatingLoopMinPeriod = parseOr(process.env.REPEATING_LOOP_MIN_PERIOD ?? '2', 2);
+    this.repeatingLoopMaxPeriod = parseOr(process.env.REPEATING_LOOP_MAX_PERIOD ?? '6', 6);
+    this.repeatingLoopMinRepeats = parseOr(process.env.REPEATING_LOOP_MIN_REPEATS ?? '3', 3);
+
     // Single-link probe removed per request
   }
 
@@ -66,7 +110,8 @@ export class ExplorationAgent {
     
     this.currentPanoId = panoData.panoId;
     this.streetViewHeadless.currentPanoId = this.currentPanoId;  // Track in Puppeteer for refresh
-    this.coverage.addVisited(this.currentPanoId, this.currentPosition, panoData.links || []);
+    const startVisit = this.coverage.addVisited(this.currentPanoId, this.currentPosition, panoData.links || []);
+    this.stepsSinceNewCell = startVisit?.isNewCell ? 0 : 1;
     
     // Broadcast to all connected clients
     this.globalExploration.broadcast('position-update', {
@@ -163,6 +208,25 @@ export class ExplorationAgent {
       // Log current location details and frontier status
       console.log(`Current location - PanoID: ${this.currentPanoId}, Lat: ${this.currentPosition.lat.toFixed(6)}, Lng: ${this.currentPosition.lng.toFixed(6)}`);
       console.log(`Frontier size: ${this.coverage.getFrontierSize()}, Mode: ${this.mode}`);
+      const repeatingLoopOptions = {
+        minPeriod: this.repeatingLoopMinPeriod,
+        maxPeriod: this.repeatingLoopMaxPeriod,
+        minRepeats: this.repeatingLoopMinRepeats
+      };
+      const wouldExtendLoopTail = (panoId) => (
+        this.coverage.isAlternatingLoop(panoId, this.loopWindowNodes) ||
+        this.coverage.wouldExtendRepeatingCycle(panoId, repeatingLoopOptions)
+      );
+
+      // If we're spatially stagnant for too long, force a frontier jump.
+      if (this.stepsSinceNewCell >= this.staleCellThresholdSteps && this.coverage.hasFrontier()) {
+        console.warn(`Stagnation detected: ${this.stepsSinceNewCell} steps without entering a new spatial cell. Attempting frontier teleport.`);
+        const teleportStep = await this.teleportToFrontier(currentStep);
+        if (teleportStep) {
+          this.stepsSinceNewCell = 0;
+          return teleportStep;
+        }
+      }
       
       // Determine if all outgoing links from current pano are already visited
       const allLinksVisited = (links.length > 0) && links.every(link => this.coverage.hasVisited(link.pano));
@@ -237,8 +301,12 @@ export class ExplorationAgent {
             screenshots = [];
             // Persist full route; first hop will be consumed after navigation
             this.pathToFrontier = Array.isArray(pathInfo.fullPath) ? [...pathInfo.fullPath] : null;
+          } else {
+            console.log(`Graph route suggested unavailable hop ${pathInfo.nextStep}; trying cluster + teleport fallbacks.`);
           }
-        } else {
+        }
+
+        if (!selectedLink) {
           // Try cluster-aware routing before teleporting
           const clustered = this.pathfinder.findClusteredPathToFrontier(this.currentPanoId);
           if (clustered) {
@@ -280,13 +348,17 @@ export class ExplorationAgent {
               screenshots = [];
             }
           }
+        }
 
+        if (!selectedLink) {
           // Frontier exists but is unreachable via visited graph; fall back to teleport
           const teleportStep = await this.teleportToFrontier(currentStep);
           if (teleportStep) {
             return teleportStep;
           }
-          
+        }
+        
+        if (!selectedLink) {
           // No path found, try escape heuristic
           selectedLink = this.pathfinder.findBestEscapeDirection(this.currentPanoId, links);
           if (selectedLink) {
@@ -318,11 +390,44 @@ export class ExplorationAgent {
         }
 
         const targetLinks = unvisitedLinks.length > 0 ? unvisitedLinks : links;
+        const lastMove = this.recentMovements[this.recentMovements.length - 1];
+        const immediateBacktrackPano = (lastMove && lastMove.to === this.currentPanoId) ? lastMove.from : null;
+        const candidateLinks = (() => {
+          if (!immediateBacktrackPano || targetLinks.length <= 1) return targetLinks;
+          const nonBacktrack = targetLinks.filter(link => link.pano !== immediateBacktrackPano);
+          return nonBacktrack.length > 0 ? nonBacktrack : targetLinks;
+        })();
+        let cycleSafeLinks = candidateLinks;
+
+        if (unvisitedLinks.length === 0 && candidateLinks.length > 1) {
+          const nonLoopRisk = candidateLinks.filter(link => !wouldExtendLoopTail(link.pano));
+          if (nonLoopRisk.length > 0 && nonLoopRisk.length < candidateLinks.length) {
+            console.log(`Loop-risk filter dropped ${candidateLinks.length - nonLoopRisk.length} candidate link(s) that continue a repeating cycle tail.`);
+            cycleSafeLinks = nonLoopRisk;
+          } else if (nonLoopRisk.length === 0 && this.coverage.hasFrontier()) {
+            console.warn('All available links would continue a recent loop tail; forcing frontier teleport.');
+            const teleportStep = await this.teleportToFrontier(currentStep);
+            if (teleportStep) {
+              return teleportStep;
+            }
+          }
+        }
         
         // Check if only one valid link exists - verify via nearby probes before auto-moving
-        if (targetLinks.length === 1) {
+        if (cycleSafeLinks.length === 1) {
+          const candidateLink = cycleSafeLinks[0];
+          const wouldContinueLoop = (unvisitedLinks.length === 0) && wouldExtendLoopTail(candidateLink.pano);
+
+          if (wouldContinueLoop && this.coverage.hasFrontier()) {
+            console.warn(`Single-link oscillation detected toward ${candidateLink.pano}; forcing frontier recovery.`);
+            const teleportStep = await this.teleportToFrontier(currentStep);
+            if (teleportStep) {
+              return teleportStep;
+            }
+          }
+
           this.mode = 'pathfinding'; // Use pathfinding mode for single-link steps (no screenshots)
-          selectedLink = targetLinks[0];
+          selectedLink = candidateLink;
           
           decision = {
             selectedPanoId: selectedLink.pano,
@@ -341,7 +446,7 @@ export class ExplorationAgent {
           screenshots = [];
           
           // Capture screenshots with the current step number
-          for (const link of targetLinks) {
+          for (const link of cycleSafeLinks) {
             const heading = parseFloat(link.heading);
             await this.streetViewHeadless.setHeading(heading);
             
@@ -379,7 +484,7 @@ export class ExplorationAgent {
           decision = await this.ai.decideNextMove({
             currentPosition: this.currentPosition,
             screenshots,
-            links: targetLinks,  // Only pass links we have screenshots for
+            links: cycleSafeLinks,  // Only pass links we have screenshots for
             visitedPanos,
             stats: this.coverage.getStats(),
             stepNumber: currentStep,
@@ -403,12 +508,29 @@ export class ExplorationAgent {
             }
           }
           
-          selectedLink = links.find(l => l.pano === decision.selectedPanoId);
+          selectedLink = cycleSafeLinks.find(l => l.pano === decision.selectedPanoId) ||
+            links.find(l => l.pano === decision.selectedPanoId) ||
+            cycleSafeLinks[0];
+          if (selectedLink && decision.selectedPanoId !== selectedLink.pano) {
+            decision = {
+              ...decision,
+              selectedPanoId: selectedLink.pano,
+              reasoning: `${decision.reasoning} (fallback to available candidate)`
+            };
+          }
         }
       }
       
       if (!selectedLink) {
         throw new Error('Invalid panorama selection');
+      }
+
+      if (this.coverage.hasVisited(selectedLink.pano) && this.coverage.hasFrontier() && wouldExtendLoopTail(selectedLink.pano)) {
+        console.warn(`Selected move to ${selectedLink.pano} would extend a detected loop tail; forcing frontier teleport.`);
+        const teleportStep = await this.teleportToFrontier(currentStep);
+        if (teleportStep) {
+          return teleportStep;
+        }
       }
       
       // Log successful AI selection
@@ -454,7 +576,8 @@ export class ExplorationAgent {
       
       // Update coverage with new panorama's links for frontier tracking
       const newLinks = newPanoData.links || [];
-      this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
+      const visitInfo = this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
+      this.stepsSinceNewCell = visitInfo?.isNewCell ? 0 : this.stepsSinceNewCell + 1;
       
       // Process screenshots for all modes (exploration, pathfinding, single-link)
       let thumbnailUrls = [];
@@ -485,7 +608,7 @@ export class ExplorationAgent {
       const stepData = {
         stepCount: currentStep,
         reasoning: decision.reasoning,
-        panoId: selectedLink.pano,
+        panoId: this.currentPanoId,
         direction: parseFloat(selectedLink.heading),
         mode: this.mode,
         screenshots: thumbnailUrls,
@@ -532,7 +655,8 @@ export class ExplorationAgent {
       this.currentPosition = { lat: newPanoData.position.lat, lng: newPanoData.position.lng };
       this.lastNavigationHeading = null; // reset directional context
       const newLinks = newPanoData.links || [];
-      this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
+      const visitInfo = this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
+      this.stepsSinceNewCell = visitInfo?.isNewCell ? 0 : this.stepsSinceNewCell + 1;
 
       this.recentMovements.push({
         from: previousPanoId,
@@ -628,7 +752,8 @@ export class ExplorationAgent {
           this.coverage.addVisited(deadEndPanoId, deadEndPosition, []);
           
           // Add the recovered panorama to visited
-          this.coverage.addVisited(testPano.panoId, testPano.position, testPano.links);
+          const visitInfo = this.coverage.addVisited(testPano.panoId, testPano.position, testPano.links);
+          this.stepsSinceNewCell = visitInfo?.isNewCell ? 0 : this.stepsSinceNewCell + 1;
           
           return testPano;
         }
@@ -655,20 +780,16 @@ export class ExplorationAgent {
     let closestPosition = null;
     let closestDistance = Infinity;
 
-    for (const frontier of frontiers) {
-      const node = this.coverage.graph.get(frontier.panoId);
-      if (!node || typeof node.lat !== 'number' || typeof node.lng !== 'number') {
-        continue;
-      }
-
-      const candidatePosition = { lat: node.lat, lng: node.lng };
-      const distance = this.coverage.calculateDistance(this.currentPosition, candidatePosition);
-
-      if (distance < closestDistance) {
-        closestDistance = distance;
-        closestFrontier = frontier;
-        closestPosition = candidatePosition;
-      }
+    const discoveredClosest = selectClosestFrontierByDiscovery(
+      frontiers,
+      this.coverage.graph,
+      this.currentPosition,
+      this.coverage.calculateDistance.bind(this.coverage)
+    );
+    if (discoveredClosest) {
+      closestFrontier = discoveredClosest.frontier;
+      closestPosition = discoveredClosest.anchorPosition;
+      closestDistance = discoveredClosest.distanceMeters;
     }
 
     let closestPanoData = null;
@@ -727,7 +848,8 @@ export class ExplorationAgent {
       this.lastNavigationHeading = null;
 
       const newLinks = newPanoData.links || [];
-      this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
+      const visitInfo = this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
+      this.stepsSinceNewCell = visitInfo?.isNewCell ? 0 : this.stepsSinceNewCell + 1;
 
       const decisionReasoning = `Teleporting to unreachable frontier (${closestFrontier.panoId})`;
 
@@ -790,6 +912,7 @@ export class ExplorationAgent {
     this.lastNavigationHeading = null;  // Reset to null, not 0
     this.recentMovements = [];
     this.pathToFrontier = null;
+    this.stepsSinceNewCell = 0;
     
     // Generate new run ID for new exploration
     this.runId = uuidv4();

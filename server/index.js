@@ -146,6 +146,7 @@ const PORT = process.env.PORT || 3000;
 const STEP_INTERVAL = parseInt(process.env.STEP_INTERVAL_MS) || 5000;
 const DECISION_HISTORY_LIMIT = parseInt(process.env.DECISION_HISTORY_LIMIT) || 20;
 const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL) || 500; // Save every N steps
+const MAX_CONSECUTIVE_STEP_ERRORS = parseInt(process.env.MAX_CONSECUTIVE_STEP_ERRORS || '25', 10);
 const TILE_TAIL_POINTS = parseInt(process.env.TILE_RECENT_TAIL_POINTS) || 1500; // recent points kept as vector
 const TILE_MAX_CACHE = parseInt(process.env.TILE_MAX_CACHE) || 256;
 const TILE_VERSION_STEP = parseInt(process.env.TILE_VERSION_STEP) || 1000; // archive version increments every N archived points
@@ -190,6 +191,7 @@ class GlobalExploration {
     this.backgroundSaveInterval = 5 * 60 * 1000; // 5 minutes in milliseconds
     // Tile cache for archived path rendering
     this.tileCache = new Map(); // key: `${z}/${x}/${y}@${archivedCount}` -> Buffer
+    this.consecutiveStepErrors = 0;
   }
 
   createPersistentLogger() {
@@ -286,6 +288,7 @@ class GlobalExploration {
       this.agent.currentPosition = saveData.currentState.position;
       this.agent.currentHeading = saveData.currentState.heading || 0;
       this.agent.mode = saveData.currentState.mode || 'exploration';
+      this.agent.stepsSinceNewCell = 0;
       
       // Update screenshot service with restored runId
       const { ScreenshotService } = await import('./utils/screenshot.js');
@@ -299,6 +302,57 @@ class GlobalExploration {
       if (this.agent.streetViewHeadless && this.agent.currentPanoId) {
         await this.agent.streetViewHeadless.navigateToPano(this.agent.currentPanoId);
       }
+
+      // Validate/repair the loaded panorama before broadcasting to clients.
+      let currentPano = null;
+      const candidatePanoIds = [];
+      if (this.agent.currentPanoId) {
+        candidatePanoIds.push(this.agent.currentPanoId);
+      }
+      if (saveData.graph && this.agent.currentPosition) {
+        const sortedGraphPanos = Object.entries(saveData.graph)
+          .filter(([panoId]) => panoId !== this.agent.currentPanoId)
+          .map(([panoId, node]) => ({
+            panoId,
+            distance: this.agent.coverage.calculateDistance(
+              this.agent.currentPosition,
+              { lat: node.lat, lng: node.lng }
+            )
+          }))
+          .sort((a, b) => a.distance - b.distance)
+          .slice(0, 50)
+          .map(item => item.panoId);
+        candidatePanoIds.push(...sortedGraphPanos);
+      }
+
+      for (const panoId of candidatePanoIds) {
+        try {
+          currentPano = await this.agent.streetViewHeadless.getPanorama(panoId);
+          break;
+        } catch {
+          // Try next candidate pano
+        }
+      }
+
+      // Last-resort fallback: query by position.
+      if (!currentPano && this.agent.currentPosition) {
+        try {
+          currentPano = await this.agent.streetViewHeadless.getPanorama(this.agent.currentPosition);
+        } catch {
+          // Keep null and fail below.
+        }
+      }
+
+      if (!currentPano) {
+        throw new Error('Failed to restore a valid panorama from loaded save state');
+      }
+
+      await this.agent.streetViewHeadless.navigateToPano(currentPano.panoId);
+      this.agent.currentPanoId = currentPano.panoId;
+      this.agent.currentPosition = {
+        lat: currentPano.position.lat,
+        lng: currentPano.position.lng
+      };
       
       // Reconstruct path from graph for minimap (all nodes in graph are visited)
       const originalPath = Array.from(this.agent.coverage.graph.entries())
@@ -332,7 +386,6 @@ class GlobalExploration {
       console.log(`State loaded: ${this.agent.stepCount} steps, ${this.agent.coverage.visitedPanos.size} locations visited`);
       
       // Check if we loaded into a dead-end panorama
-      const currentPano = await this.agent.streetViewHeadless.getCurrentPanorama();
       if (!currentPano.links || currentPano.links.length === 0) {
         console.warn('⚠️ Loaded into a dead-end panorama. Attempting to find a valid starting point...');
         
@@ -416,6 +469,7 @@ class GlobalExploration {
       
       try {
         const stepData = await this.agent.exploreStep();
+        this.consecutiveStepErrors = 0;
         this.addToHistory(stepData);
         this.cacheScreenshots(stepData);
         
@@ -427,8 +481,21 @@ class GlobalExploration {
           this.explorationInterval = setTimeout(runExplorationStep, STEP_INTERVAL);
         }
       } catch (error) {
+        this.consecutiveStepErrors += 1;
         console.error('Exploration step error:', error);
         this.broadcast('error', { message: error.message });
+
+        if (this.consecutiveStepErrors >= MAX_CONSECUTIVE_STEP_ERRORS) {
+          console.error(
+            `Stopping exploration after ${this.consecutiveStepErrors} consecutive step errors ` +
+            `(threshold ${MAX_CONSECUTIVE_STEP_ERRORS}).`
+          );
+          await this.stopExploration();
+          this.broadcast('error', {
+            message: `Exploration halted after repeated errors (${this.consecutiveStepErrors}).`
+          });
+          return;
+        }
         
         // Continue exploration even after errors
         if (this.isExploring) {
@@ -448,6 +515,7 @@ class GlobalExploration {
       this.explorationInterval = null;
     }
     this.isExploring = false;
+    this.consecutiveStepErrors = 0;
     
     // Clear background save timer
     if (this.backgroundSaveTimer) {

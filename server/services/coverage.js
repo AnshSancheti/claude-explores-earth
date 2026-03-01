@@ -1,6 +1,7 @@
 export class CoverageTracker {
   constructor() {
     this.visitedPanos = new Set();
+    this.visitedCells = new Set();
     this.path = [];
     this.totalDistance = 0;
     this.lastPosition = null;
@@ -14,10 +15,19 @@ export class CoverageTracker {
     // Graph structure with full node information
     // panoId -> { lat, lng, visited, neighbors: Set, timestamp }
     this.graph = new Map();
+
+    // Spatial de-duplication to detect alias loops (different pano IDs, same spot)
+    this.cellSizeMeters = parseFloat(process.env.LOOP_CELL_SIZE_M || '3');
   }
 
   addVisited(panoId, position, links = []) {
+    const isNewPano = !this.visitedPanos.has(panoId);
     this.visitedPanos.add(panoId);
+
+    const cellKey = this.positionToCell(position);
+    const isNewCell = !this.visitedCells.has(cellKey);
+    this.visitedCells.add(cellKey);
+
     this.path.push({ ...position, panoId, timestamp: Date.now() });
     
     // Update visit count
@@ -53,8 +63,10 @@ export class CoverageTracker {
     links.forEach(link => {
       // Add to current node's neighbors
       node.neighbors.add(link.pano);
-      
-      // If neighbor is already visited, add reverse connection
+
+      // Intentionally mirror to treat Street View pano graph as logically bidirectional.
+      // Google's link metadata is not always reciprocal (A->B may exist while B->A is missing).
+      // This helps pathfinding reason over local pano splits/aliases.
       const neighborNode = this.graph.get(link.pano);
       if (neighborNode) {
         neighborNode.neighbors.add(panoId);
@@ -76,6 +88,7 @@ export class CoverageTracker {
     }
     
     this.lastPosition = position;
+    return { isNewPano, isNewCell, cellKey };
   }
 
   hasVisited(panoId) {
@@ -118,6 +131,104 @@ export class CoverageTracker {
     const recentOccurrences = this.recentHistory.filter(id => id === panoId).length;
     return recentOccurrences >= 1;
   }
+
+  positionToCell(position) {
+    if (!position || typeof position.lat !== 'number' || typeof position.lng !== 'number') {
+      return 'unknown';
+    }
+
+    const metersPerDegLat = 111320;
+    const metersPerDegLng = metersPerDegLat * Math.cos((position.lat * Math.PI) / 180);
+    const x = position.lng * metersPerDegLng;
+    const y = position.lat * metersPerDegLat;
+    const cellX = Math.floor(x / this.cellSizeMeters);
+    const cellY = Math.floor(y / this.cellSizeMeters);
+    return `${cellX}:${cellY}`;
+  }
+
+  /**
+   * Detect short alternating oscillation patterns like A->B->A->B->A
+   * and whether taking nextPanoId would continue that pattern.
+   * @param {string} nextPanoId
+   * @param {number} minNodes - minimum alternating tail length including next node
+   * @returns {boolean}
+   */
+  isAlternatingLoop(nextPanoId, minNodes = 6) {
+    if (!nextPanoId) return false;
+    const nodes = [...this.recentHistory, nextPanoId];
+    if (nodes.length < minNodes) return false;
+
+    const n = nodes.length;
+    const a = nodes[n - 2]; // current pano
+    const b = nodes[n - 1]; // candidate next pano
+    if (!a || !b || a === b) return false;
+
+    // Walk backwards from [..., a, b] and ensure strict alternation.
+    let alternatingCount = 2;
+    for (let i = n - 3; i >= 0; i--) {
+      const expected = (alternatingCount % 2 === 0) ? b : a;
+      if (nodes[i] !== expected) break;
+      alternatingCount++;
+    }
+
+    return alternatingCount >= minNodes;
+  }
+
+  /**
+   * Detect whether appending nextPanoId would continue a periodic loop tail.
+   * Covers patterns beyond A<->B, such as A->B->C->A->B->C.
+   * @param {string} nextPanoId
+   * @param {object} options
+   * @param {number} options.minPeriod
+   * @param {number} options.maxPeriod
+   * @param {number} options.minRepeats
+   * @returns {boolean}
+   */
+  wouldExtendRepeatingCycle(nextPanoId, options = {}) {
+    if (!nextPanoId) return false;
+
+    const parseOr = (value, fallback) => {
+      const parsed = parseInt(value, 10);
+      return Number.isFinite(parsed) ? parsed : fallback;
+    };
+
+    const minPeriod = Math.max(2, parseOr(options.minPeriod ?? 2, 2));
+    const maxPeriod = Math.max(minPeriod, parseOr(options.maxPeriod ?? 6, 6));
+    const minRepeats = Math.max(2, parseOr(options.minRepeats ?? 3, 3));
+
+    const nodes = [...this.recentHistory, nextPanoId];
+    const n = nodes.length;
+    if (n < minPeriod * minRepeats) return false;
+
+    const cappedMaxPeriod = Math.min(maxPeriod, Math.floor(n / minRepeats));
+
+    for (let period = minPeriod; period <= cappedMaxPeriod; period++) {
+      const maxRepeats = Math.floor(n / period);
+
+      for (let repeats = minRepeats; repeats <= maxRepeats; repeats++) {
+        const tailLength = period * repeats;
+        const start = n - tailLength;
+        let periodic = true;
+
+        for (let i = start + period; i < n; i++) {
+          if (nodes[i] !== nodes[i - period]) {
+            periodic = false;
+            break;
+          }
+        }
+
+        if (!periodic) continue;
+
+        // Ignore degenerate same-node "cycles" like A->A->A.
+        const periodTail = nodes.slice(n - period);
+        if (new Set(periodTail).size < 2) continue;
+
+        return true;
+      }
+    }
+
+    return false;
+  }
   
   getVisitCount(panoId) {
     return this.visitCounts.get(panoId) || 0;
@@ -140,6 +251,7 @@ export class CoverageTracker {
 
   reset() {
     this.visitedPanos.clear();
+    this.visitedCells.clear();
     this.path = [];
     this.totalDistance = 0;
     this.lastPosition = null;
@@ -181,6 +293,7 @@ export class CoverageTracker {
         
         // All nodes in graph are visited
         this.visitedPanos.add(panoId);
+        this.visitedCells.add(this.positionToCell({ lat: node.lat, lng: node.lng }));
       }
       
       // Rebuild frontier by finding neighbors not in graph

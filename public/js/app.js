@@ -106,7 +106,6 @@ class ExplorationApp {
       
       this.isExploring = true;
       this.uiManager.setExplorationState(true);
-      this.uiManager.updateStep(0);
     });
 
     this.socket.on('position-update', (data) => {
