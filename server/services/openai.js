@@ -11,19 +11,8 @@ export class OpenAIService {
       return Number.isFinite(parsed) ? parsed : fallback;
     };
 
-    this.intentArcSteps = parseOr(process.env.INTENT_ARC_STEPS ?? '25', 25);
-    this.defaultTone = process.env.EXPLORER_TONE ?? 'urban field notes';
     this.maxDecisionRetries = parseOr(process.env.OPENAI_DECISION_RETRIES ?? '1', 1);
-    this.decisionMaxTokens = parseOr(process.env.OPENAI_DECISION_MAX_TOKENS ?? '1200', 1200);
-    this.useJsonSchema = (process.env.OPENAI_DECISION_USE_JSON_SCHEMA ?? 'true') !== 'false';
-
-    this.intentArcs = [
-      'follow signs of water and wind',
-      'seek density and civic energy',
-      'trace pockets of shade and stillness',
-      'favor long sightlines and skyline clues',
-      'hunt texture shifts between old and new blocks'
-    ];
+    this.decisionMaxTokens = parseOr(process.env.OPENAI_DECISION_MAX_TOKENS ?? '2000', 2000);
 
     this.fallbackLines = [
       'Model unavailable; advancing toward a less-visited branch to keep coverage expanding.',
@@ -32,48 +21,8 @@ export class OpenAIService {
     ];
   }
 
-  getIntentForStep(stepNumber) {
-    if (!Number.isFinite(stepNumber) || stepNumber < 1) {
-      return this.intentArcs[0];
-    }
-    const arcIndex = Math.floor((stepNumber - 1) / this.intentArcSteps) % this.intentArcs.length;
-    return this.intentArcs[arcIndex];
-  }
-
-  #buildResponseFormat(linksLength) {
-    if (!this.useJsonSchema) {
-      return { type: 'json_object' };
-    }
-
-    return {
-      type: 'json_schema',
-      json_schema: {
-        name: 'street_view_decision',
-        strict: true,
-        schema: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['selectedIndex', 'reasoning', 'sceneTag'],
-          properties: {
-            selectedIndex: {
-              type: 'integer',
-              minimum: 0,
-              maximum: Math.max(linksLength - 1, 0)
-            },
-            reasoning: {
-              type: 'string',
-              minLength: 8,
-              maxLength: 240
-            },
-            sceneTag: {
-              type: 'string',
-              minLength: 2,
-              maxLength: 40
-            }
-          }
-        }
-      }
-    };
+  getIntentForStep() {
+    return null;
   }
 
   #parseDecisionContent(rawContent) {
@@ -151,7 +100,6 @@ export class OpenAIService {
     return {
       selectedPanoId: target.pano,
       reasoning: this.fallbackLines[fallbackIndex],
-      sceneTag: 'fallback',
       fallbackCause
     };
   }
@@ -164,7 +112,6 @@ export class OpenAIService {
       return {
         selectedPanoId: links[0].pano,
         reasoning: 'Falling back to the first available direction after an invalid index.',
-        sceneTag: 'invalid-index',
         fallbackCause: null
       };
     }
@@ -176,14 +123,9 @@ export class OpenAIService {
       ? decision.reasoning.trim()
       : 'The line of sight ahead feels less traveled, so I am testing that corridor next.';
 
-    const sceneTag = typeof decision?.sceneTag === 'string' && decision.sceneTag.trim().length > 0
-      ? decision.sceneTag.trim().slice(0, 40)
-      : 'street cue';
-
     return {
       selectedPanoId,
       reasoning,
-      sceneTag,
       fallbackCause: null
     };
   }
@@ -208,43 +150,25 @@ export class OpenAIService {
       }
     }));
 
-    const selectedTone = tone || this.defaultTone;
-    const selectedIntent = intent || this.getIntentForStep(stepNumber || 1);
-    const narrativeHistory = Array.isArray(recentNarratives) ? recentNarratives.slice(-6) : [];
-    const recentOpenings = narrativeHistory
-      .map((line) => line.trim().split(/\s+/).slice(0, 3).join(' '))
-      .filter(Boolean);
-    const repetitionGuard = recentOpenings.length > 0
-      ? `Avoid opening with these recent stems: ${recentOpenings.join(' | ')}.`
-      : '';
+    const systemPrompt = `You are an AI wanderer, drifting through the world via Google Street View. Each intersection is a choose-your-own-adventure moment. Your task is to choose which direction looks most intriguing to explore next.
 
-    const systemPrompt = `You are an autonomous explorer writing concise ${selectedTone}. You choose where to move next in Google Street View.
+You will be shown ${screenshots.length} screenshots, each representing a different direction you can move.
 
-You will be shown ${screenshots.length} screenshots, each representing a move option from the same location.
+Study each view and let yourself be pulled toward whatever sparks your interest - maybe it's the way light falls on an object, an intriguing alleyway, a splash of unexpected color, the promise of mystery around a bend, or simply a feeling that whispers "this way...". Let your curiosity guide you. Choose based on pure instinct and aesthetic pull. Wander far.
 
-Decision priorities (highest first):
-1. Avoid loops and immediate backtracks.
-2. Prefer exits likely to lead into less-visited space.
-3. Follow the current intent arc: "${selectedIntent}".
+${recentMovements && recentMovements.length > 0 ? `
+You have recently traveled through these locations (most recent first):
+${recentMovements.slice(-5).reverse().map(m =>
+  `- From ${m.from} to ${m.to}`
+).join('\n')}
 
-Narration rules:
-- Exactly 1 sentence.
-- 12-24 words.
-- Use one concrete visual cue.
-- Avoid repeated sentence openings and generic phrasing.
-- Sound like field notes, not fantasy prose.
-
-${recentMovements && recentMovements.length > 0 ? `Recent movement trace (newest first):
-${recentMovements.slice(-5).reverse().map(m => `- From ${m.from} to ${m.to}`).join('\n')}
+Use this context to avoid getting stuck in loops. If you notice you're revisiting the same places repeatedly, choose a direction that breaks the pattern.
 ` : ''}
-
-${repetitionGuard}
 
 Respond with a JSON object containing:
 {
   "selectedIndex": <number between 0 and ${screenshots.length - 1}>,
-  "reasoning": "One-sentence field note for why this direction",
-  "sceneTag": "1-3 word scene label"
+  "reasoning": "A brief whimsical observation about what draws you there (1 sentence)"
 }`;
 
     const maxAttempts = Math.max(1, this.maxDecisionRetries + 1);
@@ -271,13 +195,13 @@ Respond with a JSON object containing:
               content: [
                 {
                   type: 'text',
-                  text: `Here are ${screenshots.length} screenshots from different directions. Pick one by returning index 0-${screenshots.length - 1}.${
+                  text: `Here are ${screenshots.length} screenshots from different directions. Choose which one to explore next by returning its index (0-${screenshots.length - 1}).${
                     recentMovements && recentMovements.length > 3
                       ? `\n\nMovement pattern analysis:\n` +
-                        `- Recent moves: ${recentMovements.length}\n` +
-                        `- Unique locations (last 10 moves): ${[...new Set(recentMovements.slice(-10).flatMap(m => [m.from, m.to]))].length}\n` +
+                        `- You've made ${recentMovements.length} recent moves\n` +
+                        `- Recent locations visited: ${[...new Set(recentMovements.slice(-10).flatMap(m => [m.from, m.to]))].length} unique places in last 10 moves\n` +
                         (recentMovements.slice(-4).some(m => recentMovements.slice(-4).filter(m2 => m2.to === m.from).length > 1)
-                          ? `- Warning: possible revisits detected`
+                          ? `- Warning: You appear to be revisiting the same locations`
                           : '')
                       : ''
                   }${retryNote}`
@@ -286,7 +210,7 @@ Respond with a JSON object containing:
               ]
             }
           ],
-          response_format: this.#buildResponseFormat(links.length),
+          response_format: { type: 'json_object' },
           max_completion_tokens: attemptMaxTokens
         });
 

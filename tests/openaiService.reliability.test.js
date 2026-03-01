@@ -48,7 +48,7 @@ test('retries once after parse failure and succeeds without fallback', async () 
 
     return {
       usage: { prompt_tokens: 100, completion_tokens: 30, total_tokens: 130 },
-      choices: [{ message: { content: JSON.stringify({ selectedIndex: 2, reasoning: 'The brighter corridor looks less traveled and visually open.', sceneTag: 'bright corridor' }) } }]
+      choices: [{ message: { content: JSON.stringify({ selectedIndex: 2, reasoning: 'The brighter corridor looks less traveled and visually open.' }) } }]
     };
   });
 
@@ -56,7 +56,6 @@ test('retries once after parse failure and succeeds without fallback', async () 
 
   assert.equal(calls, 2);
   assert.equal(result.selectedPanoId, 'C');
-  assert.equal(result.sceneTag, 'bright corridor');
   assert.equal(result.fallbackCause, null);
 });
 
@@ -73,7 +72,6 @@ test('returns fallback with parse_error_after_retries when JSON stays malformed'
   const result = await service.decideNextMove(makeInput({ stepNumber: 88 }));
 
   assert.equal(calls, 2);
-  assert.equal(result.sceneTag, 'fallback');
   assert.equal(result.fallbackCause, 'parse_error_after_retries');
   assert.equal(result.selectedPanoId, 'A');
   assert.match(result.reasoning, /Model unavailable;/);
@@ -92,7 +90,7 @@ test('retries when JSON has braces but invalid syntax', async () => {
 
     return {
       usage: { prompt_tokens: 90, completion_tokens: 20, total_tokens: 110 },
-      choices: [{ message: { content: JSON.stringify({ selectedIndex: 1, reasoning: 'The corner storefront and side-street depth suggest stronger branching just ahead.', sceneTag: 'corner storefront' }) } }]
+      choices: [{ message: { content: JSON.stringify({ selectedIndex: 1, reasoning: 'The corner storefront and side-street depth suggest stronger branching just ahead.' }) } }]
     };
   });
 
@@ -100,7 +98,6 @@ test('retries when JSON has braces but invalid syntax', async () => {
 
   assert.equal(calls, 2);
   assert.equal(result.selectedPanoId, 'B');
-  assert.equal(result.sceneTag, 'corner storefront');
   assert.equal(result.fallbackCause, null);
 });
 
@@ -122,14 +119,14 @@ test('blank-content retry escalates completion token budget', async () => {
     }
     return {
       usage: { prompt_tokens: 90, completion_tokens: 20, total_tokens: 110 },
-      choices: [{ message: { content: JSON.stringify({ selectedIndex: 0, reasoning: 'Crosswalk activity and signage suggest an active route with fresh branches ahead.', sceneTag: 'busy crosswalk' }) } }]
+      choices: [{ message: { content: JSON.stringify({ selectedIndex: 0, reasoning: 'Crosswalk activity and signage suggest an active route with fresh branches ahead.' }) } }]
     };
   });
 
   const result = await service.decideNextMove(makeInput({ stepNumber: 51 }));
 
   assert.equal(calls, 2);
-  assert.ok(requestedTokens[0] >= 600, 'initial token budget should be practical for GPT-5 reasoning output');
+  assert.ok(requestedTokens[0] >= 2000, 'initial token budget should be practical for GPT-5 reasoning output');
   assert.ok(requestedTokens[1] > requestedTokens[0], 'retry should raise token budget after blank output');
   assert.equal(result.selectedPanoId, 'A');
   assert.equal(result.fallbackCause, null);
@@ -147,7 +144,7 @@ test('retries retryable API error and succeeds', async () => {
 
     return {
       usage: { prompt_tokens: 90, completion_tokens: 20, total_tokens: 110 },
-      choices: [{ message: { content: JSON.stringify({ selectedIndex: 0, reasoning: 'Crosswalk activity and signage suggest an active route with fresh branches ahead.', sceneTag: 'busy crosswalk' }) } }]
+      choices: [{ message: { content: JSON.stringify({ selectedIndex: 0, reasoning: 'Crosswalk activity and signage suggest an active route with fresh branches ahead.' }) } }]
     };
   });
 
@@ -155,7 +152,6 @@ test('retries retryable API error and succeeds', async () => {
 
   assert.equal(calls, 2);
   assert.equal(result.selectedPanoId, 'A');
-  assert.equal(result.sceneTag, 'busy crosswalk');
   assert.equal(result.fallbackCause, null);
 });
 
@@ -171,7 +167,6 @@ test('non-retryable API error falls back with explicit cause', async () => {
   const result = await service.decideNextMove(makeInput({ stepNumber: 64 }));
 
   assert.equal(calls, 1);
-  assert.equal(result.sceneTag, 'fallback');
   assert.equal(result.fallbackCause, 'api_error_401');
   assert.equal(result.selectedPanoId, 'A');
 });
