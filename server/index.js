@@ -19,6 +19,7 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ROOT_DIR = join(__dirname, '..');
+const DATA_DIR = process.env.NODE_ENV === 'production' ? '/data' : join(ROOT_DIR, 'runs');
 
 const app = express();
 
@@ -195,7 +196,7 @@ class GlobalExploration {
   }
 
   createPersistentLogger() {
-    const logsDir = path.join(ROOT_DIR, 'runs', 'persistent_logs');
+    const logsDir = path.join(DATA_DIR, 'persistent_logs');
     if (!fs.existsSync(logsDir)) {
       fs.mkdirSync(logsDir, { recursive: true });
     }
@@ -214,7 +215,7 @@ class GlobalExploration {
       return;
     }
     
-    const saveDir = path.join(ROOT_DIR, 'runs', 'saves');
+    const saveDir = path.join(DATA_DIR, 'saves');
     if (!fs.existsSync(saveDir)) {
       fs.mkdirSync(saveDir, { recursive: true });
     }
@@ -258,7 +259,7 @@ class GlobalExploration {
   
   // Load state from save file
   async loadState() {
-    const savePath = path.join(ROOT_DIR, 'runs', 'saves', 'current-run.json');
+    const savePath = path.join(DATA_DIR, 'saves', 'current-run.json');
     
     if (!fs.existsSync(savePath)) {
       console.log('📄 No save file found at:', savePath);
@@ -1027,7 +1028,7 @@ io.on('connection', (socket) => {
 
 // Listen on all network interfaces (0.0.0.0) for production deployments
 const HOST = '0.0.0.0'; // Always bind to 0.0.0.0 for containerized environments
-server.listen(PORT, HOST, () => {
+server.listen(PORT, HOST, async () => {
   console.log(`🚀 Server listening on ${HOST}:${PORT}`);
   console.log(`📍 Starting location: ${START_LOCATION.lat}, ${START_LOCATION.lng}`);
   console.log(`⏱️  Step interval: ${STEP_INTERVAL}ms`);
@@ -1039,6 +1040,33 @@ server.listen(PORT, HOST, () => {
   console.log(`🔑 Google Maps API: ${process.env.GOOGLE_MAPS_API_KEY ? 'Configured' : 'NOT CONFIGURED'}`);
   console.log(`🔑 OpenAI API: ${process.env.OPENAI_API_KEY ? 'Configured' : 'NOT CONFIGURED'}`);
   console.log(`🔑 Admin Password: ${process.env.CONTROL_PASSWORD ? 'Configured' : 'NOT CONFIGURED'}`);
+  console.log(`💾 Data directory: ${DATA_DIR}`);
+
+  // Auto-restore and auto-start in production
+  if (process.env.NODE_ENV === 'production') {
+    const autoSavePath = path.join(DATA_DIR, 'saves', 'current-run.json');
+    if (fs.existsSync(autoSavePath)) {
+      console.log('🔄 Found save file, auto-restoring...');
+      try {
+        const result = await globalExploration.loadState();
+        if (result.error) {
+          console.error('❌ Auto-restore failed:', result.error);
+        } else {
+          console.log(`✅ Auto-restored: ${result.stepCount} steps, ${result.locationsVisited} locations`);
+          const startResult = await globalExploration.startExploration();
+          if (startResult.error) {
+            console.error('❌ Auto-start failed:', startResult.error);
+          } else {
+            console.log('▶️  Exploration auto-started');
+          }
+        }
+      } catch (error) {
+        console.error('❌ Auto-restore error:', error);
+      }
+    } else {
+      console.log('📄 No save file found at', autoSavePath, '— waiting for manual start');
+    }
+  }
 });
 
 // Graceful shutdown handling

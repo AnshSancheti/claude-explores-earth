@@ -117,12 +117,15 @@ class MapManager {
         this.addResetButton();
         this.mapLoaded = true;
         
-        // Process any pending position updates
+        // Process any pending position updates as a single batch
         if (this.pendingUpdates.length > 0) {
-          console.log(`Processing ${this.pendingUpdates.length} pending position updates`);
-          this.pendingUpdates.forEach(position => {
-            this.#doUpdatePosition(position);
-          });
+          console.log(`Processing ${this.pendingUpdates.length} pending position updates (batched)`);
+          this.loadFullPath(this.pendingUpdates);
+          // Move current marker to the last position
+          const last = this.pendingUpdates[this.pendingUpdates.length - 1];
+          if (last && this.currentMarker) {
+            this.currentMarker.setLngLat([last.lng, last.lat]);
+          }
           this.pendingUpdates = [];
         }
         
