@@ -4,7 +4,7 @@ import { CoverageTracker } from '../services/coverage.js';
 import { Pathfinder } from '../services/pathfinder.js';
 import { ScreenshotService } from '../utils/screenshot.js';
 import { maybeSignPath } from '../utils/urlSigner.js';
-import { projectPosition } from '../utils/geoUtils.js';
+import { projectPosition, calculateBearing } from '../utils/geoUtils.js';
 import { unlink } from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -226,35 +226,63 @@ export class ExplorationAgent {
         }
       }
 
-      // --- Fast path: if we have a planned route, skip getCurrentPanorama entirely ---
-      // Validate the hop is a known neighbor of our current pano in the graph before
-      // trusting it. This guards against stale routes after refresh/canonicalization.
+      // --- Fast path: skip getCurrentPanorama for auto steps ---
+      // Uses graph data to validate hops, avoiding 2 expensive Puppeteer roundtrips (~1s).
+      // Applies to: (1) planned-route following, (2) single-link corridor walking.
+      const currentNode = this.coverage.graph.get(this.currentPanoId);
+      let fastPathTarget = null;
+      let fastPathEvent = null;
+      let fastPathReason = null;
+
       if (this.pathToFrontier && this.pathToFrontier.length > 0) {
+        // Case 1: Following a planned route
         const nextHop = this.pathToFrontier[0];
-        const currentNode = this.coverage.graph.get(this.currentPanoId);
-        const hopIsNeighbor = currentNode && currentNode.neighbors.has(nextHop);
-        if (!hopIsNeighbor) {
+        if (currentNode && currentNode.neighbors.has(nextHop)) {
+          fastPathTarget = nextHop;
+          fastPathEvent = 'autopilot-pathfinding';
+        } else {
           console.log(`Fast-path skipped: ${nextHop} is not a neighbor of ${this.currentPanoId} in graph. Falling back to full step.`);
           this.pathToFrontier = null;
         }
-        if (this.pathToFrontier) try {
-          const newPanoData = await this.streetViewHeadless.navigateAndGetPanorama(nextHop);
-          this.pathToFrontier.shift();
+      } else if (currentNode) {
+        // Case 2: Single unvisited neighbor = corridor, no decision needed
+        const unvisited = [];
+        for (const n of currentNode.neighbors) {
+          if (!this.coverage.hasVisited(n)) unvisited.push(n);
+        }
+        if (unvisited.length === 1) {
+          fastPathTarget = unvisited[0];
+          fastPathEvent = 'autopilot-single-link';
+          fastPathReason = 'Autopilot: single available path, advancing corridor';
+        }
+      }
+
+      if (fastPathTarget) {
+        try {
+          const newPanoData = await this.streetViewHeadless.navigateAndGetPanorama(fastPathTarget);
+          if (this.pathToFrontier) this.pathToFrontier.shift();
 
           const previousPanoId = this.currentPanoId;
           const previousPosition = { ...this.currentPosition };
           this.currentPanoId = newPanoData.panoId;
           this.currentPosition = { lat: newPanoData.position.lat, lng: newPanoData.position.lng };
 
+          // Point the headless view in the direction of travel so screenshots
+          // are correct when we eventually reach a branch point
+          const travelHeading = calculateBearing(previousPosition, this.currentPosition);
+          this.lastNavigationHeading = travelHeading;
+          // Fire-and-forget: don't await the 100ms settle since we're not screenshotting
+          this.streetViewHeadless.setHeading(travelHeading);
+
           const newLinks = newPanoData.links || [];
           const visitInfo = this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
           this.stepsSinceNewCell = visitInfo?.isNewCell ? 0 : this.stepsSinceNewCell + 1;
 
-          const remainingPathSteps = this.pathToFrontier.length;
-          const actionReason = `Autopilot: following planned frontier route (${remainingPathSteps} step${remainingPathSteps === 1 ? '' : 's'} remaining)`;
+          const remainingPathSteps = this.pathToFrontier ? this.pathToFrontier.length : null;
+          const actionReason = fastPathReason || `Autopilot: following planned frontier route (${remainingPathSteps} step${remainingPathSteps === 1 ? '' : 's'} remaining)`;
           const diaryLine = this.buildAutopilotDiaryLine({
             stepNumber: currentStep,
-            eventType: 'autopilot-pathfinding',
+            eventType: fastPathEvent,
             remainingPathSteps,
             locationEntered: !!visitInfo?.isNewCell
           });
@@ -275,7 +303,7 @@ export class ExplorationAgent {
             reasoning: diaryLine || actionReason,
             actionReason,
             diaryLine,
-            eventType: 'autopilot-pathfinding',
+            eventType: fastPathEvent,
             autoMove: true,
             fallbackCause: null,
             sceneTag: null,
@@ -296,17 +324,17 @@ export class ExplorationAgent {
             to: this.currentPanoId,
             decision: diaryLine || actionReason,
             actionReason,
-            eventType: 'autopilot-pathfinding',
+            eventType: fastPathEvent,
             autoMove: true,
             fallbackCause: null,
             position: this.currentPosition,
             stats: this.coverage.getStats()
           });
-          console.log(`Fast-path step ${currentStep}: ${previousPanoId} -> ${this.currentPanoId} (${remainingPathSteps} hops left)`);
+          console.log(`Fast-path step ${currentStep} (${fastPathEvent}): ${previousPanoId} -> ${this.currentPanoId}`);
           return stepData;
         } catch (err) {
           // Navigation failed; invalidate plan and fall through to normal flow
-          console.warn(`Fast-path navigation to ${nextHop} failed: ${err.message}. Falling back to full step.`);
+          console.warn(`Fast-path navigation to ${fastPathTarget} failed: ${err.message}. Falling back to full step.`);
           this.pathToFrontier = null;
         }
       }
