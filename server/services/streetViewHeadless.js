@@ -184,7 +184,7 @@ export class StreetViewHeadless {
                 // If we changed away from start, allow a short settle period for alias transitions.
                 if (currentPanoId !== startPanoId) {
                   if (settleTimer) clearTimeout(settleTimer);
-                  settleTimer = setTimeout(() => finish('alias-settled'), 250);
+                  settleTimer = setTimeout(() => finish('alias-settled'), 100);
                 }
               });
 
@@ -192,7 +192,7 @@ export class StreetViewHeadless {
               panorama.setPano(panoId);
             });
           };
-          
+
           window.setHeading = (heading) => {
             panorama.setPov({
               heading: heading,
@@ -293,12 +293,32 @@ export class StreetViewHeadless {
     return navResult;
   }
 
+  /**
+   * Navigate to a pano and return full panorama data in one operation.
+   * Saves a roundtrip vs navigateToPano() + getCurrentPanorama().
+   */
+  async navigateAndGetPanorama(panoId) {
+    await this.navigateToPano(panoId);
+    const settledId = this.currentPanoId;
+    let result;
+    try {
+      result = await this.getPanorama(settledId);
+    } catch (err) {
+      // Settled pano ID didn't resolve (alias issue); fall back to full getCurrentPanorama
+      console.warn(`navigateAndGetPanorama: getPanorama(${settledId}) failed, falling back: ${err.message}`);
+      result = await this.getCurrentPanorama();
+    }
+    // Keep headless state in sync with the canonical pano ID returned by Google
+    this.currentPanoId = result.panoId;
+    return result;
+  }
+
   async setHeading(heading) {
     await this.page.evaluate((h) => {
       window.setHeading(h);
     }, heading);
-    
-    await new Promise(resolve => setTimeout(resolve, 500));
+
+    await new Promise(resolve => setTimeout(resolve, 100));
   }
 
   async getScreenshot() {
@@ -417,7 +437,7 @@ export class StreetViewHeadless {
 
                   if (currentPanoId !== startPanoId) {
                     if (settleTimer) clearTimeout(settleTimer);
-                    settleTimer = setTimeout(() => finish('alias-settled'), 250);
+                    settleTimer = setTimeout(() => finish('alias-settled'), 100);
                   }
                 });
 
@@ -425,7 +445,7 @@ export class StreetViewHeadless {
                 panorama.setPano(panoId);
               });
             };
-            
+
             window.getCurrentPano = function() {
               return panorama.getPano();
             };

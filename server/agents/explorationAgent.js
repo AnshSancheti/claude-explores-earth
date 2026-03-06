@@ -5,6 +5,7 @@ import { Pathfinder } from '../services/pathfinder.js';
 import { ScreenshotService } from '../utils/screenshot.js';
 import { maybeSignPath } from '../utils/urlSigner.js';
 import { projectPosition } from '../utils/geoUtils.js';
+import { unlink } from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 
 export function selectClosestFrontierByDiscovery(frontiers, graph, currentPosition, calculateDistance) {
@@ -214,7 +215,7 @@ export class ExplorationAgent {
       // Check if Puppeteer needs refresh to prevent memory buildup
       if (this.streetViewHeadless.shouldRefresh(currentStep)) {
         console.log(`📊 Memory check at step ${currentStep}: RSS=${(process.memoryUsage().rss / 1024 / 1024).toFixed(1)}MB, Heap=${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(1)}MB`);
-        
+
         // Use page refresh for regular intervals, browser restart for major milestones
         if (currentStep % 1000 === 0) {
           // Full browser restart every 1000 steps
@@ -224,22 +225,108 @@ export class ExplorationAgent {
           await this.streetViewHeadless.refreshPage();
         }
       }
-    
+
+      // --- Fast path: if we have a planned route, skip getCurrentPanorama entirely ---
+      // Validate the hop is a known neighbor of our current pano in the graph before
+      // trusting it. This guards against stale routes after refresh/canonicalization.
+      if (this.pathToFrontier && this.pathToFrontier.length > 0) {
+        const nextHop = this.pathToFrontier[0];
+        const currentNode = this.coverage.graph.get(this.currentPanoId);
+        const hopIsNeighbor = currentNode && currentNode.neighbors.has(nextHop);
+        if (!hopIsNeighbor) {
+          console.log(`Fast-path skipped: ${nextHop} is not a neighbor of ${this.currentPanoId} in graph. Falling back to full step.`);
+          this.pathToFrontier = null;
+        }
+        if (this.pathToFrontier) try {
+          const newPanoData = await this.streetViewHeadless.navigateAndGetPanorama(nextHop);
+          this.pathToFrontier.shift();
+
+          const previousPanoId = this.currentPanoId;
+          const previousPosition = { ...this.currentPosition };
+          this.currentPanoId = newPanoData.panoId;
+          this.currentPosition = { lat: newPanoData.position.lat, lng: newPanoData.position.lng };
+
+          const newLinks = newPanoData.links || [];
+          const visitInfo = this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
+          this.stepsSinceNewCell = visitInfo?.isNewCell ? 0 : this.stepsSinceNewCell + 1;
+
+          const remainingPathSteps = this.pathToFrontier.length;
+          const actionReason = `Autopilot: following planned frontier route (${remainingPathSteps} step${remainingPathSteps === 1 ? '' : 's'} remaining)`;
+          const diaryLine = this.buildAutopilotDiaryLine({
+            stepNumber: currentStep,
+            eventType: 'autopilot-pathfinding',
+            remainingPathSteps,
+            locationEntered: !!visitInfo?.isNewCell
+          });
+
+          this.recentMovements.push({
+            from: previousPanoId,
+            to: this.currentPanoId,
+            fromPosition: previousPosition,
+            toPosition: { ...this.currentPosition },
+            heading: null,
+            step: currentStep,
+            reasoning: actionReason
+          });
+          if (this.recentMovements.length > 20) this.recentMovements.shift();
+
+          const stepData = {
+            stepCount: currentStep,
+            reasoning: diaryLine || actionReason,
+            actionReason,
+            diaryLine,
+            eventType: 'autopilot-pathfinding',
+            autoMove: true,
+            fallbackCause: null,
+            sceneTag: null,
+            panoId: this.currentPanoId,
+            direction: 0,
+            mode: 'pathfinding',
+            screenshots: [],
+            remainingPathSteps
+          };
+          this.globalExploration.broadcast('move-decision', {
+            ...stepData,
+            newPosition: this.currentPosition,
+            stats: this.coverage.getStats()
+          });
+          this.logger.log('exploration-step', {
+            step: currentStep,
+            from: previousPanoId,
+            to: this.currentPanoId,
+            decision: diaryLine || actionReason,
+            actionReason,
+            eventType: 'autopilot-pathfinding',
+            autoMove: true,
+            fallbackCause: null,
+            position: this.currentPosition,
+            stats: this.coverage.getStats()
+          });
+          console.log(`Fast-path step ${currentStep}: ${previousPanoId} -> ${this.currentPanoId} (${remainingPathSteps} hops left)`);
+          return stepData;
+        } catch (err) {
+          // Navigation failed; invalidate plan and fall through to normal flow
+          console.warn(`Fast-path navigation to ${nextHop} failed: ${err.message}. Falling back to full step.`);
+          this.pathToFrontier = null;
+        }
+      }
+
+      // --- Normal path: fetch current panorama and decide ---
       // Get data for the current panorama directly (no coordinate conversion)
       let panoData = await this.streetViewHeadless.getCurrentPanorama();
       let links = panoData.links || [];
-      
+
       // Update our tracking to ensure we're in sync
       this.currentPanoId = panoData.panoId;
       this.currentPosition = {
         lat: panoData.position.lat,
         lng: panoData.position.lng
       };
-      
+
       // Handle dead-end panoramas (no outgoing links)
       let deadEndRecovery = false;
       let deadEndDistance = 0;
-      
+
       if (links.length === 0 && this.lastNavigationHeading !== null) {
         console.log(`⚠️ Dead-end panorama detected at ${this.currentPanoId}, attempting to continue in heading ${this.lastNavigationHeading}°...`);
         
@@ -581,8 +668,6 @@ export class ExplorationAgent {
               base64: screenshotData.base64,  // Full-size for AI
               position: this.currentPosition  // Add current position for Google Maps links
             });
-            
-            await new Promise(resolve => setTimeout(resolve, 100));  // Reduced delay for faster execution
           }
           
           const visitedPanos = unvisitedLinks.length === 0 ? 
@@ -610,13 +695,9 @@ export class ExplorationAgent {
             
             // Delete full-size screenshot file, keep only thumbnail
             if (s.filepath) {
-              try {
-                const fs = await import('fs/promises');
-                await fs.unlink(s.filepath);
-                console.log(`Deleted full-size screenshot: ${s.filename}`);
-              } catch (err) {
+              unlink(s.filepath).catch(err => {
                 console.error(`Failed to delete full-size screenshot: ${s.filename}`, err);
-              }
+              });
             }
           }
           
@@ -661,9 +742,8 @@ export class ExplorationAgent {
         this.pathToFrontier.shift();
       }
 
-      await this.streetViewHeadless.navigateToPano(selectedLink.pano);
-      // Get the current panorama data after navigation (ensures we have the actual displayed pano)
-      const newPanoData = await this.streetViewHeadless.getCurrentPanorama();
+      // Navigate and fetch panorama data in one operation (saves a Puppeteer roundtrip)
+      const newPanoData = await this.streetViewHeadless.navigateAndGetPanorama(selectedLink.pano);
       
       this.currentPosition = {
         lat: newPanoData.position.lat,
@@ -786,8 +866,7 @@ export class ExplorationAgent {
     const previousPanoId = this.currentPanoId;
     const previousPosition = { ...this.currentPosition };
     try {
-      await this.streetViewHeadless.navigateToPano(targetPanoId);
-      const newPanoData = await this.streetViewHeadless.getCurrentPanorama();
+      const newPanoData = await this.streetViewHeadless.navigateAndGetPanorama(targetPanoId);
       this.currentPanoId = newPanoData.panoId;
       this.currentPosition = { lat: newPanoData.position.lat, lng: newPanoData.position.lng };
       this.lastNavigationHeading = null; // reset directional context
@@ -881,7 +960,7 @@ export class ExplorationAgent {
         if (testPano && testPano.links && testPano.links.length > 0) {
           console.log(`  ✓ Found valid panorama ${testPano.panoId} after ${(attempt + 1) * this.deadEndStepSize}m with ${testPano.links.length} links`);
           
-          // Navigate to the recovered panorama
+          // Navigate to the recovered panorama (data already fetched above)
           await this.streetViewHeadless.navigateToPano(testPano.panoId);
           
           // Add the dead-end recovery movement to history
@@ -982,16 +1061,8 @@ export class ExplorationAgent {
     const previousPosition = { ...this.currentPosition };
 
     try {
-      await this.streetViewHeadless.navigateToPano(closestFrontier.panoId);
-      // Reuse previously fetched data when possible, but confirm via current panorama call
-      const newPanoData = closestPanoData ?? await this.streetViewHeadless.getCurrentPanorama();
-      if (!closestPanoData || !closestPosition) {
-        closestPosition = {
-          lat: newPanoData.position.lat,
-          lng: newPanoData.position.lng
-        };
-        closestDistance = this.coverage.calculateDistance(this.currentPosition, closestPosition);
-      }
+      // Always use post-navigation data to stay in sync with actual Street View state
+      const newPanoData = await this.streetViewHeadless.navigateAndGetPanorama(closestFrontier.panoId);
 
       this.currentPanoId = newPanoData.panoId;
       this.currentPosition = {

@@ -188,6 +188,8 @@ class GlobalExploration {
     this.saveInterval = SAVE_INTERVAL; // Save every N steps (configurable)
     this.lastSaveStep = 0;
     this.pendingSave = false;
+    this._saveInFlight = null; // Mutex: only one saveState writes at a time
+    this._logQueue = Promise.resolve(); // Serial queue for log appends
     this.backgroundSaveTimer = null;
     this.backgroundSaveInterval = 5 * 60 * 1000; // 5 minutes in milliseconds
     // Tile cache for archived path rendering
@@ -205,21 +207,29 @@ class GlobalExploration {
     return logPath;
   }
   
-  // Save current state to a JSON file
+  // Save current state to a JSON file (serialized: only one write at a time)
   async saveState(force = false) {
     if (!this.agent || !this.agent.coverage) return;
-    
+
     // Only save if forced or enough steps have passed
     if (!force && (this.agent.stepCount - this.lastSaveStep) < this.saveInterval) {
       this.pendingSave = true;
       return;
     }
-    
+
+    // Chain onto the previous save to guarantee serial execution
+    const prevSave = this._saveInFlight || Promise.resolve();
+    const thisSave = prevSave.then(() => this._doSave()).catch(err => {
+      console.error('Save chain error:', err);
+    });
+    this._saveInFlight = thisSave;
+    await thisSave;
+  }
+
+  async _doSave() {
     const saveDir = path.join(DATA_DIR, 'saves');
-    if (!fs.existsSync(saveDir)) {
-      fs.mkdirSync(saveDir, { recursive: true });
-    }
-    
+    await fsp.mkdir(saveDir, { recursive: true });
+
     const saveData = {
       runId: this.agent.runId,
       lastUpdated: new Date().toISOString(),
@@ -236,24 +246,22 @@ class GlobalExploration {
       decisionHistory: this.decisionHistory.slice(-DECISION_HISTORY_LIMIT)
       // Path removed - will be reconstructed from graph
     };
-    
+
     // Write to temp file first, then rename (atomic write)
     const tempPath = path.join(saveDir, 'current-run.tmp.json');
     const finalPath = path.join(saveDir, 'current-run.json');
-    
+
     try {
-      fs.writeFileSync(tempPath, JSON.stringify(saveData, null, 2));
+      await fsp.writeFile(tempPath, JSON.stringify(saveData, null, 2));
       // Atomic rename
-      fs.renameSync(tempPath, finalPath);
+      await fsp.rename(tempPath, finalPath);
       console.log(`State saved: ${this.agent.stepCount} steps, ${Object.keys(saveData.graph).length} nodes`);
       this.lastSaveStep = this.agent.stepCount;
       this.pendingSave = false;
     } catch (error) {
       console.error('Failed to save state:', error);
       // Clean up temp file if it exists
-      if (fs.existsSync(tempPath)) {
-        fs.unlinkSync(tempPath);
-      }
+      fsp.unlink(tempPath).catch(() => {});
     }
   }
   
@@ -604,12 +612,18 @@ class GlobalExploration {
       this.cleanupOldScreenshots(removedEntry);
     }
     
-    // Write to persistent log
+    // Write to persistent log (queued async to preserve ordering without blocking)
     const logData = {
       ...stepData,
       timestamp: stepData.timestamp || new Date().toISOString()
     };
-    fs.appendFileSync(this.persistentLogger, JSON.stringify(logData) + '\n');
+    const logLine = JSON.stringify(logData) + '\n';
+    const logPath = this.persistentLogger; // Capture current log file before async enqueue
+    this._logQueue = this._logQueue.then(() =>
+      fsp.appendFile(logPath, logLine)
+    ).catch(err => {
+      console.error('Failed to write persistent log:', err);
+    });
   }
 
   cacheScreenshots(stepData) {
@@ -1076,6 +1090,7 @@ process.on('SIGTERM', async () => {
   if (globalExploration.pendingSave || globalExploration.agent) {
     await globalExploration.saveState(true);
   }
+  await globalExploration._logQueue;
   process.exit(0);
 });
 
@@ -1085,5 +1100,6 @@ process.on('SIGINT', async () => {
   if (globalExploration.pendingSave || globalExploration.agent) {
     await globalExploration.saveState(true);
   }
+  await globalExploration._logQueue;
   process.exit(0);
 });

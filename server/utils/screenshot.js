@@ -33,18 +33,20 @@ export class ScreenshotService {
     const fullPath = join(stepDir, fullFilename);
     const thumbPath = join(stepDir, thumbFilename);
     
-    // Save full-size screenshot
-    await writeFile(fullPath, screenshotBuffer);
-    
-    // Create and save thumbnail
-    const thumbnailBuffer = await sharp(screenshotBuffer)
+    // Save full-size screenshot and create thumbnail in parallel
+    const thumbnailPromise = sharp(screenshotBuffer)
       .resize(this.thumbnailWidth, this.thumbnailHeight, {
         fit: 'cover',
         position: 'center'
       })
       .jpeg({ quality: this.thumbnailQuality })
       .toBuffer();
-    
+
+    const [thumbnailBuffer] = await Promise.all([
+      thumbnailPromise,
+      writeFile(fullPath, screenshotBuffer)
+    ]);
+
     await writeFile(thumbPath, thumbnailBuffer);
     
     // Return both filenames and base64 of full image for the AI
