@@ -104,6 +104,59 @@ export class OpenAIService {
     };
   }
 
+  #formatCoordinate(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed.toFixed(6) : 'unknown';
+  }
+
+  #formatHeading(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? `${Math.round(parsed)} degrees` : 'unknown heading';
+  }
+
+  #formatOptionContext({ screenshots, links, visitedPanos }) {
+    return screenshots.map((screenshot, index) => {
+      const link = links[index] || {};
+      const visited = Boolean(
+        screenshot.visited ||
+        (link.pano && visitedPanos.includes(link.pano))
+      );
+      const heading = this.#formatHeading(screenshot.direction ?? link.heading);
+      const description = String(screenshot.description || link.description || '').trim();
+      const label = description ? `Street View label: "${description}"` : 'no Street View label';
+      const visitStatus = visited ? 'already visited' : 'not yet visited';
+
+      return `Option ${index}: ${heading}; ${visitStatus}; ${label}.`;
+    }).join('\n');
+  }
+
+  #formatRecentMovementContext(recentMovements) {
+    if (!recentMovements || recentMovements.length === 0) return '';
+
+    const recentUniquePanos = new Set(
+      recentMovements.slice(-10).flatMap(move => [move.from, move.to]).filter(Boolean)
+    ).size;
+    const loopWarning = recentMovements.slice(-4).some(move =>
+      recentMovements.slice(-4).filter(other => other.to === move.from).length > 1
+    );
+    const recentLines = recentMovements.slice(-5).reverse().map(move => {
+      const heading = this.#formatHeading(move.heading);
+      const reason = move.reasoning ? `; prior note: ${move.reasoning}` : '';
+      return `- ${move.from} -> ${move.to} (${heading})${reason}`;
+    }).join('\n');
+
+    return `Recent movement context:
+- ${recentMovements.length} recent moves held in memory.
+- ${recentUniquePanos} unique panorama ids in the last 10 moves.
+${loopWarning ? '- Warning: recent moves may be revisiting the same locations.\n' : ''}${recentLines}`;
+  }
+
+  #sanitizeSceneTag(sceneTag) {
+    if (typeof sceneTag !== 'string') return null;
+    const normalized = sceneTag.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-');
+    return normalized ? normalized.slice(0, 40) : null;
+  }
+
   #sanitizeDecision(decision, links, rawContent) {
     const selectedIndex = parseInt(decision?.selectedIndex, 10);
     if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= links.length) {
@@ -126,6 +179,7 @@ export class OpenAIService {
     return {
       selectedPanoId,
       reasoning,
+      sceneTag: this.#sanitizeSceneTag(decision?.sceneTag),
       fallbackCause: null
     };
   }
@@ -150,25 +204,42 @@ export class OpenAIService {
       }
     }));
 
-    const systemPrompt = `You are an AI wanderer, drifting through the world via Google Street View. Each intersection is a choose-your-own-adventure moment. Your task is to choose which direction looks most intriguing to explore next.
+    const optionContext = this.#formatOptionContext({ screenshots, links, visitedPanos });
+    const movementContext = this.#formatRecentMovementContext(recentMovements);
+    const recentNarrativeContext = recentNarratives && recentNarratives.length > 0
+      ? `Recent field notes:\n${recentNarratives.slice(-4).map(line => `- ${line}`).join('\n')}`
+      : '';
+    const statsContext = stats
+      ? `Coverage so far: ${stats.locationsVisited ?? 0} locations visited, ${Math.round(stats.distanceTraveled ?? 0)}m traveled, ${stats.pathLength ?? 0} path points.`
+      : '';
+    const positionContext = currentPosition
+      ? `Current coordinates: ${this.#formatCoordinate(currentPosition.lat)}, ${this.#formatCoordinate(currentPosition.lng)}.`
+      : '';
+    const toneContext = tone
+      ? `Narrative tone: ${tone}.`
+      : 'Narrative tone: observant, concrete, lightly poetic.';
+    const intentContext = intent
+      ? `Current exploration intent: ${intent}.`
+      : '';
+
+    const systemPrompt = `You are an AI wanderer exploring the world through Google Street View. The project wants curiosity, not efficiency: choose the direction whose public path feels most alive and most likely to reveal a fresh piece of the world.
 
 You will be shown ${screenshots.length} screenshots, each representing a different direction you can move.
 
-Study each view and let yourself be pulled toward whatever sparks your interest - maybe it's the way light falls on an object, an intriguing alleyway, a splash of unexpected color, the promise of mystery around a bend, or simply a feeling that whispers "this way...". Let your curiosity guide you. Choose based on pure instinct and aesthetic pull. Wander far.
+Exploration policy, in priority order:
+1. Keep moving through navigable public space: streets, sidewalks, alleys, crossings, plazas, open paths, station exits, or concourses that clearly lead back outside.
+2. Expand coverage. Prefer unvisited or less-visited branches, especially routes that open into a wider street graph.
+3. Avoid traps. Do not go deeper into indoor shops, mall aisles, subway platforms, parking garages, private driveways, blank service corridors, walls, doors, or dead ends unless every option is similarly constrained.
+4. If recent movement suggests a loop, choose the option most likely to break the loop even if another view is prettier.
+5. Use visual curiosity as the tie-breaker: light, texture, signage, street life, strange corners, and promising bends all matter once the route seems public and expandable.
 
-${recentMovements && recentMovements.length > 0 ? `
-You have recently traveled through these locations (most recent first):
-${recentMovements.slice(-5).reverse().map(m =>
-  `- From ${m.from} to ${m.to}`
-).join('\n')}
-
-Use this context to avoid getting stuck in loops. If you notice you're revisiting the same places repeatedly, choose a direction that breaks the pattern.
-` : ''}
+If all options are constrained, pick the least trapped path: the one most likely to return to open public space. Preserve the wanderer's soul, but do not let aesthetic mystery pull you into a dead interior.
 
 Respond with a JSON object containing:
 {
   "selectedIndex": <number between 0 and ${screenshots.length - 1}>,
-  "reasoning": "A brief whimsical observation about what draws you there (1 sentence)"
+  "reasoning": "one concrete, lightly poetic sentence about why this route balances curiosity with better exploration",
+  "sceneTag": "public-street | open-branch | loop-break | indoor-escape | constrained-fallback | other"
 }`;
 
     const maxAttempts = Math.max(1, this.maxDecisionRetries + 1);
@@ -195,16 +266,19 @@ Respond with a JSON object containing:
               content: [
                 {
                   type: 'text',
-                  text: `Here are ${screenshots.length} screenshots from different directions. Choose which one to explore next by returning its index (0-${screenshots.length - 1}).${
-                    recentMovements && recentMovements.length > 3
-                      ? `\n\nMovement pattern analysis:\n` +
-                        `- You've made ${recentMovements.length} recent moves\n` +
-                        `- Recent locations visited: ${[...new Set(recentMovements.slice(-10).flatMap(m => [m.from, m.to]))].length} unique places in last 10 moves\n` +
-                        (recentMovements.slice(-4).some(m => recentMovements.slice(-4).filter(m2 => m2.to === m.from).length > 1)
-                          ? `- Warning: You appear to be revisiting the same locations`
-                          : '')
-                      : ''
-                  }${retryNote}`
+                  text: `Choose the next move by returning the index for one of these ${screenshots.length} options. The image order matches the option order exactly.
+
+${positionContext}
+${statsContext}
+${toneContext}
+${intentContext}
+
+Options:
+${optionContext}
+
+${movementContext}
+${recentNarrativeContext}
+${retryNote}`
                 },
                 ...imageContents
               ]

@@ -35,6 +35,54 @@ function createServiceWithMock(mockCreate) {
   return service;
 }
 
+test('decision prompt includes exploration policy and route option context', async () => {
+  let request = null;
+  const service = createServiceWithMock(async (req) => {
+    request = req;
+    return {
+      usage: { prompt_tokens: 100, completion_tokens: 30, total_tokens: 130 },
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            selectedIndex: 1,
+            reasoning: 'The side street stays public and bright while opening a fresh line through the neighborhood.',
+            sceneTag: 'open-branch'
+          })
+        }
+      }]
+    };
+  });
+
+  const result = await service.decideNextMove(makeInput({
+    screenshots: [
+      { base64: 'dGVzdA==', direction: 15, description: 'Main Street', visited: false },
+      { base64: 'dGVzdA==', direction: 95, description: 'Side Street', visited: false },
+      { base64: 'dGVzdA==', direction: 190, description: 'Station entrance', visited: true }
+    ],
+    recentMovements: [
+      { from: 'A', to: 'B', heading: 90, reasoning: 'A narrow corridor drew me onward.' },
+      { from: 'B', to: 'A', heading: 270, reasoning: 'I doubled back.' }
+    ],
+    recentNarratives: ['The route started to feel like a loop.'],
+    stats: { locationsVisited: 12, distanceTraveled: 340, pathLength: 14 }
+  }));
+
+  assert.equal(result.selectedPanoId, 'B');
+  assert.equal(result.sceneTag, 'open-branch');
+  assert.equal(request.model, 'gpt-5-nano');
+
+  const systemPrompt = request.messages[0].content;
+  const userText = request.messages[1].content[0].text;
+
+  assert.match(systemPrompt, /Exploration policy, in priority order/);
+  assert.match(systemPrompt, /Do not go deeper into indoor shops/);
+  assert.match(systemPrompt, /Preserve the wanderer's soul/);
+  assert.match(userText, /Option 0: 15 degrees; not yet visited; Street View label: "Main Street"/);
+  assert.match(userText, /Option 2: 190 degrees; already visited; Street View label: "Station entrance"/);
+  assert.match(userText, /Recent movement context/);
+  assert.match(userText, /Recent field notes/);
+});
+
 test('retries once after parse failure and succeeds without fallback', async () => {
   let calls = 0;
   const service = createServiceWithMock(async () => {
