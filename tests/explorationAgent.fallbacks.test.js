@@ -169,6 +169,10 @@ test('multi-link loop filter removes cycle-extending option and moves to safe li
       currentPano = panoId;
       return { settledPanoId: panoId, reason: 'ok' };
     },
+    navigateAndGetPanorama: async (panoId) => {
+      currentPano = panoId;
+      return panos[currentPano];
+    },
     setHeading: async () => {},
     getScreenshot: async () => Buffer.from([])
   };
@@ -272,6 +276,10 @@ test('soak: avoids sustained two-node oscillation when alternate visited link ex
     navigateToPano: async (panoId) => {
       currentPano = panoId;
       return { settledPanoId: panoId, reason: 'ok' };
+    },
+    navigateAndGetPanorama: async (panoId) => {
+      currentPano = panoId;
+      return world[currentPano];
     },
     setHeading: async () => {},
     getScreenshot: async () => Buffer.from([])

@@ -161,6 +161,63 @@ export class ExplorationAgent {
     return heartbeatNotes[stepNumber % heartbeatNotes.length];
   }
 
+  #normalizeHeading(heading) {
+    const numericHeading = Number(heading);
+    if (!Number.isFinite(numericHeading)) return null;
+    return ((numericHeading % 360) + 360) % 360;
+  }
+
+  #calculateTravelHeading(fromPosition, toPosition, fallbackHeading = null) {
+    const fromLat = Number(fromPosition?.lat);
+    const fromLng = Number(fromPosition?.lng);
+    const toLat = Number(toPosition?.lat);
+    const toLng = Number(toPosition?.lng);
+
+    if (
+      Number.isFinite(fromLat) &&
+      Number.isFinite(fromLng) &&
+      Number.isFinite(toLat) &&
+      Number.isFinite(toLng)
+    ) {
+      const movedMeters = this.coverage.calculateDistance(
+        { lat: fromLat, lng: fromLng },
+        { lat: toLat, lng: toLng }
+      );
+      if (Number.isFinite(movedMeters) && movedMeters > 0.5) {
+        return this.#normalizeHeading(calculateBearing(
+          { lat: fromLat, lng: fromLng },
+          { lat: toLat, lng: toLng }
+        ));
+      }
+    }
+
+    return this.#normalizeHeading(fallbackHeading);
+  }
+
+  async #syncHeadingAfterNavigation(fromPosition, fallbackHeading = null) {
+    const travelHeading = this.#calculateTravelHeading(
+      fromPosition,
+      this.currentPosition,
+      fallbackHeading
+    );
+
+    if (travelHeading === null) {
+      return null;
+    }
+
+    this.lastNavigationHeading = travelHeading;
+    this.currentHeading = travelHeading;
+
+    try {
+      // Must happen after pano navigation settles because Street View resets POV on move.
+      await this.streetViewHeadless.setHeading(travelHeading);
+    } catch (error) {
+      console.warn(`Failed to set post-navigation heading ${travelHeading}°: ${error.message}`);
+    }
+
+    return travelHeading;
+  }
+
   async initialize() {
     await this.streetViewHeadless.initialize();
     await this.screenshot.initialize();
@@ -267,12 +324,10 @@ export class ExplorationAgent {
           this.currentPanoId = newPanoData.panoId;
           this.currentPosition = { lat: newPanoData.position.lat, lng: newPanoData.position.lng };
 
-          // Point the headless view in the direction of travel so screenshots
-          // are correct when we eventually reach a branch point
-          const travelHeading = calculateBearing(previousPosition, this.currentPosition);
-          this.lastNavigationHeading = travelHeading;
-          // Fire-and-forget: don't await the 100ms settle since we're not screenshotting
-          this.streetViewHeadless.setHeading(travelHeading);
+          const travelHeading = await this.#syncHeadingAfterNavigation(
+            previousPosition,
+            this.lastNavigationHeading
+          );
 
           const newLinks = newPanoData.links || [];
           const visitInfo = this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
@@ -292,7 +347,7 @@ export class ExplorationAgent {
             to: this.currentPanoId,
             fromPosition: previousPosition,
             toPosition: { ...this.currentPosition },
-            heading: null,
+            heading: travelHeading,
             step: currentStep,
             reasoning: actionReason
           });
@@ -308,7 +363,7 @@ export class ExplorationAgent {
             fallbackCause: null,
             sceneTag: null,
             panoId: this.currentPanoId,
-            direction: 0,
+            direction: Number.isFinite(travelHeading) ? travelHeading : this.currentHeading,
             mode: 'pathfinding',
             screenshots: [],
             remainingPathSteps
@@ -762,9 +817,6 @@ export class ExplorationAgent {
       const previousPanoId = this.currentPanoId;
       const previousPosition = { ...this.currentPosition };
       
-      // Store the heading for potential dead-end recovery
-      this.lastNavigationHeading = parseFloat(selectedLink.heading);
-      
       // If following a planned route, consume the hop now
       if (this.pathToFrontier && this.pathToFrontier.length > 0 && this.pathToFrontier[0] === selectedLink.pano) {
         this.pathToFrontier.shift();
@@ -778,6 +830,12 @@ export class ExplorationAgent {
         lng: newPanoData.position.lng
       };
       this.currentPanoId = newPanoData.panoId;  // Use the actual pano ID from the panorama
+
+      const selectedHeading = parseFloat(selectedLink.heading);
+      const travelHeading = await this.#syncHeadingAfterNavigation(
+        previousPosition,
+        selectedHeading
+      );
       
       // Add this movement to history
       this.recentMovements.push({
@@ -785,7 +843,7 @@ export class ExplorationAgent {
         to: this.currentPanoId,
         fromPosition: previousPosition,
         toPosition: { ...this.currentPosition },
-        heading: selectedLink.heading,
+        heading: travelHeading,
         step: currentStep,
         reasoning: decision.reasoning
       });
@@ -849,7 +907,7 @@ export class ExplorationAgent {
         fallbackCause,
         sceneTag: decision.sceneTag || null,
         panoId: this.currentPanoId,
-        direction: parseFloat(selectedLink.heading),
+        direction: Number.isFinite(travelHeading) ? travelHeading : this.currentHeading,
         mode: this.mode,
         screenshots: thumbnailUrls,
         remainingPathSteps: remainingPathSteps
@@ -897,7 +955,10 @@ export class ExplorationAgent {
       const newPanoData = await this.streetViewHeadless.navigateAndGetPanorama(targetPanoId);
       this.currentPanoId = newPanoData.panoId;
       this.currentPosition = { lat: newPanoData.position.lat, lng: newPanoData.position.lng };
-      this.lastNavigationHeading = null; // reset directional context
+      const travelHeading = await this.#syncHeadingAfterNavigation(
+        previousPosition,
+        this.lastNavigationHeading
+      );
       const newLinks = newPanoData.links || [];
       const visitInfo = this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
       this.stepsSinceNewCell = visitInfo?.isNewCell ? 0 : this.stepsSinceNewCell + 1;
@@ -907,7 +968,7 @@ export class ExplorationAgent {
         to: this.currentPanoId,
         fromPosition: previousPosition,
         toPosition: { ...this.currentPosition },
-        heading: null,
+        heading: travelHeading,
         step: currentStep,
         reasoning: reason
       });
@@ -931,7 +992,7 @@ export class ExplorationAgent {
         fallbackCause: null,
         sceneTag: null,
         panoId: this.currentPanoId,
-        direction: 0,
+        direction: Number.isFinite(travelHeading) ? travelHeading : this.currentHeading,
         mode: 'pathfinding',
         screenshots: [],
         remainingPathSteps: null
@@ -990,6 +1051,21 @@ export class ExplorationAgent {
           
           // Navigate to the recovered panorama (data already fetched above)
           await this.streetViewHeadless.navigateToPano(testPano.panoId);
+
+          const recoveryHeading = this.#calculateTravelHeading(
+            deadEndPosition,
+            testPano.position,
+            this.lastNavigationHeading
+          );
+          if (recoveryHeading !== null) {
+            this.lastNavigationHeading = recoveryHeading;
+            this.currentHeading = recoveryHeading;
+            try {
+              await this.streetViewHeadless.setHeading(recoveryHeading);
+            } catch (error) {
+              console.warn(`Failed to set dead-end recovery heading ${recoveryHeading}°: ${error.message}`);
+            }
+          }
           
           // Add the dead-end recovery movement to history
           this.recentMovements.push({
@@ -1000,7 +1076,7 @@ export class ExplorationAgent {
               lat: testPano.position.lat,
               lng: testPano.position.lng
             },
-            heading: this.lastNavigationHeading,
+            heading: recoveryHeading,
             step: this.stepCount,
             reasoning: `Navigating through dead-end (recovered after ${(attempt + 1) * this.deadEndStepSize}m)`
           });
@@ -1097,9 +1173,10 @@ export class ExplorationAgent {
         lat: newPanoData.position.lat,
         lng: newPanoData.position.lng
       };
-
-      // Teleport resets directional context until next navigation
-      this.lastNavigationHeading = null;
+      const travelHeading = await this.#syncHeadingAfterNavigation(
+        previousPosition,
+        this.lastNavigationHeading
+      );
 
       const newLinks = newPanoData.links || [];
       const visitInfo = this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
@@ -1119,7 +1196,7 @@ export class ExplorationAgent {
         to: this.currentPanoId,
         fromPosition: previousPosition,
         toPosition: { ...this.currentPosition },
-        heading: null,
+        heading: travelHeading,
         step: currentStep,
         reasoning: decisionReasoning
       });
@@ -1137,7 +1214,7 @@ export class ExplorationAgent {
         fallbackCause: null,
         sceneTag: null,
         panoId: this.currentPanoId,
-        direction: 0,
+        direction: Number.isFinite(travelHeading) ? travelHeading : this.currentHeading,
         mode: 'pathfinding',
         screenshots: [],
         remainingPathSteps: null

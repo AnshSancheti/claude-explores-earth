@@ -4,6 +4,8 @@ runs/
 .DS_Store
 *.log
 npm-debug.log*
+.claude/
+fly-backups/
 AGENTS.md
 CLAUDE.md
 FLY_DEPLOYMENT.md

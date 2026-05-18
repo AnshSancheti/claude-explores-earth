@@ -230,7 +230,7 @@ class UIManager {
     this.startBtn.disabled = isExploring;
     this.stepBtn.disabled = isExploring;
     this.stopBtn.disabled = !isExploring;
-    this.resetBtn.disabled = isExploring;
+    this.resetBtn.disabled = false;
     // Save is allowed in either state
   }
   

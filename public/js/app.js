@@ -249,9 +249,7 @@ class ExplorationApp {
           break;
         case 'r':  // R for reset
           e.preventDefault();
-          if (!this.isExploring) {
-            this.resetExploration();
-          }
+          this.resetExploration();
           break;
         case 'f':  // F for fullscreen
           e.preventDefault();
@@ -396,14 +394,12 @@ class ExplorationApp {
   }
 
   resetExploration() {
-    if (!this.isExploring) {
-      const token = this.getAuthToken();
-      if (!token) {
-        this.uiManager.showError('Admin authentication required');
-        return;
-      }
-      this.socket.emit('reset-exploration', { token });
+    const token = this.getAuthToken();
+    if (!token) {
+      this.uiManager.showError('Admin authentication required');
+      return;
     }
+    this.socket.emit('reset-exploration', { token });
   }
   
   loadSave() {

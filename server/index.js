@@ -144,7 +144,17 @@ app.get('/api/maps-loader', (req, res) => {
 
 // Use PORT from environment, default to 3000 for Fly.io
 const PORT = process.env.PORT || 3000;
-const STEP_INTERVAL = parseInt(process.env.STEP_INTERVAL_MS) || 5000;
+const parseIntOr = (value, fallback) => {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+const requestedStepInterval = parseInt(process.env.STEP_INTERVAL_MS, 10);
+const minStepInterval = Math.max(0, parseIntOr(process.env.MIN_STEP_INTERVAL_MS, 200));
+const STEP_INTERVAL = Math.max(
+  Number.isFinite(requestedStepInterval) ? requestedStepInterval : 5000,
+  minStepInterval
+);
+const STEP_INTERVAL_CLAMPED = Number.isFinite(requestedStepInterval) && requestedStepInterval < minStepInterval;
 const DECISION_HISTORY_LIMIT = parseInt(process.env.DECISION_HISTORY_LIMIT) || 20;
 const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL) || 500; // Save every N steps
 const MAX_CONSECUTIVE_STEP_ERRORS = parseInt(process.env.MAX_CONSECUTIVE_STEP_ERRORS || '25', 10);
@@ -1045,7 +1055,10 @@ const HOST = '0.0.0.0'; // Always bind to 0.0.0.0 for containerized environments
 server.listen(PORT, HOST, async () => {
   console.log(`🚀 Server listening on ${HOST}:${PORT}`);
   console.log(`📍 Starting location: ${START_LOCATION.lat}, ${START_LOCATION.lng}`);
-  console.log(`⏱️  Step interval: ${STEP_INTERVAL}ms`);
+  console.log(`⏱️  Step interval: ${STEP_INTERVAL}ms (min floor: ${minStepInterval}ms)`);
+  if (STEP_INTERVAL_CLAMPED) {
+    console.log(`⚠️  STEP_INTERVAL_MS=${requestedStepInterval}ms was below floor; clamped to ${STEP_INTERVAL}ms`);
+  }
   console.log(`💾 Save interval: Every ${SAVE_INTERVAL} steps`);
   console.log(`📜 Decision history limit: ${DECISION_HISTORY_LIMIT} entries`);
   console.log(`🗺️  Path simplification: ${PATH_SIMPLIFICATION.enabled ? `Enabled (epsilon: ${PATH_SIMPLIFICATION.recentEpsilon}/${PATH_SIMPLIFICATION.mediumEpsilon}/${PATH_SIMPLIFICATION.oldEpsilon})` : 'Disabled'}`);

@@ -10,6 +10,7 @@ class StreetViewManager {
   constructor() {
     this.panorama = null;
     this.currentPanoId = null;
+    this.pendingHeading = null;
     // Start position will be set from server via setStartPosition()
     this.startPosition = null;
   }
@@ -70,18 +71,51 @@ class StreetViewManager {
     }
   }
 
+  applyHeading(heading) {
+    const numericHeading = Number(heading);
+    if (!Number.isFinite(numericHeading) || !this.panorama) return;
+
+    this.panorama.setPov({
+      heading: numericHeading,
+      pitch: 0
+    });
+  }
+
   updatePosition(panoId, heading) {
-    if (panoId && panoId !== this.currentPanoId) {
+    if (!this.panorama) return;
+
+    const numericHeading = Number(heading);
+    const hasHeading = Number.isFinite(numericHeading);
+    const panoChanged = !!(panoId && panoId !== this.currentPanoId);
+
+    if (panoChanged) {
+      if (hasHeading) {
+        this.pendingHeading = numericHeading;
+        const applyPendingHeading = (clearPending = false) => {
+          if (this.pendingHeading !== null) {
+            this.applyHeading(this.pendingHeading);
+            if (clearPending) {
+              this.pendingHeading = null;
+            }
+          }
+        };
+        const listener = this.panorama.addListener('pano_changed', () => {
+          listener.remove();
+          applyPendingHeading(true);
+        });
+        // Fallback in case pano_changed does not fire due canonicalization/no-op.
+        // Do not clear pending here; a delayed pano_changed still needs to apply.
+        setTimeout(() => applyPendingHeading(false), 400);
+      } else {
+        this.pendingHeading = null;
+      }
+
       this.panorama.setPano(panoId);
       this.currentPanoId = panoId;
     }
-    
-    if (heading !== undefined) {
-      this.panorama.setPov({
-        heading: heading,
-        pitch: 0
-      });
-      // Compass will update automatically via pov_changed listener
+
+    if (!panoChanged && hasHeading) {
+      this.applyHeading(numericHeading);
     }
   }
 
@@ -92,6 +126,7 @@ class StreetViewManager {
       pitch: 0
     });
     this.currentPanoId = null;
+    this.pendingHeading = null;
   }
 }
 
