@@ -1,9 +1,13 @@
 /.git
 /node_modules
+/.claude
+/.playwright-mcp
+/fly-backups
+/runs
+/test-results
 .dockerignore
 .env
+.DS_Store
+*.log
 Dockerfile
 fly.toml
-/runs/exploration_logs
-/runs/persistent_logs
-/runs/shots
