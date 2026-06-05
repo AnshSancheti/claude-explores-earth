@@ -101,6 +101,13 @@ class ExplorationApp {
       }
     });
 
+    this.socket.on('path-state', (data) => {
+      if (data.fullPath && data.fullPath.length > 0) {
+        console.log(`Loading ${data.fullPath.length} path points to minimap (deferred)`);
+        this.mapManager.loadFullPath(data.fullPath);
+      }
+    });
+
     this.socket.on('exploration-started', (data) => {
       console.log('Exploration started', data);
       

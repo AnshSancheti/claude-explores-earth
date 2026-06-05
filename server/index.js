@@ -206,6 +206,11 @@ class GlobalExploration {
     this.gcInterval = null;
     // Tile cache for archived path rendering
     this.tileCache = new Map(); // key: `${z}/${x}/${y}@${archivedCount}` -> Buffer
+    this.fullPathCache = {
+      stepCount: null,
+      generatedAt: 0,
+      fullPath: null
+    };
     this.consecutiveStepErrors = 0;
   }
 
@@ -770,7 +775,41 @@ class GlobalExploration {
     return this.decisionHistory.slice(-DECISION_HISTORY_LIMIT);
   }
 
-  getCurrentState() {
+  getFullPathForInitialLoad() {
+    if (!this.agent || !this.agent.coverage || this.agent.coverage.graph.size === 0) {
+      return [];
+    }
+
+    const now = Date.now();
+    const cacheTtlMs = 30 * 1000;
+    if (
+      this.fullPathCache.fullPath &&
+      this.fullPathCache.stepCount === this.agent.stepCount &&
+      now - this.fullPathCache.generatedAt < cacheTtlMs
+    ) {
+      return this.fullPathCache.fullPath;
+    }
+
+    const originalPath = Array.from(this.agent.coverage.graph.entries())
+      .filter(([id, node]) => node.timestamp)
+      .sort((a, b) => a[1].timestamp - b[1].timestamp)
+      .map(([id, node]) => ({
+        lat: node.lat,
+        lng: node.lng,
+        panoId: id,
+        timestamp: node.timestamp
+      }));
+
+    const fullPath = this.simplifyPath(originalPath);
+    this.fullPathCache = {
+      stepCount: this.agent.stepCount,
+      generatedAt: now,
+      fullPath
+    };
+    return fullPath;
+  }
+
+  getCurrentState({ includeFullPath = true } = {}) {
     if (!this.agent) {
       return {
         isExploring: false,
@@ -781,31 +820,19 @@ class GlobalExploration {
       };
     }
 
-    // Reconstruct path from graph for initial load (all nodes are visited)
-    let fullPath = [];
-    if (this.agent.coverage && this.agent.coverage.graph.size > 0) {
-      const originalPath = Array.from(this.agent.coverage.graph.entries())
-        .filter(([id, node]) => node.timestamp)
-        .sort((a, b) => a[1].timestamp - b[1].timestamp)
-        .map(([id, node]) => ({
-          lat: node.lat,
-          lng: node.lng,
-          panoId: id,
-          timestamp: node.timestamp
-        }));
-
-      // Use centralized simplification method
-      fullPath = this.simplifyPath(originalPath);
-    }
-
-    return {
+    const state = {
       isExploring: this.isExploring,
       position: this.agent.currentPosition,
       panoId: this.agent.currentPanoId,
       stats: this.agent.coverage ? this.agent.coverage.getStats() : {},
-      stepCount: this.agent.stepCount,
-      fullPath  // Only sent on initial connection
+      stepCount: this.agent.stepCount
     };
+
+    if (includeFullPath) {
+      state.fullPath = this.getFullPathForInitialLoad();
+    }
+
+    return state;
   }
 
   /**
@@ -843,14 +870,27 @@ class GlobalExploration {
     this.connectedClients.add(socket.id);
     console.log(`Client connected: ${socket.id}. Total clients: ${this.connectedClients.size}`);
 
-    // Send current state to new client
+    // Send lightweight state immediately so maps initialize before the large path payload is prepared.
     socket.emit('initial-state', {
-      ...this.getCurrentState(),
+      ...this.getCurrentState({ includeFullPath: false }),
       startLocation: START_LOCATION,
       startPanoId: START_PANO_ID,
       recentHistory: this.getRecentHistory(),
       connectedClients: this.connectedClients.size
     });
+
+    setTimeout(() => {
+      if (!socket.connected) return;
+      try {
+        const fullPath = this.getFullPathForInitialLoad();
+        if (fullPath.length > 0) {
+          socket.emit('path-state', { fullPath });
+        }
+      } catch (error) {
+        console.error('Failed to prepare path for client:', error);
+        socket.emit('error', { message: 'Failed to load minimap path' });
+      }
+    }, 100);
   }
 
   removeClient(socketId) {
