@@ -38,17 +38,17 @@ const io = new Server(server, {
       if (process.env.NODE_ENV === 'production') {
         // Allow requests with no origin (same-origin requests)
         if (!origin) return callback(null, true);
-        
+
         // Allow fly.dev domains
         if (origin.includes('fly.dev')) {
           return callback(null, true);
         }
-        
+
         // Allow localhost for development
         if (origin.includes('localhost')) {
           return callback(null, true);
         }
-        
+
         // Reject other origins
         return callback(new Error('Not allowed by CORS'));
       } else {
@@ -95,22 +95,22 @@ app.use('/runs', (req, res, next) => {
 app.post('/api/admin/auth', express.json(), (req, res) => {
   const { password } = req.body;
   const controlPassword = process.env.CONTROL_PASSWORD;
-  
+
   if (!controlPassword) {
     return res.status(500).json({ error: 'Admin authentication not configured' });
   }
-  
+
   if (!password) {
     return res.status(400).json({ error: 'Password required' });
   }
-  
+
   if (password === controlPassword) {
     // Generate a simple session token (in production, use proper JWT)
     const token = Buffer.from(`admin:${Date.now()}`).toString('base64');
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       token,
-      message: 'Authentication successful' 
+      message: 'Authentication successful'
     });
   } else {
     // Add delay to prevent brute force
@@ -127,13 +127,13 @@ app.get('/api/maps-loader', (req, res) => {
     console.error('GOOGLE_MAPS_API_KEY not configured in environment variables');
     return res.status(500).send('Google Maps API key not configured. Please set GOOGLE_MAPS_API_KEY.');
   }
-  
+
   res.type('application/javascript');
   res.send(`
     window.initStreetView = function() {
       window.streetViewReady = true;
     };
-    
+
     const script = document.createElement('script');
     script.src = 'https://maps.googleapis.com/maps/api/js?key=${apiKey}&callback=initStreetView';
     script.async = true;
@@ -158,6 +158,7 @@ const STEP_INTERVAL_CLAMPED = Number.isFinite(requestedStepInterval) && requeste
 const DECISION_HISTORY_LIMIT = parseInt(process.env.DECISION_HISTORY_LIMIT) || 20;
 const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL) || 500; // Save every N steps
 const MAX_CONSECUTIVE_STEP_ERRORS = parseInt(process.env.MAX_CONSECUTIVE_STEP_ERRORS || '25', 10);
+const OPENAI_RATE_LIMIT_BACKOFF_MS = parseIntOr(process.env.OPENAI_RATE_LIMIT_BACKOFF_MS, 30000);
 const TILE_TAIL_POINTS = parseInt(process.env.TILE_RECENT_TAIL_POINTS) || 1500; // recent points kept as vector
 const TILE_MAX_CACHE = parseInt(process.env.TILE_MAX_CACHE) || 256;
 const TILE_VERSION_STEP = parseInt(process.env.TILE_VERSION_STEP) || 1000; // archive version increments every N archived points
@@ -191,9 +192,9 @@ class GlobalExploration {
     this.logger = new Logger();
     this.persistentLogger = this.createPersistentLogger();
     // Keep enough history for new clients to see recent decisions with screenshots
-    this.maxHistoryInMemory = Math.max(DECISION_HISTORY_LIMIT * 2, 50); 
+    this.maxHistoryInMemory = Math.max(DECISION_HISTORY_LIMIT * 2, 50);
     this.cacheSize = this.maxHistoryInMemory; // Match cache to history size
-    
+
     // Save optimization - only save periodically
     this.saveInterval = SAVE_INTERVAL; // Save every N steps (configurable)
     this.lastSaveStep = 0;
@@ -202,9 +203,70 @@ class GlobalExploration {
     this._logQueue = Promise.resolve(); // Serial queue for log appends
     this.backgroundSaveTimer = null;
     this.backgroundSaveInterval = 5 * 60 * 1000; // 5 minutes in milliseconds
+    this.gcInterval = null;
     // Tile cache for archived path rendering
     this.tileCache = new Map(); // key: `${z}/${x}/${y}@${archivedCount}` -> Buffer
     this.consecutiveStepErrors = 0;
+  }
+
+  getSavePath() {
+    return path.join(DATA_DIR, 'saves', 'current-run.json');
+  }
+
+  hasMeaningfulAgentState() {
+    if (!this.agent) return false;
+    const stats = this.agent.coverage ? this.agent.coverage.getStats() : {};
+    return (
+      (this.agent.stepCount || 0) > 0 ||
+      (stats.locationsVisited || 0) > 1 ||
+      (stats.pathLength || 0) > 1
+    );
+  }
+
+  readSaveSummary() {
+    const savePath = this.getSavePath();
+    if (!fs.existsSync(savePath)) return null;
+
+    const saveData = JSON.parse(fs.readFileSync(savePath, 'utf8'));
+    const stepCount = Number(saveData.stepCount) || 0;
+    const locationsVisited = Number(saveData.stats?.locationsVisited) || 0;
+    const pathLength = Number(saveData.stats?.pathLength) || 0;
+    return { savePath, stepCount, locationsVisited, pathLength };
+  }
+
+  async maybeRestoreSavedRunBeforeStart() {
+    if (process.env.NODE_ENV !== 'production') return null;
+    if (this.hasMeaningfulAgentState()) return null;
+
+    const saveSummary = this.readSaveSummary();
+    if (!saveSummary) return null;
+
+    const saveHasProgress = (
+      saveSummary.stepCount > 0 ||
+      saveSummary.locationsVisited > 1 ||
+      saveSummary.pathLength > 1
+    );
+    if (!saveHasProgress) return null;
+
+    console.log(
+      `🔄 Resuming saved run before start: ${saveSummary.stepCount} steps, ` +
+      `${saveSummary.locationsVisited} locations`
+    );
+    const result = await this.loadState();
+    if (result.error) {
+      return { error: `Failed to resume saved run: ${result.error}` };
+    }
+    return result;
+  }
+
+  startGcTimer() {
+    if (!global.gc || this.gcInterval) return;
+    this.gcInterval = setInterval(() => {
+      if (global.gc) {
+        console.log('Running garbage collection...');
+        global.gc();
+      }
+    }, 60000);
   }
 
   createPersistentLogger() {
@@ -216,10 +278,16 @@ class GlobalExploration {
     const logPath = path.join(logsDir, `exploration-${timestamp}.jsonl`);
     return logPath;
   }
-  
+
   // Save current state to a JSON file (serialized: only one write at a time)
   async saveState(force = false) {
     if (!this.agent || !this.agent.coverage) return;
+
+    if (this.agent.isStepExecuting) {
+      this.pendingSave = true;
+      console.warn('Skipping save while a step is still executing; preserving last completed state.');
+      return;
+    }
 
     // Only save if forced or enough steps have passed
     if (!force && (this.agent.stepCount - this.lastSaveStep) < this.saveInterval) {
@@ -274,32 +342,32 @@ class GlobalExploration {
       fsp.unlink(tempPath).catch(() => {});
     }
   }
-  
+
   // Load state from save file
   async loadState() {
-    const savePath = path.join(DATA_DIR, 'saves', 'current-run.json');
-    
+    const savePath = this.getSavePath();
+
     if (!fs.existsSync(savePath)) {
       console.log('📄 No save file found at:', savePath);
       return { error: 'No save file found' };
     }
-    
+
     console.log('📄 Loading save file from:', savePath);
     try {
       const saveData = JSON.parse(fs.readFileSync(savePath, 'utf8'));
       console.log(`📊 Save file details: runId=${saveData.runId}, stepCount=${saveData.stepCount}, lastUpdated=${saveData.lastUpdated}`);
-      
+
       // Stop current exploration
       await this.stopExploration();
-      
+
       // Initialize agent if needed
       if (!this.agent) {
         await this.initialize();
       }
-      
+
       // Restore coverage state
       this.agent.coverage.restoreFromSave(saveData);
-      
+
       // Restore agent state
       this.agent.runId = saveData.runId;
       this.agent.stepCount = saveData.stepCount;
@@ -308,15 +376,15 @@ class GlobalExploration {
       this.agent.currentHeading = saveData.currentState.heading || 0;
       this.agent.mode = saveData.currentState.mode || 'exploration';
       this.agent.stepsSinceNewCell = 0;
-      
+
       // Update screenshot service with restored runId
       const { ScreenshotService } = await import('./utils/screenshot.js');
       this.agent.screenshot = new ScreenshotService(this.agent.runId);
       await this.agent.screenshot.initialize();
-      
+
       // Restore decision history
       this.decisionHistory = saveData.decisionHistory || [];
-      
+
       // Navigate to saved position
       if (this.agent.streetViewHeadless && this.agent.currentPanoId) {
         await this.agent.streetViewHeadless.navigateToPano(this.agent.currentPanoId);
@@ -372,7 +440,7 @@ class GlobalExploration {
         lat: currentPano.position.lat,
         lng: currentPano.position.lng
       };
-      
+
       // Reconstruct path from graph for minimap (all nodes in graph are visited)
       const originalPath = Array.from(this.agent.coverage.graph.entries())
         .filter(([id, node]) => node.timestamp)  // All have timestamps
@@ -383,10 +451,10 @@ class GlobalExploration {
           panoId: id,
           timestamp: node.timestamp
         }));
-      
+
       // Use the same simplification logic as initial state
       const simplifiedPath = this.simplifyPath(originalPath);
-      
+
       // Clear in-memory tile cache; tiles will be re-generated for this run/version
       if (this.tileCache) {
         this.tileCache.clear();
@@ -401,13 +469,13 @@ class GlobalExploration {
         fullPath: simplifiedPath,  // Send simplified path for minimap
         decisionHistory: this.decisionHistory
       });
-      
+
       console.log(`State loaded: ${this.agent.stepCount} steps, ${this.agent.coverage.visitedPanos.size} locations visited`);
-      
+
       // Check if we loaded into a dead-end panorama
       if (!currentPano.links || currentPano.links.length === 0) {
         console.warn('⚠️ Loaded into a dead-end panorama. Attempting to find a valid starting point...');
-        
+
         // Try to use the last known good heading from movement history
         if (this.agent.recentMovements && this.agent.recentMovements.length > 0) {
           const lastMove = this.agent.recentMovements[this.agent.recentMovements.length - 1];
@@ -419,14 +487,14 @@ class GlobalExploration {
           console.log('No movement history available, defaulting to north (0°)');
         }
       }
-      
-      return { 
+
+      return {
         success: true,
         stepCount: this.agent.stepCount,
         locationsVisited: this.agent.coverage.visitedPanos.size,
         graphSize: this.agent.coverage.graph.size
       };
-      
+
     } catch (error) {
       console.error('Failed to load state:', error);
       return { error: error.message };
@@ -446,21 +514,22 @@ class GlobalExploration {
       return { error: 'Exploration already in progress' };
     }
 
+    try {
+      const resumeResult = await this.maybeRestoreSavedRunBeforeStart();
+      if (resumeResult?.error) {
+        return { error: resumeResult.error };
+      }
+
+      if (!this.agent) {
+        await this.initialize();
+      }
+    } catch (error) {
+      this.isExploring = false;
+      return { error: error.message };
+    }
+
     this.isExploring = true;
-    
-    if (!this.agent) {
-      await this.initialize();
-    }
-    
-    // Force garbage collection periodically if available (V8 only)
-    if (global.gc) {
-      setInterval(() => {
-        if (global.gc) {
-          console.log('Running garbage collection...');
-          global.gc();
-        }
-      }, 60000); // Every minute
-    }
+    this.startGcTimer();
 
     // Start background save timer (saves every 5 minutes as backup)
     if (this.backgroundSaveTimer) {
@@ -468,6 +537,9 @@ class GlobalExploration {
     }
     this.backgroundSaveTimer = setInterval(async () => {
       if (this.pendingSave && this.agent) {
+        if (this.agent.isStepExecuting) {
+          return;
+        }
         console.log('Background save triggered (5-minute interval)');
         await this.saveState(true);
       }
@@ -485,19 +557,25 @@ class GlobalExploration {
       if (!this.isExploring || !this.agent) {
         return;
       }
-      
+
       try {
         const stepData = await this.agent.exploreStep();
         this.consecutiveStepErrors = 0;
         this.addToHistory(stepData);
         this.cacheScreenshots(stepData);
-        
+
         // Save state periodically (not every step)
         await this.saveState();
-        
+
         // Schedule next step
         if (this.isExploring) {
-          this.explorationInterval = setTimeout(runExplorationStep, STEP_INTERVAL);
+          const nextDelay = stepData?.fallbackCause === 'api_error_429'
+            ? Math.max(STEP_INTERVAL, OPENAI_RATE_LIMIT_BACKOFF_MS)
+            : STEP_INTERVAL;
+          if (nextDelay !== STEP_INTERVAL) {
+            console.log(`OpenAI rate limit fallback; backing off next step for ${nextDelay}ms`);
+          }
+          this.explorationInterval = setTimeout(runExplorationStep, nextDelay);
         }
       } catch (error) {
         this.consecutiveStepErrors += 1;
@@ -515,14 +593,14 @@ class GlobalExploration {
           });
           return;
         }
-        
+
         // Continue exploration even after errors
         if (this.isExploring) {
           this.explorationInterval = setTimeout(runExplorationStep, STEP_INTERVAL);
         }
       }
     };
-    
+
     // Start the first step
     this.explorationInterval = setTimeout(runExplorationStep, STEP_INTERVAL);
     return { success: true };
@@ -535,18 +613,23 @@ class GlobalExploration {
     }
     this.isExploring = false;
     this.consecutiveStepErrors = 0;
-    
+
     // Clear background save timer
     if (this.backgroundSaveTimer) {
       clearInterval(this.backgroundSaveTimer);
       this.backgroundSaveTimer = null;
     }
-    
+
+    if (this.gcInterval) {
+      clearInterval(this.gcInterval);
+      this.gcInterval = null;
+    }
+
     // Force save when stopping
     if (this.pendingSave) {
       await this.saveState(true);
     }
-    
+
     this.broadcast('exploration-stopped', {});
   }
 
@@ -566,17 +649,17 @@ class GlobalExploration {
     const stepData = await this.agent.exploreStep();
     this.addToHistory(stepData);
     this.cacheScreenshots(stepData);
-    
+
     // Force save after manual step
     await this.saveState(true);
-    
+
     this.broadcast('step-complete', {});
     return { success: true };
   }
 
   async resetExploration() {
     await this.stopExploration();
-    
+
     // Clean up all screenshots from the current run before resetting
     if (this.agent && this.agent.runId) {
       try {
@@ -589,39 +672,47 @@ class GlobalExploration {
         console.error('Error cleaning up run screenshots:', error);
       }
     }
-    
+
     // Clear all history and cache
     this.decisionHistory = [];
     this.screenshotCache.clear();
     if (this.tileCache) {
       this.tileCache.clear();
     }
-    
+
     // Reset the agent
     if (this.agent) {
       await this.agent.reset();
+      this.lastSaveStep = 0;
+      this.pendingSave = true;
+      await this.saveState(true);
+    } else {
+      await fsp.rm(this.getSavePath(), { force: true });
     }
-    
+
+    this.lastSaveStep = 0;
+    this.pendingSave = false;
+
     // Create new persistent log file
     this.persistentLogger = this.createPersistentLogger();
-    
+
     this.broadcast('exploration-reset', {});
   }
 
   addToHistory(stepData) {
     // stepData.screenshots already contains thumbnail URLs without base64
     // Just store it as-is since base64 was already removed in explorationAgent
-    
+
     // Add to memory history
     this.decisionHistory.push(stepData);
-    
+
     // Cap memory usage and clean up old screenshots
     if (this.decisionHistory.length > this.maxHistoryInMemory) {
       const removedEntry = this.decisionHistory.shift();
       // Clean up old screenshot files from disk
       this.cleanupOldScreenshots(removedEntry);
     }
-    
+
     // Write to persistent log (queued async to preserve ordering without blocking)
     const logData = {
       ...stepData,
@@ -641,7 +732,7 @@ class GlobalExploration {
       // Only cache URLs, not base64 data
       const urls = stepData.screenshots.map(s => s.filename);
       this.screenshotCache.set(stepData.stepCount, urls);
-      
+
       // Aggressively prune old screenshots
       if (this.screenshotCache.size > this.cacheSize) {
         const oldestStep = Math.min(...this.screenshotCache.keys());
@@ -649,20 +740,20 @@ class GlobalExploration {
       }
     }
   }
-  
+
   cleanupOldScreenshots(entry) {
     if (!entry || !entry.screenshots || !this.agent) return;
-    
+
     try {
       // Get the screenshot directory for this step
       const stepDir = path.join(
-        ROOT_DIR, 
-        'runs', 
-        'shots', 
-        this.agent.runId, 
+        ROOT_DIR,
+        'runs',
+        'shots',
+        this.agent.runId,
         entry.stepCount.toString()
       );
-      
+
       // Check if directory exists before attempting deletion
       if (fs.existsSync(stepDir)) {
         // Remove the entire step directory
@@ -689,7 +780,7 @@ class GlobalExploration {
         stepCount: 0
       };
     }
-    
+
     // Reconstruct path from graph for initial load (all nodes are visited)
     let fullPath = [];
     if (this.agent.coverage && this.agent.coverage.graph.size > 0) {
@@ -702,11 +793,11 @@ class GlobalExploration {
           panoId: id,
           timestamp: node.timestamp
         }));
-      
+
       // Use centralized simplification method
       fullPath = this.simplifyPath(originalPath);
     }
-    
+
     return {
       isExploring: this.isExploring,
       position: this.agent.currentPosition,
@@ -727,7 +818,7 @@ class GlobalExploration {
       console.log(`📍 Path simplification disabled: ${originalPath.length} points sent as-is`);
       return originalPath;
     }
-    
+
     // Apply simplification with configured settings
     const simplifiedPath = simplifyPathWithTiers(originalPath, {
       recentThreshold: PATH_SIMPLIFICATION.recentThreshold,
@@ -736,11 +827,11 @@ class GlobalExploration {
       mediumEpsilon: PATH_SIMPLIFICATION.mediumEpsilon,
       oldEpsilon: PATH_SIMPLIFICATION.oldEpsilon
     });
-    
+
     // Log statistics
     const stats = getSimplificationStats(originalPath, simplifiedPath);
     console.log(`📍 Path simplification: ${stats.originalCount} → ${stats.simplifiedCount} points (${stats.reductionPercent}% reduction, ${(stats.sizeSaved/1024).toFixed(1)}KB saved)`);
-    
+
     return simplifiedPath;
   }
 
@@ -751,7 +842,7 @@ class GlobalExploration {
   addClient(socket) {
     this.connectedClients.add(socket.id);
     console.log(`Client connected: ${socket.id}. Total clients: ${this.connectedClients.size}`);
-    
+
     // Send current state to new client
     socket.emit('initial-state', {
       ...this.getCurrentState(),
@@ -765,7 +856,7 @@ class GlobalExploration {
   removeClient(socketId) {
     this.connectedClients.delete(socketId);
     console.log(`Client disconnected: ${socketId}. Total clients: ${this.connectedClients.size}`);
-    
+
     // Broadcast updated client count
     this.broadcast('client-count', { count: this.connectedClients.size });
   }
@@ -933,12 +1024,12 @@ app.get('/metrics', (req, res) => {
 // Helper function to verify admin token
 function verifyAdminToken(token) {
   if (!token) return false;
-  
+
   try {
     // Decode the simple token (in production, use proper JWT)
     const decoded = Buffer.from(token, 'base64').toString();
     const [prefix, timestamp] = decoded.split(':');
-    
+
     // Check if token is valid and not expired (1 hour)
     if (prefix === 'admin' && timestamp) {
       const tokenAge = Date.now() - parseInt(timestamp);
@@ -947,7 +1038,7 @@ function verifyAdminToken(token) {
   } catch (e) {
     return false;
   }
-  
+
   return false;
 }
 
@@ -963,10 +1054,15 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'Admin authentication required' });
       return;
     }
-    
-    const result = await globalExploration.startExploration();
-    if (result.error) {
-      socket.emit('error', { message: result.error });
+
+    try {
+      const result = await globalExploration.startExploration();
+      if (result.error) {
+        socket.emit('error', { message: result.error });
+      }
+    } catch (error) {
+      console.error('Start exploration error:', error);
+      socket.emit('error', { message: error.message });
     }
   });
 
@@ -977,7 +1073,7 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'Admin authentication required' });
       return;
     }
-    
+
     await globalExploration.stopExploration();
   });
 
@@ -988,7 +1084,7 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'Admin authentication required' });
       return;
     }
-    
+
     try {
       const result = await globalExploration.takeSingleStep();
       if (result.error) {
@@ -1007,10 +1103,10 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'Admin authentication required' });
       return;
     }
-    
+
     await globalExploration.resetExploration();
   });
-  
+
   socket.on('load-save', async (data) => {
     // Check for admin token
     const token = data?.token;
@@ -1018,10 +1114,10 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'Admin authentication required' });
       return;
     }
-    
+
     console.log('📂 User requested to load saved state...');
     const result = await globalExploration.loadState();
-    
+
     if (result.error) {
       console.log(`❌ Failed to load state: ${result.error}`);
       socket.emit('error', { message: result.error });
@@ -1071,7 +1167,7 @@ server.listen(PORT, HOST, async () => {
 
   // Auto-restore and auto-start in production
   if (process.env.NODE_ENV === 'production') {
-    const autoSavePath = path.join(DATA_DIR, 'saves', 'current-run.json');
+    const autoSavePath = globalExploration.getSavePath();
     if (fs.existsSync(autoSavePath)) {
       console.log('🔄 Found save file, auto-restoring...');
       try {

@@ -2,14 +2,19 @@ import OpenAI from 'openai';
 
 export class OpenAIService {
   constructor() {
-    this.client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
-    });
-
     const parseOr = (value, fallback) => {
       const parsed = parseInt(value, 10);
       return Number.isFinite(parsed) ? parsed : fallback;
     };
+
+    this.openaiTimeoutMs = parseOr(process.env.OPENAI_TIMEOUT_MS ?? '45000', 45000);
+    this.openaiMaxRetries = parseOr(process.env.OPENAI_MAX_RETRIES ?? '1', 1);
+
+    this.client = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      timeout: this.openaiTimeoutMs,
+      maxRetries: this.openaiMaxRetries
+    });
 
     this.maxDecisionRetries = parseOr(process.env.OPENAI_DECISION_RETRIES ?? '1', 1);
     this.decisionMaxTokens = parseOr(process.env.OPENAI_DECISION_MAX_TOKENS ?? '2000', 2000);

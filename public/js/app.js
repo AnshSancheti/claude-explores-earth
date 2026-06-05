@@ -151,6 +151,7 @@ class ExplorationApp {
 
     this.socket.on('error', (data) => {
       console.error('Server error:', data);
+      this.uiManager.showError(data?.message || 'Server error');
       this.uiManager.setStepButtonState(false);
     });
 
