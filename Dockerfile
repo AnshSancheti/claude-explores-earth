@@ -46,4 +46,4 @@ ENV PUPPETEER_EXECUTABLE_PATH="/usr/bin/chromium"
 # Set Node.js memory limits and enable garbage collection
 ENV NODE_OPTIONS="--max-old-space-size=512 --expose-gc"
 
-CMD [ "npm", "run", "start" ]
+CMD [ "node", "server/index.js" ]
