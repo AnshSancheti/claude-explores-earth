@@ -5,6 +5,8 @@
 
 app = 'claude-explores-earth'
 primary_region = 'ewr'
+kill_signal = 'SIGTERM'
+kill_timeout = '150s'
 
 [build]
 

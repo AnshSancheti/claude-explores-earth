@@ -156,7 +156,9 @@ const STEP_INTERVAL = Math.max(
 );
 const STEP_INTERVAL_CLAMPED = Number.isFinite(requestedStepInterval) && requestedStepInterval < minStepInterval;
 const DECISION_HISTORY_LIMIT = parseInt(process.env.DECISION_HISTORY_LIMIT) || 20;
-const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL) || 500; // Save every N steps
+const SAVE_INTERVAL = parseIntOr(process.env.SAVE_INTERVAL, 25); // Save every N completed steps
+const INITIAL_FORCE_SAVE_STEPS = parseIntOr(process.env.INITIAL_FORCE_SAVE_STEPS, 10);
+const BACKGROUND_SAVE_INTERVAL_MS = parseIntOr(process.env.BACKGROUND_SAVE_INTERVAL_MS, 30000);
 const MAX_CONSECUTIVE_STEP_ERRORS = parseInt(process.env.MAX_CONSECUTIVE_STEP_ERRORS || '25', 10);
 const OPENAI_RATE_LIMIT_BACKOFF_MS = parseIntOr(process.env.OPENAI_RATE_LIMIT_BACKOFF_MS, 30000);
 const STOP_STEP_DRAIN_TIMEOUT_MS = parseIntOr(process.env.STOP_STEP_DRAIN_TIMEOUT_MS, 120000);
@@ -203,7 +205,7 @@ class GlobalExploration {
     this._saveInFlight = null; // Mutex: only one saveState writes at a time
     this._logQueue = Promise.resolve(); // Serial queue for log appends
     this.backgroundSaveTimer = null;
-    this.backgroundSaveInterval = 5 * 60 * 1000; // 5 minutes in milliseconds
+    this.backgroundSaveInterval = BACKGROUND_SAVE_INTERVAL_MS;
     this.gcInterval = null;
     // Tile cache for archived path rendering
     this.tileCache = new Map(); // key: `${z}/${x}/${y}@${archivedCount}` -> Buffer
@@ -610,8 +612,8 @@ class GlobalExploration {
         this.addToHistory(stepData);
         this.cacheScreenshots(stepData);
 
-        // Save state periodically (not every step)
-        await this.saveState();
+        // Save early steps eagerly so restarts do not jump back to the first pano.
+        await this.saveState(this.agent.stepCount <= INITIAL_FORCE_SAVE_STEPS);
 
         // Schedule next step
         if (this.isExploring) {
@@ -1296,6 +1298,8 @@ server.listen(PORT, HOST, async () => {
     console.log(`⚠️  STEP_INTERVAL_MS=${requestedStepInterval}ms was below floor; clamped to ${STEP_INTERVAL}ms`);
   }
   console.log(`💾 Save interval: Every ${SAVE_INTERVAL} steps`);
+  console.log(`💾 Initial force-save steps: ${INITIAL_FORCE_SAVE_STEPS}`);
+  console.log(`💾 Background save interval: ${BACKGROUND_SAVE_INTERVAL_MS}ms`);
   console.log(`📜 Decision history limit: ${DECISION_HISTORY_LIMIT} entries`);
   console.log(`🗺️  Path simplification: ${PATH_SIMPLIFICATION.enabled ? `Enabled (epsilon: ${PATH_SIMPLIFICATION.recentEpsilon}/${PATH_SIMPLIFICATION.mediumEpsilon}/${PATH_SIMPLIFICATION.oldEpsilon})` : 'Disabled'}`);
   console.log(`🚧 Dead-end recovery: ${process.env.MAX_DEAD_END_DISTANCE || 200}m max distance`);
@@ -1333,22 +1337,33 @@ server.listen(PORT, HOST, async () => {
 });
 
 // Graceful shutdown handling
-process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, saving state and shutting down...');
-  await globalExploration.stopExploration();
-  if (globalExploration.pendingSave || globalExploration.agent) {
+let shutdownInProgress = false;
+async function gracefulShutdown(signal) {
+  if (shutdownInProgress) {
+    console.log(`${signal} received while shutdown is already in progress.`);
+    return;
+  }
+  shutdownInProgress = true;
+
+  console.log(`${signal} received, saving state and shutting down...`);
+  const stopResult = await globalExploration.stopExploration();
+  if (!stopResult?.error && (globalExploration.pendingSave || globalExploration.agent)) {
     await globalExploration.saveState(true);
   }
   await globalExploration._logQueue;
-  process.exit(0);
+  process.exit(stopResult?.error ? 1 : 0);
+}
+
+process.on('SIGTERM', () => {
+  gracefulShutdown('SIGTERM').catch(error => {
+    console.error('Graceful SIGTERM shutdown failed:', error);
+    process.exit(1);
+  });
 });
 
-process.on('SIGINT', async () => {
-  console.log('SIGINT received, saving state and shutting down...');
-  await globalExploration.stopExploration();
-  if (globalExploration.pendingSave || globalExploration.agent) {
-    await globalExploration.saveState(true);
-  }
-  await globalExploration._logQueue;
-  process.exit(0);
+process.on('SIGINT', () => {
+  gracefulShutdown('SIGINT').catch(error => {
+    console.error('Graceful SIGINT shutdown failed:', error);
+    process.exit(1);
+  });
 });
