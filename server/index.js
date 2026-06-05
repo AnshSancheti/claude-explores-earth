@@ -159,6 +159,7 @@ const DECISION_HISTORY_LIMIT = parseInt(process.env.DECISION_HISTORY_LIMIT) || 2
 const SAVE_INTERVAL = parseInt(process.env.SAVE_INTERVAL) || 500; // Save every N steps
 const MAX_CONSECUTIVE_STEP_ERRORS = parseInt(process.env.MAX_CONSECUTIVE_STEP_ERRORS || '25', 10);
 const OPENAI_RATE_LIMIT_BACKOFF_MS = parseIntOr(process.env.OPENAI_RATE_LIMIT_BACKOFF_MS, 30000);
+const STOP_STEP_DRAIN_TIMEOUT_MS = parseIntOr(process.env.STOP_STEP_DRAIN_TIMEOUT_MS, 120000);
 const TILE_TAIL_POINTS = parseInt(process.env.TILE_RECENT_TAIL_POINTS) || 1500; // recent points kept as vector
 const TILE_MAX_CACHE = parseInt(process.env.TILE_MAX_CACHE) || 256;
 const TILE_VERSION_STEP = parseInt(process.env.TILE_VERSION_STEP) || 1000; // archive version increments every N archived points
@@ -212,6 +213,7 @@ class GlobalExploration {
       fullPath: null
     };
     this.consecutiveStepErrors = 0;
+    this.isStepPipelineActive = false;
   }
 
   getSavePath() {
@@ -272,6 +274,26 @@ class GlobalExploration {
         global.gc();
       }
     }, 60000);
+  }
+
+  async waitForStepToFinish(context = 'Operation') {
+    if (!this.isStepPipelineActive && !this.agent?.isStepExecuting) {
+      return { success: true };
+    }
+
+    console.log(`${context}: waiting for in-flight step to finish before mutating exploration state...`);
+    const start = Date.now();
+    while (this.isStepPipelineActive || this.agent?.isStepExecuting) {
+      if (Date.now() - start > STOP_STEP_DRAIN_TIMEOUT_MS) {
+        const message = `${context} timed out waiting for the current step to finish`;
+        console.error(message);
+        return { error: message };
+      }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+
+    console.log(`${context}: in-flight step finished.`);
+    return { success: true };
   }
 
   createPersistentLogger() {
@@ -362,8 +384,13 @@ class GlobalExploration {
       const saveData = JSON.parse(fs.readFileSync(savePath, 'utf8'));
       console.log(`📊 Save file details: runId=${saveData.runId}, stepCount=${saveData.stepCount}, lastUpdated=${saveData.lastUpdated}`);
 
-      // Stop current exploration
-      await this.stopExploration();
+      // Stop current exploration and wait for any in-flight step before replacing state.
+      // Loading is a destructive restore, so do not overwrite the selected save
+      // with the state being replaced.
+      const stopResult = await this.stopExploration({ flushPendingSave: false });
+      if (stopResult?.error) {
+        return stopResult;
+      }
 
       // Initialize agent if needed
       if (!this.agent) {
@@ -446,6 +473,9 @@ class GlobalExploration {
         lng: currentPano.position.lng
       };
 
+      this.pendingSave = true;
+      await this.saveState(true);
+
       // Reconstruct path from graph for minimap (all nodes in graph are visited)
       const originalPath = Array.from(this.agent.coverage.graph.entries())
         .filter(([id, node]) => node.timestamp)  // All have timestamps
@@ -518,6 +548,9 @@ class GlobalExploration {
     if (this.isExploring) {
       return { error: 'Exploration already in progress' };
     }
+    if (this.isStepPipelineActive || this.agent?.isStepExecuting) {
+      return { error: 'Cannot start while another step is still finishing' };
+    }
 
     try {
       const resumeResult = await this.maybeRestoreSavedRunBeforeStart();
@@ -542,7 +575,7 @@ class GlobalExploration {
     }
     this.backgroundSaveTimer = setInterval(async () => {
       if (this.pendingSave && this.agent) {
-        if (this.agent.isStepExecuting) {
+        if (this.isStepPipelineActive || this.agent.isStepExecuting) {
           return;
         }
         console.log('Background save triggered (5-minute interval)');
@@ -562,7 +595,15 @@ class GlobalExploration {
       if (!this.isExploring || !this.agent) {
         return;
       }
+      if (this.isStepPipelineActive || this.agent.isStepExecuting) {
+        console.warn('Step pipeline already active, delaying scheduled step');
+        if (this.isExploring) {
+          this.explorationInterval = setTimeout(runExplorationStep, STEP_INTERVAL);
+        }
+        return;
+      }
 
+      this.isStepPipelineActive = true;
       try {
         const stepData = await this.agent.exploreStep();
         this.consecutiveStepErrors = 0;
@@ -592,7 +633,7 @@ class GlobalExploration {
             `Stopping exploration after ${this.consecutiveStepErrors} consecutive step errors ` +
             `(threshold ${MAX_CONSECUTIVE_STEP_ERRORS}).`
           );
-          await this.stopExploration();
+          await this.stopExploration({ waitForActiveStep: false });
           this.broadcast('error', {
             message: `Exploration halted after repeated errors (${this.consecutiveStepErrors}).`
           });
@@ -603,6 +644,8 @@ class GlobalExploration {
         if (this.isExploring) {
           this.explorationInterval = setTimeout(runExplorationStep, STEP_INTERVAL);
         }
+      } finally {
+        this.isStepPipelineActive = false;
       }
     };
 
@@ -611,7 +654,7 @@ class GlobalExploration {
     return { success: true };
   }
 
-  async stopExploration() {
+  async stopExploration({ waitForActiveStep = true, flushPendingSave = true } = {}) {
     if (this.explorationInterval) {
       clearTimeout(this.explorationInterval);
       this.explorationInterval = null;
@@ -630,17 +673,29 @@ class GlobalExploration {
       this.gcInterval = null;
     }
 
+    if (waitForActiveStep) {
+      const waitResult = await this.waitForStepToFinish('Stop exploration');
+      if (waitResult.error) {
+        this.broadcast('error', { message: waitResult.error });
+        return waitResult;
+      }
+    }
+
     // Force save when stopping
-    if (this.pendingSave) {
+    if (flushPendingSave && this.pendingSave) {
       await this.saveState(true);
     }
 
     this.broadcast('exploration-stopped', {});
+    return { success: true };
   }
 
   async takeSingleStep() {
     if (this.isExploring) {
       return { error: 'Cannot take step while exploration is running' };
+    }
+    if (this.isStepPipelineActive || this.agent?.isStepExecuting) {
+      return { error: 'Cannot take step while another step is still finishing' };
     }
 
     if (!this.agent) {
@@ -651,19 +706,37 @@ class GlobalExploration {
       });
     }
 
-    const stepData = await this.agent.exploreStep();
-    this.addToHistory(stepData);
-    this.cacheScreenshots(stepData);
+    this.isStepPipelineActive = true;
+    try {
+      const stepData = await this.agent.exploreStep();
+      this.addToHistory(stepData);
+      this.cacheScreenshots(stepData);
 
-    // Force save after manual step
+      // Force save after manual step
+      await this.saveState(true);
+
+      this.broadcast('step-complete', {});
+      return { success: true };
+    } finally {
+      this.isStepPipelineActive = false;
+    }
+  }
+
+  async saveNow() {
+    const waitResult = await this.waitForStepToFinish('Save now');
+    if (waitResult.error) {
+      return waitResult;
+    }
+
     await this.saveState(true);
-
-    this.broadcast('step-complete', {});
-    return { success: true };
+    return { success: true, stepCount: this.agent?.stepCount || 0 };
   }
 
   async resetExploration() {
-    await this.stopExploration();
+    const stopResult = await this.stopExploration();
+    if (stopResult?.error) {
+      return stopResult;
+    }
 
     // Clean up all screenshots from the current run before resetting
     if (this.agent && this.agent.runId) {
@@ -702,6 +775,7 @@ class GlobalExploration {
     this.persistentLogger = this.createPersistentLogger();
 
     this.broadcast('exploration-reset', {});
+    return { success: true };
   }
 
   addToHistory(stepData) {
@@ -1114,7 +1188,15 @@ io.on('connection', (socket) => {
       return;
     }
 
-    await globalExploration.stopExploration();
+    try {
+      const result = await globalExploration.stopExploration();
+      if (result?.error) {
+        socket.emit('error', { message: result.error });
+      }
+    } catch (error) {
+      console.error('Stop exploration error:', error);
+      socket.emit('error', { message: error.message });
+    }
   });
 
   socket.on('take-single-step', async (data) => {
@@ -1144,7 +1226,15 @@ io.on('connection', (socket) => {
       return;
     }
 
-    await globalExploration.resetExploration();
+    try {
+      const result = await globalExploration.resetExploration();
+      if (result?.error) {
+        socket.emit('error', { message: result.error });
+      }
+    } catch (error) {
+      console.error('Reset exploration error:', error);
+      socket.emit('error', { message: error.message });
+    }
   });
 
   socket.on('load-save', async (data) => {
@@ -1155,15 +1245,20 @@ io.on('connection', (socket) => {
       return;
     }
 
-    console.log('📂 User requested to load saved state...');
-    const result = await globalExploration.loadState();
+    try {
+      console.log('📂 User requested to load saved state...');
+      const result = await globalExploration.loadState();
 
-    if (result.error) {
-      console.log(`❌ Failed to load state: ${result.error}`);
-      socket.emit('error', { message: result.error });
-    } else {
-      console.log(`✅ Successfully loaded state: ${result.stepCount} steps, ${result.locationsVisited} locations, ${result.graphSize} nodes`);
-      socket.emit('save-loaded', result);
+      if (result.error) {
+        console.log(`❌ Failed to load state: ${result.error}`);
+        socket.emit('error', { message: result.error });
+      } else {
+        console.log(`✅ Successfully loaded state: ${result.stepCount} steps, ${result.locationsVisited} locations, ${result.graphSize} nodes`);
+        socket.emit('save-loaded', result);
+      }
+    } catch (error) {
+      console.error('Load save error:', error);
+      socket.emit('error', { message: error.message });
     }
   });
 
@@ -1174,9 +1269,14 @@ io.on('connection', (socket) => {
       return;
     }
     try {
-      await globalExploration.saveState(true);
-      socket.emit('save-complete', { success: true, stepCount: globalExploration.agent?.stepCount || 0 });
+      const result = await globalExploration.saveNow();
+      if (result?.error) {
+        socket.emit('error', { message: result.error });
+      } else {
+        socket.emit('save-complete', { success: true, stepCount: result.stepCount });
+      }
     } catch (e) {
+      console.error('Save now error:', e);
       socket.emit('error', { message: 'Failed to save state' });
     }
   });
