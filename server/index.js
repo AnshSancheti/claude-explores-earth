@@ -11,10 +11,13 @@ import { simplifyPathWithTiers, getSimplificationStats } from './utils/pathSimpl
 import fs from 'fs';
 import * as fsp from 'fs/promises';
 import path from 'path';
-import { createCanvas } from 'canvas';
+import crypto, { randomUUID } from 'crypto';
 import { verifySignature } from './utils/urlSigner.js';
+import { RunStore } from './services/runStore.js';
+import { WorkerSupervisor } from './worker/workerSupervisor.js';
 
 dotenv.config();
+const IS_WORKER_PROCESS = process.env.EXPLORATION_WORKER === '1';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -105,8 +108,7 @@ app.post('/api/admin/auth', express.json(), (req, res) => {
   }
 
   if (password === controlPassword) {
-    // Generate a simple session token (in production, use proper JWT)
-    const token = Buffer.from(`admin:${Date.now()}`).toString('base64');
+    const token = createAdminToken();
     res.json({
       success: true,
       token,
@@ -182,11 +184,24 @@ const START_LOCATION = {
   lng: parseFloat(process.env.START_LNG)
 };
 const START_PANO_ID = process.env.START_PANO_ID || null;
+const EMPTY_TILE_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAAAGUlEQVR42u3BAQ0AAADCoPdPbQ43oAAAAAAAAAAA4N8AAQAAATGM2YAAAAAASUVORK5CYII=',
+  'base64'
+);
+let createCanvasFn = null;
+
+async function getCreateCanvas() {
+  if (!createCanvasFn) {
+    ({ createCanvas: createCanvasFn } = await import('canvas'));
+  }
+  return createCanvasFn;
+}
 
 // Global exploration state
 class GlobalExploration {
-  constructor() {
+  constructor({ emit = null } = {}) {
     this.agent = null;
+    this.emit = emit || ((event, data) => io.emit(event, data));
     this.isExploring = false;
     this.explorationInterval = null;
     this.connectedClients = new Set();
@@ -194,6 +209,7 @@ class GlobalExploration {
     this.screenshotCache = new Map(); // Cache only screenshot URLs, not data
     this.logger = new Logger();
     this.persistentLogger = this.createPersistentLogger();
+    this.runStore = new RunStore({ dataDir: DATA_DIR });
     // Keep enough history for new clients to see recent decisions with screenshots
     this.maxHistoryInMemory = Math.max(DECISION_HISTORY_LIMIT * 2, 50);
     this.cacheSize = this.maxHistoryInMemory; // Match cache to history size
@@ -214,12 +230,92 @@ class GlobalExploration {
       generatedAt: 0,
       fullPath: null
     };
+    this.lifecycleLock = Promise.resolve();
+    this.activeEpoch = 0;
+    this.activeStepId = null;
+    this.stepStatus = 'idle';
+    this.lastEventSequence = 0;
+    this.lastEventId = null;
+    this.lastSnapshotSequence = 0;
+    this.lastSnapshotAt = null;
+    this.lastCompletedStep = 0;
+    this.restoreSource = 'none';
+    this.allowEmptySaveOnce = false;
     this.consecutiveStepErrors = 0;
     this.isStepPipelineActive = false;
   }
 
   getSavePath() {
-    return path.join(DATA_DIR, 'saves', 'current-run.json');
+    return this.runStore.getCurrentSavePath();
+  }
+
+  async withLifecycleLock(context, fn) {
+    const previous = this.lifecycleLock;
+    let release = null;
+    this.lifecycleLock = new Promise(resolve => {
+      release = resolve;
+    });
+
+    await previous.catch(error => {
+      console.error(`${context}: previous lifecycle operation failed:`, error);
+    });
+
+    try {
+      return await fn();
+    } finally {
+      release();
+    }
+  }
+
+  getRunId() {
+    return this.agent?.runId || null;
+  }
+
+  getEventLogMeta() {
+    return {
+      lastSequence: this.lastEventSequence,
+      lastEventId: this.lastEventId
+    };
+  }
+
+  createSaveSnapshot(overrides = {}) {
+    if (!this.agent || !this.agent.coverage) return null;
+
+    return {
+      schemaVersion: 2,
+      runId: this.agent.runId,
+      activeEpoch: this.activeEpoch,
+      lastUpdated: new Date().toISOString(),
+      stepCount: this.agent.stepCount,
+      currentState: {
+        panoId: this.agent.currentPanoId,
+        position: this.agent.currentPosition,
+        heading: this.agent.currentHeading,
+        mode: this.agent.mode
+      },
+      stats: this.agent.coverage.getStats(),
+      graph: this.agent.coverage.serializeGraph(),
+      recentHistory: this.agent.coverage.recentHistory,
+      decisionHistory: this.decisionHistory.slice(-DECISION_HISTORY_LIMIT),
+      eventLog: this.getEventLogMeta(),
+      ...overrides
+    };
+  }
+
+  async appendRunEvent(type, payload = {}, { stepId = null, stepCount = null, epoch = this.activeEpoch, runId = null } = {}) {
+    const eventRunId = runId || this.getRunId() || payload.runId;
+    if (!eventRunId) return null;
+
+    const event = await this.runStore.appendEvent(eventRunId, {
+      type,
+      epoch,
+      stepId,
+      stepCount,
+      payload
+    });
+    this.lastEventSequence = event.sequence;
+    this.lastEventId = event.eventId;
+    return event;
   }
 
   hasMeaningfulAgentState() {
@@ -236,11 +332,16 @@ class GlobalExploration {
     const savePath = this.getSavePath();
     if (!fs.existsSync(savePath)) return null;
 
-    const saveData = JSON.parse(fs.readFileSync(savePath, 'utf8'));
-    const stepCount = Number(saveData.stepCount) || 0;
-    const locationsVisited = Number(saveData.stats?.locationsVisited) || 0;
-    const pathLength = Number(saveData.stats?.pathLength) || 0;
-    return { savePath, stepCount, locationsVisited, pathLength };
+    try {
+      const saveData = JSON.parse(fs.readFileSync(savePath, 'utf8'));
+      const stepCount = Number(saveData.stepCount) || 0;
+      const locationsVisited = Number(saveData.stats?.locationsVisited) || 0;
+      const pathLength = Number(saveData.stats?.pathLength) || 0;
+      return { savePath, stepCount, locationsVisited, pathLength };
+    } catch (error) {
+      console.error(`Failed to read save summary at ${savePath}:`, error);
+      return null;
+    }
   }
 
   async maybeRestoreSavedRunBeforeStart() {
@@ -261,7 +362,7 @@ class GlobalExploration {
       `🔄 Resuming saved run before start: ${saveSummary.stepCount} steps, ` +
       `${saveSummary.locationsVisited} locations`
     );
-    const result = await this.loadState();
+    const result = await this.loadState({ skipLock: true });
     if (result.error) {
       return { error: `Failed to resume saved run: ${result.error}` };
     }
@@ -334,62 +435,62 @@ class GlobalExploration {
   }
 
   async _doSave() {
-    const saveDir = path.join(DATA_DIR, 'saves');
-    await fsp.mkdir(saveDir, { recursive: true });
-
-    const saveData = {
-      runId: this.agent.runId,
-      lastUpdated: new Date().toISOString(),
-      stepCount: this.agent.stepCount,
-      currentState: {
-        panoId: this.agent.currentPanoId,
-        position: this.agent.currentPosition,
-        heading: this.agent.currentHeading,
-        mode: this.agent.mode
-      },
-      stats: this.agent.coverage.getStats(),
-      graph: this.agent.coverage.serializeGraph(),
-      recentHistory: this.agent.coverage.recentHistory,
-      decisionHistory: this.decisionHistory.slice(-DECISION_HISTORY_LIMIT)
-      // Path removed - will be reconstructed from graph
-    };
-
-    // Write to temp file first, then rename (atomic write)
-    const tempPath = path.join(saveDir, 'current-run.tmp.json');
-    const finalPath = path.join(saveDir, 'current-run.json');
+    const saveData = this.createSaveSnapshot();
+    if (!saveData) return;
+    const graphSize = Object.keys(saveData.graph || {}).length;
+    if ((Number(saveData.stepCount) || 0) === 0 && graphSize === 0 && !this.allowEmptySaveOnce) {
+      console.warn('Skipping empty save to avoid overwriting an existing run after a failed restore.');
+      this.pendingSave = false;
+      return;
+    }
+    this.allowEmptySaveOnce = false;
 
     try {
-      await fsp.writeFile(tempPath, JSON.stringify(saveData, null, 2));
-      // Atomic rename
-      await fsp.rename(tempPath, finalPath);
-      console.log(`State saved: ${this.agent.stepCount} steps, ${Object.keys(saveData.graph).length} nodes`);
+      await this.runStore.writeSnapshot(this.agent.runId, saveData);
+      console.log(`State saved: ${this.agent.stepCount} steps, ${graphSize} nodes`);
       this.lastSaveStep = this.agent.stepCount;
+      this.lastSnapshotSequence = saveData.eventLog.lastSequence;
+      this.lastSnapshotAt = Date.now();
       this.pendingSave = false;
     } catch (error) {
       console.error('Failed to save state:', error);
-      // Clean up temp file if it exists
-      fsp.unlink(tempPath).catch(() => {});
     }
   }
 
   // Load state from save file
-  async loadState() {
-    const savePath = this.getSavePath();
-
-    if (!fs.existsSync(savePath)) {
-      console.log('📄 No save file found at:', savePath);
-      return { error: 'No save file found' };
+  async loadState(options = {}) {
+    if (!options.skipLock) {
+      return this.withLifecycleLock('Load state', () =>
+        this.loadState({ ...options, skipLock: true })
+      );
     }
+
+    const savePath = this.getSavePath();
+    const hadAgentBeforeLoad = !!this.agent;
 
     console.log('📄 Loading save file from:', savePath);
     try {
-      const saveData = JSON.parse(fs.readFileSync(savePath, 'utf8'));
-      console.log(`📊 Save file details: runId=${saveData.runId}, stepCount=${saveData.stepCount}, lastUpdated=${saveData.lastUpdated}`);
+      const restore = await this.runStore.restoreCurrent();
+      if (!restore.snapshot) {
+        console.log('📄 No save file found at:', savePath);
+        return { error: 'No save file found' };
+      }
+
+      for (const warning of restore.warnings || []) {
+        console.warn(warning);
+      }
+
+      const saveData = restore.snapshot;
+      this.restoreSource = restore.restoreSource;
+      console.log(
+        `📊 Save file details: runId=${saveData.runId}, stepCount=${saveData.stepCount}, ` +
+        `lastUpdated=${saveData.lastUpdated}, source=${restore.restoreSource}, replayedEvents=${restore.events.length}`
+      );
 
       // Stop current exploration and wait for any in-flight step before replacing state.
       // Loading is a destructive restore, so do not overwrite the selected save
       // with the state being replaced.
-      const stopResult = await this.stopExploration({ flushPendingSave: false });
+      const stopResult = await this.stopExploration({ flushPendingSave: false, skipLock: true });
       if (stopResult?.error) {
         return stopResult;
       }
@@ -398,6 +499,15 @@ class GlobalExploration {
       if (!this.agent) {
         await this.initialize();
       }
+
+      this.activeEpoch = Math.max(this.activeEpoch, Number(saveData.activeEpoch) || 0) + 1;
+      this.lastEventSequence = Number(saveData.eventLog?.lastSequence) || 0;
+      this.lastEventId = saveData.eventLog?.lastEventId || null;
+      this.lastSnapshotSequence = this.lastEventSequence;
+      this.lastSnapshotAt = saveData.lastUpdated ? Date.parse(saveData.lastUpdated) : null;
+      this.lastCompletedStep = Number(saveData.stepCount) || 0;
+      this.stepStatus = 'idle';
+      this.activeStepId = null;
 
       // Restore coverage state
       this.agent.coverage.restoreFromSave(saveData);
@@ -475,22 +585,17 @@ class GlobalExploration {
         lng: currentPano.position.lng
       };
 
+      const loadEventType = this.restoreSource === 'legacy-snapshot'
+        ? 'legacy_snapshot_imported'
+        : 'state_loaded';
+      await this.appendRunEvent(loadEventType, {
+        restoreSource: this.restoreSource,
+        replayedEvents: restore.events.length,
+        snapshot: this.createSaveSnapshot()
+      });
+
       this.pendingSave = true;
       await this.saveState(true);
-
-      // Reconstruct path from graph for minimap (all nodes in graph are visited)
-      const originalPath = Array.from(this.agent.coverage.graph.entries())
-        .filter(([id, node]) => node.timestamp)  // All have timestamps
-        .sort((a, b) => a[1].timestamp - b[1].timestamp)
-        .map(([id, node]) => ({
-          lat: node.lat,
-          lng: node.lng,
-          panoId: id,
-          timestamp: node.timestamp
-        }));
-
-      // Use the same simplification logic as initial state
-      const simplifiedPath = this.simplifyPath(originalPath);
 
       // Clear in-memory tile cache; tiles will be re-generated for this run/version
       if (this.tileCache) {
@@ -499,11 +604,12 @@ class GlobalExploration {
 
       // Broadcast restored state to all clients
       this.broadcast('state-loaded', {
+        runId: this.agent.runId,
+        sequence: this.lastEventSequence,
         stepCount: this.agent.stepCount,
         position: this.agent.currentPosition,
         panoId: this.agent.currentPanoId,
         stats: this.agent.coverage.getStats(),
-        fullPath: simplifiedPath,  // Send simplified path for minimap
         decisionHistory: this.decisionHistory
       });
 
@@ -529,11 +635,18 @@ class GlobalExploration {
         success: true,
         stepCount: this.agent.stepCount,
         locationsVisited: this.agent.coverage.visitedPanos.size,
-        graphSize: this.agent.coverage.graph.size
+        graphSize: this.agent.coverage.graph.size,
+        restoreSource: this.restoreSource
       };
 
     } catch (error) {
       console.error('Failed to load state:', error);
+      this.pendingSave = false;
+      this.stepStatus = 'restore-failed';
+      if (!hadAgentBeforeLoad && this.agent) {
+        await this.agent.close().catch(() => {});
+        this.agent = null;
+      }
       return { error: error.message };
     }
   }
@@ -546,7 +659,186 @@ class GlobalExploration {
     }
   }
 
-  async startExploration() {
+  createStepContext({ manual = false } = {}) {
+    return {
+      runId: this.agent.runId,
+      epoch: this.activeEpoch,
+      stepId: randomUUID(),
+      stepCount: (this.agent.stepCount || 0) + 1,
+      startedAt: new Date().toISOString(),
+      manual
+    };
+  }
+
+  isCurrentStepContext(stepContext) {
+    return (
+      this.agent &&
+      stepContext &&
+      this.agent.runId === stepContext.runId &&
+      this.activeEpoch === stepContext.epoch &&
+      this.activeStepId === stepContext.stepId
+    );
+  }
+
+  getStepStats(stepData) {
+    if (stepData?.stats) return stepData.stats;
+    return this.agent?.coverage ? this.agent.coverage.getStats() : {};
+  }
+
+  stripInternalStepData(stepData) {
+    if (!stepData || typeof stepData !== 'object') return stepData;
+    const { coverageDelta, ...publicStepData } = stepData;
+    return publicStepData;
+  }
+
+  logCommittedStep(stepData) {
+    if (!stepData) return;
+
+    this.logger.log('exploration-step', {
+      step: stepData.stepCount,
+      from: stepData.previousPanoId || null,
+      to: stepData.panoId,
+      decision: stepData.reasoning,
+      actionReason: stepData.actionReason,
+      eventType: stepData.eventType,
+      autoMove: stepData.autoMove,
+      fallbackCause: stepData.fallbackCause,
+      sceneTag: stepData.sceneTag || null,
+      position: stepData.newPosition || this.agent?.currentPosition || null,
+      stats: this.getStepStats(stepData)
+    });
+  }
+
+  async commitStepResult(stepContext, stepData) {
+    if (!this.isCurrentStepContext(stepContext)) {
+      console.warn(`Suppressing stale step ${stepContext?.stepId || 'unknown'} for run ${stepContext?.runId || 'unknown'}`);
+      await this.appendRunEvent('step_abandoned', {
+        reason: 'stale_step_context',
+        runId: stepContext?.runId,
+        stepData: stepData ? {
+          stepCount: stepData.stepCount,
+          panoId: stepData.panoId,
+          eventType: stepData.eventType
+        } : null
+      }, {
+        runId: stepContext?.runId,
+        epoch: stepContext?.epoch,
+        stepId: stepContext?.stepId,
+        stepCount: stepContext?.stepCount
+      }).catch(error => {
+        console.error('Failed to record stale step abandonment:', error);
+      });
+      return { committed: false };
+    }
+
+    const publicStepData = this.stripInternalStepData(stepData);
+
+    if (publicStepData) {
+      this.addToHistory(publicStepData);
+      this.cacheScreenshots(publicStepData);
+    }
+
+    const event = await this.appendRunEvent('step_completed', {
+      stepData
+    }, {
+      runId: stepContext.runId,
+      epoch: stepContext.epoch,
+      stepId: stepContext.stepId,
+      stepCount: stepData?.stepCount || this.agent.stepCount
+    });
+
+    this.lastCompletedStep = this.agent.stepCount;
+    this.pendingSave = true;
+    this.logCommittedStep(stepData);
+
+    if (publicStepData) {
+      const { intermediateEvents = [], ...primaryStepData } = publicStepData;
+      for (const intermediateEvent of intermediateEvents) {
+        this.broadcast('move-decision', {
+          ...intermediateEvent,
+          runId: stepContext.runId,
+          activeEpoch: stepContext.epoch,
+          stepId: stepContext.stepId,
+          sequence: event?.sequence || null,
+          intermediate: true
+        });
+      }
+
+      this.broadcast('move-decision', {
+        ...primaryStepData,
+        newPosition: stepData.newPosition || this.agent.currentPosition,
+        stats: this.getStepStats(stepData),
+        runId: stepContext.runId,
+        activeEpoch: stepContext.epoch,
+        stepId: stepContext.stepId,
+        sequence: event?.sequence || null
+      });
+    }
+
+    return { committed: true, event };
+  }
+
+  async commitStepError(stepContext, error) {
+    const isCurrent = this.isCurrentStepContext(stepContext);
+    const type = isCurrent ? 'step_failed' : 'step_abandoned';
+    await this.appendRunEvent(type, {
+      reason: isCurrent ? 'step_error' : 'stale_step_error',
+      message: error?.message || String(error),
+      stack: error?.stack || null
+    }, {
+      runId: stepContext?.runId,
+      epoch: stepContext?.epoch,
+      stepId: stepContext?.stepId,
+      stepCount: stepContext?.stepCount
+    }).catch(logError => {
+      console.error(`Failed to record ${type}:`, logError);
+    });
+  }
+
+  async runCommittedStep({ manual = false } = {}) {
+    const stepContext = this.createStepContext({ manual });
+    this.activeStepId = stepContext.stepId;
+    this.stepStatus = 'running';
+    this.isStepPipelineActive = true;
+
+    try {
+      await this.appendRunEvent('step_started', {
+        manual,
+        startPanoId: this.agent.currentPanoId,
+        startPosition: this.agent.currentPosition,
+        runId: stepContext.runId
+      }, {
+        runId: stepContext.runId,
+        epoch: stepContext.epoch,
+        stepId: stepContext.stepId,
+        stepCount: stepContext.stepCount
+      });
+
+      const stepData = await this.agent.exploreStep();
+      const commitResult = await this.commitStepResult(stepContext, stepData);
+      return { stepData, ...commitResult };
+    } catch (error) {
+      if (this.activeStepId === stepContext.stepId) {
+        this.stepStatus = 'error';
+      }
+      await this.commitStepError(stepContext, error);
+      throw error;
+    } finally {
+      if (this.activeStepId === stepContext.stepId) {
+        this.activeStepId = null;
+        this.stepStatus = 'idle';
+        this.isStepPipelineActive = false;
+      }
+    }
+  }
+
+  async startExploration(options = {}) {
+    if (!options.skipLock) {
+      return this.withLifecycleLock('Start exploration', () =>
+        this.startExploration({ ...options, skipLock: true })
+      );
+    }
+
     if (this.isExploring) {
       return { error: 'Exploration already in progress' };
     }
@@ -554,8 +846,9 @@ class GlobalExploration {
       return { error: 'Cannot start while another step is still finishing' };
     }
 
+    let resumeResult = null;
     try {
-      const resumeResult = await this.maybeRestoreSavedRunBeforeStart();
+      resumeResult = await this.maybeRestoreSavedRunBeforeStart();
       if (resumeResult?.error) {
         return { error: resumeResult.error };
       }
@@ -569,7 +862,17 @@ class GlobalExploration {
     }
 
     this.isExploring = true;
+    this.activeEpoch += 1;
+    this.stepStatus = 'idle';
     this.startGcTimer();
+
+    await this.appendRunEvent('run_started', {
+      resumed: !!resumeResult?.success,
+      startPanoId: this.agent.currentPanoId,
+      startPosition: this.agent.currentPosition
+    });
+    this.pendingSave = true;
+    await this.saveState(true);
 
     // Start background save timer (saves every 5 minutes as backup)
     if (this.backgroundSaveTimer) {
@@ -605,12 +908,12 @@ class GlobalExploration {
         return;
       }
 
-      this.isStepPipelineActive = true;
       try {
-        const stepData = await this.agent.exploreStep();
+        const { stepData, committed } = await this.runCommittedStep();
+        if (!committed) {
+          return;
+        }
         this.consecutiveStepErrors = 0;
-        this.addToHistory(stepData);
-        this.cacheScreenshots(stepData);
 
         // Save early steps eagerly so restarts do not jump back to the first pano.
         await this.saveState(this.agent.stepCount <= INITIAL_FORCE_SAVE_STEPS);
@@ -647,7 +950,7 @@ class GlobalExploration {
           this.explorationInterval = setTimeout(runExplorationStep, STEP_INTERVAL);
         }
       } finally {
-        this.isStepPipelineActive = false;
+        // runCommittedStep owns the active-step flags.
       }
     };
 
@@ -656,7 +959,13 @@ class GlobalExploration {
     return { success: true };
   }
 
-  async stopExploration({ waitForActiveStep = true, flushPendingSave = true } = {}) {
+  async stopExploration({ waitForActiveStep = true, flushPendingSave = true, skipLock = false } = {}) {
+    if (!skipLock) {
+      return this.withLifecycleLock('Stop exploration', () =>
+        this.stopExploration({ waitForActiveStep, flushPendingSave, skipLock: true })
+      );
+    }
+
     if (this.explorationInterval) {
       clearTimeout(this.explorationInterval);
       this.explorationInterval = null;
@@ -688,11 +997,29 @@ class GlobalExploration {
       await this.saveState(true);
     }
 
+    if (this.agent) {
+      await this.appendRunEvent('run_stopped', {
+        stepCount: this.agent.stepCount,
+        position: this.agent.currentPosition,
+        reason: 'user_or_shutdown'
+      });
+      this.pendingSave = true;
+      if (flushPendingSave) {
+        await this.saveState(true);
+      }
+    }
+
     this.broadcast('exploration-stopped', {});
     return { success: true };
   }
 
-  async takeSingleStep() {
+  async takeSingleStep(options = {}) {
+    if (!options.skipLock) {
+      return this.withLifecycleLock('Take single step', () =>
+        this.takeSingleStep({ ...options, skipLock: true })
+      );
+    }
+
     if (this.isExploring) {
       return { error: 'Cannot take step while exploration is running' };
     }
@@ -702,29 +1029,45 @@ class GlobalExploration {
 
     if (!this.agent) {
       await this.initialize();
+      this.activeEpoch += 1;
+      await this.appendRunEvent('run_started', {
+        manual: true,
+        startPanoId: this.agent.currentPanoId,
+        startPosition: this.agent.currentPosition
+      });
       this.broadcast('exploration-started', {
         startLocation: START_LOCATION,
         timestamp: new Date().toISOString()
       });
+    } else {
+      this.activeEpoch += 1;
     }
 
-    this.isStepPipelineActive = true;
     try {
-      const stepData = await this.agent.exploreStep();
-      this.addToHistory(stepData);
-      this.cacheScreenshots(stepData);
+      const { committed } = await this.runCommittedStep({ manual: true });
+      if (!committed) {
+        return { error: 'Step was not committed because exploration state changed' };
+      }
 
       // Force save after manual step
       await this.saveState(true);
 
+      this.consecutiveStepErrors = 0;
       this.broadcast('step-complete', {});
       return { success: true };
-    } finally {
-      this.isStepPipelineActive = false;
+    } catch (error) {
+      this.consecutiveStepErrors += 1;
+      throw error;
     }
   }
 
-  async saveNow() {
+  async saveNow(options = {}) {
+    if (!options.skipLock) {
+      return this.withLifecycleLock('Save now', () =>
+        this.saveNow({ ...options, skipLock: true })
+      );
+    }
+
     const waitResult = await this.waitForStepToFinish('Save now');
     if (waitResult.error) {
       return waitResult;
@@ -734,8 +1077,14 @@ class GlobalExploration {
     return { success: true, stepCount: this.agent?.stepCount || 0 };
   }
 
-  async resetExploration() {
-    const stopResult = await this.stopExploration();
+  async resetExploration(options = {}) {
+    if (!options.skipLock) {
+      return this.withLifecycleLock('Reset exploration', () =>
+        this.resetExploration({ ...options, skipLock: true })
+      );
+    }
+
+    const stopResult = await this.stopExploration({ skipLock: true });
     if (stopResult?.error) {
       return stopResult;
     }
@@ -756,6 +1105,15 @@ class GlobalExploration {
     // Clear all history and cache
     this.decisionHistory = [];
     this.screenshotCache.clear();
+    this.lastEventSequence = 0;
+    this.lastEventId = null;
+    this.lastSnapshotSequence = 0;
+    this.lastSnapshotAt = null;
+    this.lastCompletedStep = 0;
+    this.restoreSource = 'reset';
+    this.activeEpoch += 1;
+    this.activeStepId = null;
+    this.stepStatus = 'idle';
     if (this.tileCache) {
       this.tileCache.clear();
     }
@@ -764,7 +1122,11 @@ class GlobalExploration {
     if (this.agent) {
       await this.agent.reset();
       this.lastSaveStep = 0;
+      await this.appendRunEvent('run_reset', {
+        snapshot: this.createSaveSnapshot()
+      });
       this.pendingSave = true;
+      this.allowEmptySaveOnce = true;
       await this.saveState(true);
     } else {
       await fsp.rm(this.getSavePath(), { force: true });
@@ -892,7 +1254,15 @@ class GlobalExploration {
         position: START_LOCATION,
         panoId: START_PANO_ID,
         stats: { locationsVisited: 0, distanceTraveled: 0 },
-        stepCount: 0
+        stepCount: 0,
+        runId: null,
+        activeEpoch: this.activeEpoch,
+        stepStatus: this.stepStatus,
+        activeStepId: this.activeStepId,
+        lastEventSequence: this.lastEventSequence,
+        lastSnapshotSequence: this.lastSnapshotSequence,
+        restoreSource: this.restoreSource,
+        recentHistory: this.getRecentHistory()
       };
     }
 
@@ -901,7 +1271,15 @@ class GlobalExploration {
       position: this.agent.currentPosition,
       panoId: this.agent.currentPanoId,
       stats: this.agent.coverage ? this.agent.coverage.getStats() : {},
-      stepCount: this.agent.stepCount
+      stepCount: this.agent.stepCount,
+      runId: this.agent.runId,
+      activeEpoch: this.activeEpoch,
+      stepStatus: this.stepStatus,
+      activeStepId: this.activeStepId,
+      lastEventSequence: this.lastEventSequence,
+      lastSnapshotSequence: this.lastSnapshotSequence,
+      restoreSource: this.restoreSource,
+      recentHistory: this.getRecentHistory()
     };
 
     if (includeFullPath) {
@@ -909,6 +1287,59 @@ class GlobalExploration {
     }
 
     return state;
+  }
+
+  getMetrics() {
+    const stats = this.agent && this.agent.coverage
+      ? this.agent.coverage.getStats()
+      : { locationsVisited: 0, distanceTraveled: 0, pathLength: 0 };
+    const lastSnapshotAgeSec = this.lastSnapshotAt
+      ? Math.floor((Date.now() - this.lastSnapshotAt) / 1000)
+      : null;
+    return {
+      uptimeSec: Math.floor(process.uptime()),
+      isExploring: this.isExploring,
+      runId: this.agent ? this.agent.runId : null,
+      activeEpoch: this.activeEpoch,
+      stepStatus: this.stepStatus,
+      activeStepId: this.activeStepId,
+      lastEventSequence: this.lastEventSequence,
+      lastSnapshotSequence: this.lastSnapshotSequence,
+      lastCompletedStep: this.lastCompletedStep,
+      lastSnapshotAgeSec,
+      consecutiveStepErrors: this.consecutiveStepErrors,
+      restoreSource: this.restoreSource,
+      stepCount: this.agent ? this.agent.stepCount : 0,
+      locationsVisited: stats.locationsVisited,
+      distanceTraveled: stats.distanceTraveled,
+      pathLength: stats.pathLength
+    };
+  }
+
+  async renderTile(z, x, y) {
+    if (!this.agent || !this.agent.coverage) {
+      return emptyTilePng();
+    }
+
+    const version = getArchiveVersion(this.agent);
+    const cacheKey = `${z}/${x}/${y}@v${version}`;
+    const cached = this.tileCache.get(cacheKey);
+    if (cached) return cached;
+
+    const runId = this.agent.runId || 'current';
+    const filePath = path.join(ROOT_DIR, 'runs', 'tiles', runId, String(version), String(z), String(x), `${y}.png`);
+    try {
+      const data = fs.readFileSync(filePath);
+      cacheSet(this.tileCache, cacheKey, data);
+      return data;
+    } catch {
+      const buf = await drawArchiveTile(this.agent, z, x, y);
+      fsp.mkdir(path.dirname(filePath), { recursive: true })
+        .then(() => fsp.writeFile(filePath, buf))
+        .catch(() => {});
+      cacheSet(this.tileCache, cacheKey, buf);
+      return buf;
+    }
   }
 
   /**
@@ -939,7 +1370,7 @@ class GlobalExploration {
   }
 
   broadcast(event, data) {
-    io.emit(event, data);
+    this.emit(event, data);
   }
 
   addClient(socket) {
@@ -960,7 +1391,13 @@ class GlobalExploration {
       try {
         const fullPath = this.getFullPathForInitialLoad();
         if (fullPath.length > 0) {
-          socket.emit('path-state', { fullPath });
+          socket.emit('path-state', {
+            runId: this.agent?.runId || null,
+            sequence: this.lastEventSequence,
+            pathSequence: this.lastEventSequence,
+            stepCount: this.agent?.stepCount || 0,
+            fullPath
+          });
         }
       } catch (error) {
         console.error('Failed to prepare path for client:', error);
@@ -979,7 +1416,11 @@ class GlobalExploration {
 }
 
 // Initialize global exploration
-const globalExploration = new GlobalExploration();
+const globalExploration = IS_WORKER_PROCESS
+  ? new GlobalExploration({ emit: sendWorkerBroadcast })
+  : new WorkerSupervisor({
+      onBroadcast: (event, data) => io.emit(event, data)
+    });
 
 // Tile rendering helpers
 function lonLatToWorldPixels(lng, lat, z) {
@@ -1003,7 +1444,8 @@ function getArchiveVersion(agent) {
   return Math.floor(archived / Math.max(1, TILE_VERSION_STEP));
 }
 
-function drawArchiveTile(agent, z, x, y) {
+async function drawArchiveTile(agent, z, x, y) {
+  const createCanvas = await getCreateCanvas();
   const archivedCount = getArchivedCount(agent);
   if (archivedCount < 2) {
     const c = createCanvas(256, 256);
@@ -1070,52 +1512,19 @@ function cacheSet(map, key, value) {
   }
 }
 
+function emptyTilePng() {
+  return EMPTY_TILE_PNG;
+}
+
 // Raster tiles for archived path
-app.get('/tiles/:z/:x/:y.png', (req, res) => {
-  const agent = globalExploration.agent;
-  if (!agent || !agent.coverage) {
-    res.type('image/png').send(createCanvas(256, 256).toBuffer('image/png'));
-    return;
-  }
+app.get('/tiles/:z/:x/:y.png', async (req, res) => {
   const z = parseInt(req.params.z, 10);
   const x = parseInt(req.params.x, 10);
   const y = parseInt(req.params.y, 10);
   if (!Number.isFinite(z) || !Number.isFinite(x) || !Number.isFinite(y)) {
     return res.status(400).send('bad tile');
   }
-  const version = getArchiveVersion(agent);
-  const archivedCount = getArchivedCount(agent);
-  const cacheKey = `${z}/${x}/${y}@v${version}`;
-  const cached = globalExploration.tileCache.get(cacheKey);
-  if (cached) {
-    res.type('image/png').send(cached);
-    return;
-  }
-  const runId = agent.runId || 'current';
-  const filePath = path.join(ROOT_DIR, 'runs', 'tiles', runId, String(version), String(z), String(x), `${y}.png`);
-  // Attempt to read from disk cache
-  fs.readFile(filePath, (err, data) => {
-    if (!err && data) {
-      cacheSet(globalExploration.tileCache, cacheKey, data);
-      res.type('image/png').send(data);
-      return;
-    }
-    // Render, write to disk, and serve
-    try {
-      const buf = drawArchiveTile(agent, z, x, y);
-      const dir = path.dirname(filePath);
-      fsp.mkdir(dir, { recursive: true })
-        .then(() => fsp.writeFile(filePath, buf))
-        .catch(() => {})
-        .finally(() => {
-          cacheSet(globalExploration.tileCache, cacheKey, buf);
-          res.type('image/png').send(buf);
-        });
-    } catch (e) {
-      console.error('Tile render error:', e);
-      res.status(500).send('tile error');
-    }
-  });
+  res.type('image/png').send(emptyTilePng());
 });
 
 // Lightweight health and metrics endpoints
@@ -1124,41 +1533,230 @@ app.get('/healthz', (req, res) => {
 });
 
 app.get('/metrics', (req, res) => {
-  const agent = globalExploration.agent;
-  const stats = agent && agent.coverage ? agent.coverage.getStats() : { locationsVisited: 0, distanceTraveled: 0, pathLength: 0 };
-  res.json({
-    uptimeSec: Math.floor(process.uptime()),
-    clientsConnected: globalExploration.connectedClients.size,
-    isExploring: globalExploration.isExploring,
-    stepCount: agent ? agent.stepCount : 0,
-    locationsVisited: stats.locationsVisited,
-    distanceTraveled: stats.distanceTraveled,
-    pathLength: stats.pathLength
-  });
+  res.json(globalExploration.getMetrics());
 });
+
+const ADMIN_TOKEN_TTL_MS = 60 * 60 * 1000;
+
+function signAdminTokenBody(body) {
+  const controlPassword = process.env.CONTROL_PASSWORD;
+  if (!controlPassword) return null;
+  return crypto
+    .createHmac('sha256', controlPassword)
+    .update(body)
+    .digest('base64url');
+}
+
+function createAdminToken() {
+  const body = Buffer.from(JSON.stringify({
+    prefix: 'admin',
+    timestamp: Date.now()
+  })).toString('base64url');
+  const signature = signAdminTokenBody(body);
+  return `${body}.${signature}`;
+}
 
 // Helper function to verify admin token
 function verifyAdminToken(token) {
-  if (!token) return false;
+  if (!token || !process.env.CONTROL_PASSWORD) return false;
 
   try {
-    // Decode the simple token (in production, use proper JWT)
-    const decoded = Buffer.from(token, 'base64').toString();
-    const [prefix, timestamp] = decoded.split(':');
+    const [body, signature] = token.split('.');
+    if (!body || !signature) return false;
 
-    // Check if token is valid and not expired (1 hour)
-    if (prefix === 'admin' && timestamp) {
-      const tokenAge = Date.now() - parseInt(timestamp);
-      return tokenAge < 60 * 60 * 1000; // 1 hour expiry
+    const expectedSignature = signAdminTokenBody(body);
+    const provided = Buffer.from(signature, 'base64url');
+    const expected = Buffer.from(expectedSignature, 'base64url');
+    if (provided.length !== expected.length || !crypto.timingSafeEqual(provided, expected)) {
+      return false;
     }
-  } catch (e) {
+
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (payload.prefix !== 'admin' || !Number.isFinite(payload.timestamp)) {
+      return false;
+    }
+
+    const tokenAge = Date.now() - payload.timestamp;
+    return tokenAge >= 0 && tokenAge < ADMIN_TOKEN_TTL_MS;
+  } catch {
     return false;
   }
+}
 
-  return false;
+function sendWorkerMessage(message) {
+  if (typeof process.send === 'function') {
+    process.send(message);
+  }
+}
+
+function sendWorkerState(includeFullPath = false) {
+  if (!IS_WORKER_PROCESS) return;
+  try {
+    sendWorkerMessage({
+      kind: 'state',
+      data: globalExploration.getCurrentState({ includeFullPath })
+    });
+  } catch (error) {
+    sendWorkerMessage({
+      kind: 'log',
+      level: 'error',
+      message: `Failed to send worker state: ${error.message}`
+    });
+  }
+}
+
+function sendWorkerMetrics() {
+  if (!IS_WORKER_PROCESS) return;
+  try {
+    sendWorkerMessage({
+      kind: 'metrics',
+      data: globalExploration.getMetrics()
+    });
+  } catch (error) {
+    sendWorkerMessage({
+      kind: 'log',
+      level: 'error',
+      message: `Failed to send worker metrics: ${error.message}`
+    });
+  }
+}
+
+function sendWorkerBroadcast(name, data) {
+  sendWorkerMessage({ kind: 'broadcast', name, data });
+  sendWorkerState(false);
+  sendWorkerMetrics();
+}
+
+async function bootWorker({ autoRestore = true, autoStart = false } = {}) {
+  let restoreResult = null;
+  let startResult = null;
+  const savePath = globalExploration.getSavePath();
+  const hasSave = fs.existsSync(savePath);
+
+  if (autoRestore && hasSave) {
+    restoreResult = await globalExploration.loadState();
+  }
+
+  if (autoStart && (!restoreResult || !restoreResult.error)) {
+    startResult = await globalExploration.startExploration();
+  }
+
+  sendWorkerState(false);
+  sendWorkerMetrics();
+  return {
+    success: !(restoreResult?.error || startResult?.error),
+    savePath,
+    restored: restoreResult || null,
+    started: startResult || null
+  };
+}
+
+async function shutdownWorkerRuntime() {
+  const stopResult = await globalExploration.stopExploration();
+  if (!stopResult?.error && (globalExploration.pendingSave || globalExploration.hasMeaningfulAgentState())) {
+    await globalExploration.saveState(true);
+  }
+  await globalExploration._logQueue;
+  if (globalExploration.agent) {
+    await globalExploration.agent.close();
+  }
+  return stopResult?.error ? stopResult : { success: true };
+}
+
+async function dispatchWorkerCommand(command, payload = {}) {
+  switch (command) {
+    case 'boot':
+      return bootWorker(payload);
+    case 'start':
+      return globalExploration.startExploration();
+    case 'stop':
+      return globalExploration.stopExploration(payload);
+    case 'step':
+      return globalExploration.takeSingleStep();
+    case 'reset':
+      return globalExploration.resetExploration();
+    case 'load':
+      return globalExploration.loadState();
+    case 'saveNow':
+      return globalExploration.saveNow();
+    case 'getState':
+      return globalExploration.getCurrentState({
+        includeFullPath: payload.includeFullPath !== false
+      });
+    case 'getFullPath':
+      return { fullPath: globalExploration.getFullPathForInitialLoad() };
+    case 'getMetrics':
+      return globalExploration.getMetrics();
+    case 'renderTile':
+      return globalExploration.renderTile(payload.z, payload.x, payload.y);
+    case 'shutdown':
+      return shutdownWorkerRuntime();
+    default:
+      throw new Error(`Unknown worker command: ${command}`);
+  }
+}
+
+function runWorkerProcess() {
+  const heartbeatIntervalMs = parseIntOr(process.env.WORKER_HEARTBEAT_INTERVAL_MS, 5000);
+  const heartbeatTimer = setInterval(() => {
+    sendWorkerMessage({
+      kind: 'heartbeat',
+      data: { pid: process.pid, timestamp: new Date().toISOString() },
+      metrics: globalExploration.getMetrics()
+    });
+  }, heartbeatIntervalMs);
+
+  process.on('message', async (message) => {
+    if (!message || message.kind !== 'request') return;
+
+    try {
+      const result = await dispatchWorkerCommand(message.command, message.payload || {});
+      sendWorkerState(false);
+      sendWorkerMetrics();
+      sendWorkerMessage({
+        kind: 'response',
+        requestId: message.requestId,
+        ok: true,
+        result
+      });
+
+      if (message.command === 'shutdown') {
+        clearInterval(heartbeatTimer);
+        setTimeout(() => process.exit(result?.error ? 1 : 0), 25);
+      }
+    } catch (error) {
+      sendWorkerMessage({
+        kind: 'response',
+        requestId: message.requestId,
+        ok: false,
+        error: error.message
+      });
+    }
+  });
+
+  process.on('SIGTERM', async () => {
+    clearInterval(heartbeatTimer);
+    const result = await shutdownWorkerRuntime().catch(error => ({ error: error.message }));
+    process.exit(result?.error ? 1 : 0);
+  });
+
+  process.on('SIGINT', async () => {
+    clearInterval(heartbeatTimer);
+    const result = await shutdownWorkerRuntime().catch(error => ({ error: error.message }));
+    process.exit(result?.error ? 1 : 0);
+  });
+
+  sendWorkerMessage({
+    kind: 'heartbeat',
+    data: { pid: process.pid, timestamp: new Date().toISOString() },
+    metrics: globalExploration.getMetrics()
+  });
 }
 
 // Socket.io connection handling
+if (IS_WORKER_PROCESS) {
+  runWorkerProcess();
+} else {
 io.on('connection', (socket) => {
   globalExploration.addClient(socket);
 
@@ -1309,30 +1907,24 @@ server.listen(PORT, HOST, async () => {
   console.log(`🔑 Admin Password: ${process.env.CONTROL_PASSWORD ? 'Configured' : 'NOT CONFIGURED'}`);
   console.log(`💾 Data directory: ${DATA_DIR}`);
 
-  // Auto-restore and auto-start in production
-  if (process.env.NODE_ENV === 'production') {
+  try {
     const autoSavePath = globalExploration.getSavePath();
-    if (fs.existsSync(autoSavePath)) {
-      console.log('🔄 Found save file, auto-restoring...');
-      try {
-        const result = await globalExploration.loadState();
-        if (result.error) {
-          console.error('❌ Auto-restore failed:', result.error);
-        } else {
-          console.log(`✅ Auto-restored: ${result.stepCount} steps, ${result.locationsVisited} locations`);
-          const startResult = await globalExploration.startExploration();
-          if (startResult.error) {
-            console.error('❌ Auto-start failed:', startResult.error);
-          } else {
-            console.log('▶️  Exploration auto-started');
-          }
-        }
-      } catch (error) {
-        console.error('❌ Auto-restore error:', error);
-      }
-    } else {
+    const hasSave = fs.existsSync(autoSavePath);
+    const shouldAutoStart = process.env.NODE_ENV === 'production' && hasSave;
+    console.log(`👷 Starting exploration worker (autoStart=${shouldAutoStart})`);
+    const workerBoot = await globalExploration.start({
+      autoRestore: true,
+      autoStart: shouldAutoStart
+    });
+    if (workerBoot?.error) {
+      console.error('❌ Worker boot failed:', workerBoot.error);
+    } else if (shouldAutoStart) {
+      console.log('▶️  Exploration worker auto-started from saved state');
+    } else if (!hasSave) {
       console.log('📄 No save file found at', autoSavePath, '— waiting for manual start');
     }
+  } catch (error) {
+    console.error('❌ Worker startup error:', error);
   }
 });
 
@@ -1346,11 +1938,7 @@ async function gracefulShutdown(signal) {
   shutdownInProgress = true;
 
   console.log(`${signal} received, saving state and shutting down...`);
-  const stopResult = await globalExploration.stopExploration();
-  if (!stopResult?.error && (globalExploration.pendingSave || globalExploration.agent)) {
-    await globalExploration.saveState(true);
-  }
-  await globalExploration._logQueue;
+  const stopResult = await globalExploration.shutdown();
   process.exit(stopResult?.error ? 1 : 0);
 }
 
@@ -1367,3 +1955,4 @@ process.on('SIGINT', () => {
     process.exit(1);
   });
 });
+}

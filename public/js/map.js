@@ -4,11 +4,14 @@ class MapManager {
     this.currentMarker = null;
     this.startMarker = null;
     this.pathLine = null;
+    this.pathState = new MinimapPathState();
     this.pathCoordinates = [];
     // Start position will be set from server via setStartPosition()
     this.startPosition = null;
     this.mapLoaded = false;
-    this.pendingUpdates = []; // Queue positions until map is ready
+    this.pendingFullPathStates = [];
+    this.pendingLivePositions = [];
+    this.pendingMarkerPosition = null;
     this.userHasInteracted = false; // Track if user manually adjusted the map
     this.updatesSinceFit = 0; // Reduce expensive fit computations
     this.fitEveryNUpdates = 20; // Fit bounds every N incremental updates
@@ -90,6 +93,10 @@ class MapManager {
 
   initialize() {
     console.log('Initializing minimap...');
+    if (this.map) {
+      console.log('Minimap already initialized');
+      return;
+    }
     
     // startPosition should already be set via setStartPosition
     if (!this.startPosition) {
@@ -117,17 +124,7 @@ class MapManager {
         this.addResetButton();
         this.mapLoaded = true;
         
-        // Process any pending position updates as a single batch
-        if (this.pendingUpdates.length > 0) {
-          console.log(`Processing ${this.pendingUpdates.length} pending position updates (batched)`);
-          this.loadFullPath(this.pendingUpdates);
-          // Move current marker to the last position
-          const last = this.pendingUpdates[this.pendingUpdates.length - 1];
-          if (last && this.currentMarker) {
-            this.currentMarker.setLngLat([last.lng, last.lat]);
-          }
-          this.pendingUpdates = [];
-        }
+        this.#flushPendingUpdates();
         
         // Track user interactions
         this.setupInteractionTracking();
@@ -174,29 +171,29 @@ class MapManager {
     }
   }
 
+  setRun(runId) {
+    const previousRunId = this.pathState.runId;
+    this.pathState.setRun(runId);
+    if (previousRunId && runId && previousRunId !== runId) {
+      this.pathCoordinates = [];
+      this.#renderPath();
+    }
+  }
+
   // Batch-load a full path in one render pass
-  loadFullPath(points) {
+  loadFullPath(points, meta = {}) {
     if (!points || points.length === 0) return;
 
     // If map not ready, queue them for later processing
     if (!this.isReady()) {
-      this.pendingUpdates.push(...points);
+      this.pendingFullPathStates.push({ points, meta });
       return;
     }
 
-    // Replace coordinates with a single batch
-    this.pathCoordinates = points.map(p => [p.lng, p.lat]);
-
-    if (this.map.getSource('path')) {
-      this.map.getSource('path').setData({
-        type: 'Feature',
-        properties: {},
-        geometry: {
-          type: 'LineString',
-          coordinates: this.pathCoordinates
-        }
-      });
-    }
+    const result = this.pathState.applyFullPath(points, meta);
+    if (!result.applied) return;
+    this.pathCoordinates = this.pathState.coordinates;
+    this.#renderPath();
 
     // Fit once on batch load
     if (!this.userHasInteracted && this.pathCoordinates.length > 1) {
@@ -292,42 +289,32 @@ class MapManager {
     });
   }
 
-  updatePosition(position) {
-    // Queue updates if map isn't ready yet
+  setCurrentPosition(position) {
+    if (!position) return;
     if (!this.isReady()) {
-      this.pendingUpdates.push(position);
+      this.pendingMarkerPosition = position;
       return;
     }
-    
-    this.#doUpdatePosition(position);
-  }
-  
-  // Private method for actually updating position
-  #doUpdatePosition(position) {
-    const lngLat = [position.lng, position.lat];
 
-    // Only update marker if it exists
+    const lngLat = [position.lng, position.lat];
     if (this.currentMarker) {
       this.currentMarker.setLngLat(lngLat);
     }
+  }
 
-    // Deduplicate to avoid identical consecutive coordinates
-    const last = this.pathCoordinates[this.pathCoordinates.length - 1];
-    if (!last || last[0] !== lngLat[0] || last[1] !== lngLat[1]) {
-      this.pathCoordinates.push(lngLat);
+  applyLivePosition(position, meta = {}) {
+    // Queue updates if map isn't ready yet
+    if (!this.isReady()) {
+      this.pendingLivePositions.push({ position, meta });
+      return;
     }
 
-    // Only update path if source exists
-    if (this.map.getSource('path')) {
-      this.map.getSource('path').setData({
-        type: 'Feature',
-        properties: {},
-        geometry: {
-          type: 'LineString',
-          coordinates: this.pathCoordinates
-        }
-      });
-    }
+    const result = this.pathState.applyLivePosition(position, meta);
+    this.setCurrentPosition(position);
+    if (!result.applied) return;
+
+    this.pathCoordinates = this.pathState.coordinates;
+    this.#renderPath();
 
     // Only auto-fit bounds if user hasn't manually interacted with the map
     if (!this.userHasInteracted) {
@@ -339,14 +326,58 @@ class MapManager {
           this.updatesSinceFit = 0;
         }
       } else {
-        this.map.flyTo({ center: lngLat, zoom: 15 });
+        this.map.flyTo({ center: [position.lng, position.lat], zoom: 15 });
       }
     }
   }
 
-  reset() {
+  updatePosition(position) {
+    this.applyLivePosition(position);
+  }
+
+  #renderPath() {
+    if (this.map && this.map.getSource('path')) {
+      this.map.getSource('path').setData({
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates: this.pathCoordinates
+        }
+      });
+    }
+  }
+
+  #flushPendingUpdates() {
+    if (this.pendingFullPathStates.length > 0) {
+      const fullPathStates = this.pendingFullPathStates;
+      this.pendingFullPathStates = [];
+      for (const { points, meta } of fullPathStates) {
+        this.loadFullPath(points, meta);
+      }
+    }
+
+    if (this.pendingLivePositions.length > 0) {
+      const livePositions = this.pendingLivePositions;
+      this.pendingLivePositions = [];
+      for (const { position, meta } of livePositions) {
+        this.applyLivePosition(position, meta);
+      }
+    }
+
+    if (this.pendingMarkerPosition) {
+      const markerPosition = this.pendingMarkerPosition;
+      this.pendingMarkerPosition = null;
+      this.setCurrentPosition(markerPosition);
+    }
+  }
+
+  reset(runId = null) {
+    this.pathState.reset(runId);
     this.pathCoordinates = [];
-    this.pendingUpdates = []; // Clear any pending updates
+    this.pendingFullPathStates = [];
+    this.pendingLivePositions = [];
+    this.pendingMarkerPosition = null;
     this.userHasInteracted = false; // Reset interaction tracking
     this.updatesSinceFit = 0;
     

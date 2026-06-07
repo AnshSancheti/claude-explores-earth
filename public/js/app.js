@@ -43,6 +43,7 @@ class ExplorationApp {
       console.log(`Connected clients: ${data.connectedClients}`);
       
       this.startLocation = data.startLocation;
+      this.mapManager.setRun(data.runId);
       
       if (data.startPanoId) {
         window.START_PANO_ID = data.startPanoId;
@@ -82,6 +83,7 @@ class ExplorationApp {
       this.uiManager.setExplorationState(this.isExploring);
       
       // Load recent history into decision log
+      this.uiManager.clearDecisionLog();
       if (data.recentHistory && data.recentHistory.length > 0) {
         console.log(`Loading ${data.recentHistory.length} recent decisions`);
         data.recentHistory.forEach(entry => {
@@ -92,19 +94,19 @@ class ExplorationApp {
       // Update minimap with full path if available
       if (data.fullPath && data.fullPath.length > 0) {
         console.log(`Loading ${data.fullPath.length} path points to minimap (batched)`);
-        this.mapManager.loadFullPath(data.fullPath);
+        this.mapManager.loadFullPath(data.fullPath, data);
       }
       
-      // Always update current position if provided (even if we have fullPath)
+      // Initial state moves only the marker; committed steps append to the path.
       if (data.position) {
-        this.mapManager.updatePosition(data.position);
+        this.mapManager.setCurrentPosition(data.position);
       }
     });
 
     this.socket.on('path-state', (data) => {
       if (data.fullPath && data.fullPath.length > 0) {
         console.log(`Loading ${data.fullPath.length} path points to minimap (deferred)`);
-        this.mapManager.loadFullPath(data.fullPath);
+        this.mapManager.loadFullPath(data.fullPath, data);
       }
     });
 
@@ -117,13 +119,18 @@ class ExplorationApp {
 
     this.socket.on('position-update', (data) => {
       console.log('Position update', data);
-      this.mapManager.updatePosition(data.position);
+      this.mapManager.setCurrentPosition(data.position);
       this.uiManager.updateStats(data.stats);
     });
 
     this.socket.on('move-decision', (data) => {
       console.log('Move decision', data);
-      this.mapManager.updatePosition(data.newPosition);
+      if (data.intermediate) {
+        this.mapManager.setCurrentPosition(data.newPosition);
+        return;
+      }
+
+      this.mapManager.applyLivePosition(data.newPosition, data);
       if (this.streetViewManager.panorama) {
         this.streetViewManager.updatePosition(data.panoId, data.direction);
       }
@@ -196,9 +203,12 @@ class ExplorationApp {
       }
       
       // Update map with full path
+      this.mapManager.reset(data.runId || null);
       if (data.fullPath && data.fullPath.length > 0) {
-        this.mapManager.reset();
-        this.mapManager.loadFullPath(data.fullPath);
+        this.mapManager.loadFullPath(data.fullPath, data);
+      }
+      if (data.position) {
+        this.mapManager.setCurrentPosition(data.position);
       }
       
       // Update Street View to loaded position

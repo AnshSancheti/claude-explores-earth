@@ -127,6 +127,25 @@ export class ExplorationAgent {
       .slice(-limit);
   }
 
+  buildCoverageDelta({ panoId, position, links = [], previousPanoId = null, visitInfo = null }) {
+    const graphNode = panoId ? this.coverage.graph.get(panoId) : null;
+    return {
+      panoId,
+      position: position ? { lat: position.lat, lng: position.lng } : null,
+      traversedFrom: previousPanoId,
+      links: links
+        .filter(link => link?.pano)
+        .map(link => ({
+          pano: link.pano,
+          heading: link.heading ?? null,
+          description: link.description ?? null
+        })),
+      timestamp: graphNode?.timestamp || Date.now(),
+      recentHistory: this.coverage.recentHistory.slice(-this.coverage.maxHistorySize),
+      visitInfo: visitInfo || null
+    };
+  }
+
   buildAutopilotDiaryLine({ stepNumber, eventType, remainingPathSteps, locationEntered }) {
     if (eventType === 'teleport-frontier') {
       return 'Jumped to a frontier seam where the mapped streets break and new coverage can continue.';
@@ -363,28 +382,22 @@ export class ExplorationAgent {
             fallbackCause: null,
             sceneTag: null,
             panoId: this.currentPanoId,
+            previousPanoId,
+            previousPosition,
+            newPosition: this.currentPosition,
+            stats: this.coverage.getStats(),
             direction: Number.isFinite(travelHeading) ? travelHeading : this.currentHeading,
             mode: 'pathfinding',
             screenshots: [],
-            remainingPathSteps
+            remainingPathSteps,
+            coverageDelta: this.buildCoverageDelta({
+              panoId: this.currentPanoId,
+              position: this.currentPosition,
+              links: newLinks,
+              previousPanoId,
+              visitInfo
+            })
           };
-          this.globalExploration.broadcast('move-decision', {
-            ...stepData,
-            newPosition: this.currentPosition,
-            stats: this.coverage.getStats()
-          });
-          this.logger.log('exploration-step', {
-            step: currentStep,
-            from: previousPanoId,
-            to: this.currentPanoId,
-            decision: diaryLine || actionReason,
-            actionReason,
-            eventType: fastPathEvent,
-            autoMove: true,
-            fallbackCause: null,
-            position: this.currentPosition,
-            stats: this.coverage.getStats()
-          });
           console.log(`Fast-path step ${currentStep} (${fastPathEvent}): ${previousPanoId} -> ${this.currentPanoId}`);
           return stepData;
         } catch (err) {
@@ -415,6 +428,7 @@ export class ExplorationAgent {
         
         // Store original position for broadcast
         const originalPanoId = this.currentPanoId;
+        const originalPosition = { ...this.currentPosition };
         
         // Try to find a valid panorama by continuing in the same direction
         const recoveredPano = await this.recoverFromDeadEnd();
@@ -479,6 +493,7 @@ export class ExplorationAgent {
       let eventType = 'branch-choice';
       let autoMove = false;
       let fallbackCause = null;
+      const intermediateEvents = [];
       
       // If we just recovered from a dead-end, broadcast that special state
       if (deadEndRecovery) {
@@ -499,15 +514,15 @@ export class ExplorationAgent {
           autoMove: true,
           fallbackCause: null,
           panoId: this.currentPanoId,
+          previousPanoId: originalPanoId,
+          previousPosition: originalPosition,
           direction: this.lastNavigationHeading,
           mode: 'dead-end-recovery',
           screenshots: [],  // No screenshots during recovery
           newPosition: this.currentPosition,
           stats: this.coverage.getStats()
         };
-        
-        // Broadcast the recovery
-        this.globalExploration.broadcast('move-decision', recoveryData);
+        intermediateEvents.push(recoveryData);
         
         // Now continue normal exploration from the recovered position
         // Clear any previously planned path
@@ -779,6 +794,7 @@ export class ExplorationAgent {
             // Delete full-size screenshot file, keep only thumbnail
             if (s.filepath) {
               unlink(s.filepath).catch(err => {
+                if (err?.code === 'ENOENT') return;
                 console.error(`Failed to delete full-size screenshot: ${s.filename}`, err);
               });
             }
@@ -907,35 +923,23 @@ export class ExplorationAgent {
         fallbackCause,
         sceneTag: decision.sceneTag || null,
         panoId: this.currentPanoId,
+        previousPanoId,
+        previousPosition,
+        newPosition: this.currentPosition,
+        stats: this.coverage.getStats(),
         direction: Number.isFinite(travelHeading) ? travelHeading : this.currentHeading,
         mode: this.mode,
         screenshots: thumbnailUrls,
-        remainingPathSteps: remainingPathSteps
+        remainingPathSteps: remainingPathSteps,
+        intermediateEvents,
+        coverageDelta: this.buildCoverageDelta({
+          panoId: this.currentPanoId,
+          position: this.currentPosition,
+          links: newLinks,
+          previousPanoId,
+          visitInfo
+        })
       };
-      
-      // Prepare broadcast data with additional info for UI updates
-      const broadcastData = {
-        ...stepData,
-        newPosition: this.currentPosition,  // Send position delta
-        stats: this.coverage.getStats()      // Send updated stats
-      };
-      
-      // Broadcast to all connected clients
-      this.globalExploration.broadcast('move-decision', broadcastData);
-      
-      this.logger.log('exploration-step', {
-        step: currentStep,
-        from: previousPanoId,
-        to: this.currentPanoId,
-        decision: renderedReasoning,
-        actionReason,
-        eventType,
-        autoMove,
-        fallbackCause,
-        sceneTag: decision.sceneTag || null,
-        position: this.currentPosition,
-        stats: this.coverage.getStats()
-      });
       
       // Return step data for caching
       return stepData;
@@ -992,26 +996,22 @@ export class ExplorationAgent {
         fallbackCause: null,
         sceneTag: null,
         panoId: this.currentPanoId,
+        previousPanoId,
+        previousPosition,
+        newPosition: this.currentPosition,
+        stats: this.coverage.getStats(),
         direction: Number.isFinite(travelHeading) ? travelHeading : this.currentHeading,
         mode: 'pathfinding',
         screenshots: [],
-        remainingPathSteps: null
+        remainingPathSteps: null,
+        coverageDelta: this.buildCoverageDelta({
+          panoId: this.currentPanoId,
+          position: this.currentPosition,
+          links: newLinks,
+          previousPanoId,
+          visitInfo
+        })
       };
-      const broadcastData = { ...stepData, newPosition: this.currentPosition, stats: this.coverage.getStats() };
-      this.globalExploration.broadcast('move-decision', broadcastData);
-
-      this.logger.log('exploration-step', {
-        step: currentStep,
-        from: previousPanoId,
-        to: this.currentPanoId,
-        decision: renderedReasoning,
-        actionReason: reason,
-        eventType: 'autopilot-pathfinding',
-        autoMove: true,
-        fallbackCause: null,
-        position: this.currentPosition,
-        stats: this.coverage.getStats()
-      });
       return stepData;
     } catch (e) {
       console.error('Failed intra-cluster reposition:', e.message);
@@ -1214,31 +1214,22 @@ export class ExplorationAgent {
         fallbackCause: null,
         sceneTag: null,
         panoId: this.currentPanoId,
+        previousPanoId,
+        previousPosition,
+        newPosition: this.currentPosition,
+        stats: this.coverage.getStats(),
         direction: Number.isFinite(travelHeading) ? travelHeading : this.currentHeading,
         mode: 'pathfinding',
         screenshots: [],
-        remainingPathSteps: null
+        remainingPathSteps: null,
+        coverageDelta: this.buildCoverageDelta({
+          panoId: this.currentPanoId,
+          position: this.currentPosition,
+          links: newLinks,
+          previousPanoId,
+          visitInfo
+        })
       };
-
-      const broadcastData = {
-        ...stepData,
-        newPosition: this.currentPosition,
-        stats: this.coverage.getStats()
-      };
-
-      this.globalExploration.broadcast('move-decision', broadcastData);
-      this.logger.log('exploration-step', {
-        step: currentStep,
-        from: previousPanoId,
-        to: this.currentPanoId,
-        decision: renderedReasoning,
-        actionReason: decisionReasoning,
-        eventType: 'teleport-frontier',
-        autoMove: true,
-        fallbackCause: null,
-        position: this.currentPosition,
-        stats: this.coverage.getStats()
-      });
 
       return stepData;
     } catch (error) {

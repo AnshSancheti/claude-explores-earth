@@ -44,6 +44,6 @@ EXPOSE 3000
 ENV PUPPETEER_EXECUTABLE_PATH="/usr/bin/chromium"
 
 # Set Node.js memory limits and enable garbage collection
-ENV NODE_OPTIONS="--max-old-space-size=512 --expose-gc"
+ENV NODE_OPTIONS="--max-old-space-size=3072 --expose-gc"
 
 CMD [ "node", "server/index.js" ]

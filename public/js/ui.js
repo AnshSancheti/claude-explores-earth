@@ -13,6 +13,7 @@ class UIManager {
     
     // Track the last autopilot summary group
     this.lastAutopilotGroup = null;
+    this.seenDecisionSteps = new Set();
   }
 
   updateStats(stats) {
@@ -26,6 +27,13 @@ class UIManager {
 
   addDecisionEntry(data) {
     console.log(`Received decision for step ${data.stepCount}, mode: ${data.mode}`);
+    const stepNumber = Number(data.stepCount);
+    if (Number.isFinite(stepNumber)) {
+      if (this.seenDecisionSteps.has(stepNumber)) {
+        return;
+      }
+      this.seenDecisionSteps.add(stepNumber);
+    }
 
     if (this.isAutopilotStep(data)) {
       if (
@@ -241,6 +249,7 @@ class UIManager {
   clearDecisionLog() {
     this.decisionLog.innerHTML = '';
     this.lastAutopilotGroup = null;
+    this.seenDecisionSteps.clear();
   }
 
   showError(message) {
