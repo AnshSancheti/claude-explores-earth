@@ -17,12 +17,31 @@ class UIManager {
   }
 
   updateStats(stats) {
-    this.locationsVisited.textContent = stats.locationsVisited || 0;
-    this.distanceTraveled.textContent = `${stats.distanceTraveled || 0} m`;
+    this.locationsVisited.textContent = this.formatCount(stats.locationsVisited);
+    this.distanceTraveled.textContent = this.formatDistanceKm(stats.distanceTraveled);
   }
 
   updateStep(step) {
-    this.currentStep.textContent = step;
+    this.currentStep.textContent = this.formatCount(step);
+  }
+
+  formatCount(value) {
+    const number = Number(value) || 0;
+    return number.toLocaleString();
+  }
+
+  formatDistanceKm(value) {
+    const meters = Number(value) || 0;
+    const kilometers = meters / 1000;
+
+    if (kilometers >= 100) {
+      return `${Math.round(kilometers).toLocaleString()} km`;
+    }
+
+    return `${kilometers.toLocaleString(undefined, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1
+    })} km`;
   }
 
   addDecisionEntry(data) {

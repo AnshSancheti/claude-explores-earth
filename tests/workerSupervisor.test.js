@@ -146,6 +146,50 @@ test('WorkerSupervisor records heartbeat metrics and forwards broadcasts', async
   assert.equal(state.panoId, 'P9');
 });
 
+test('WorkerSupervisor advances cached metrics from move broadcasts', async (t) => {
+  const fakeWorker = new FakeWorker();
+  const supervisor = await makeSupervisor(fakeWorker);
+  t.after(() => supervisor.dispose());
+  await supervisor.start({ autoRestore: false, autoStart: false });
+
+  fakeWorker.emit('message', {
+    kind: 'heartbeat',
+    metrics: {
+      isExploring: true,
+      runId: 'run-broadcast-metrics',
+      stepCount: 10,
+      lastCompletedStep: 10,
+      locationsVisited: 9,
+      stepStatus: 'running'
+    }
+  });
+  fakeWorker.emit('message', {
+    kind: 'broadcast',
+    name: 'move-decision',
+    data: {
+      runId: 'run-broadcast-metrics',
+      stepCount: 11,
+      panoId: 'P11',
+      newPosition: { lat: 3, lng: 4 },
+      stats: {
+        locationsVisited: 10,
+        distanceTraveled: 1234,
+        pathLength: 11
+      },
+      sequence: 77
+    }
+  });
+
+  const metrics = supervisor.getMetrics();
+  assert.equal(metrics.runId, 'run-broadcast-metrics');
+  assert.equal(metrics.stepCount, 11);
+  assert.equal(metrics.lastCompletedStep, 11);
+  assert.equal(metrics.locationsVisited, 10);
+  assert.equal(metrics.distanceTraveled, 1234);
+  assert.equal(metrics.pathLength, 11);
+  assert.equal(metrics.lastEventSequence, 77);
+});
+
 test('WorkerSupervisor rejects timed-out worker commands', async (t) => {
   const fakeWorker = new FakeWorker();
   const supervisor = await makeSupervisor(fakeWorker);

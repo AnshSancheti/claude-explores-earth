@@ -242,8 +242,18 @@ export class WorkerSupervisor {
   #recordBroadcast(name, data) {
     if (name === 'exploration-started') {
       this.lastState = { ...this.lastState, isExploring: true };
+      this.lastMetrics = {
+        ...this.lastMetrics,
+        isExploring: true,
+        stepStatus: this.lastMetrics.stepStatus === 'worker-booting' ? 'idle' : this.lastMetrics.stepStatus
+      };
     } else if (name === 'exploration-stopped') {
       this.lastState = { ...this.lastState, isExploring: false };
+      this.lastMetrics = {
+        ...this.lastMetrics,
+        isExploring: false,
+        stepStatus: 'idle'
+      };
     } else if (name === 'position-update') {
       this.lastState = {
         ...this.lastState,
@@ -252,6 +262,7 @@ export class WorkerSupervisor {
         stats: data?.stats ?? this.lastState.stats
       };
     } else if (name === 'move-decision') {
+      const stats = data?.stats || {};
       this.lastState = {
         ...this.lastState,
         position: data?.newPosition ?? this.lastState.position,
@@ -262,11 +273,24 @@ export class WorkerSupervisor {
         lastEventSequence: data?.sequence ?? this.lastState.lastEventSequence
       };
       if (!data?.intermediate) {
+        this.#recordWorkerMetrics({
+          ...this.lastMetrics,
+          isExploring: true,
+          runId: data?.runId ?? this.lastMetrics.runId,
+          stepStatus: 'idle',
+          lastCompletedStep: data?.stepCount ?? this.lastMetrics.lastCompletedStep,
+          stepCount: data?.stepCount ?? this.lastMetrics.stepCount,
+          locationsVisited: stats.locationsVisited ?? this.lastMetrics.locationsVisited,
+          distanceTraveled: stats.distanceTraveled ?? this.lastMetrics.distanceTraveled,
+          pathLength: stats.pathLength ?? this.lastMetrics.pathLength,
+          lastEventSequence: data?.sequence ?? this.lastMetrics.lastEventSequence
+        });
         this.pathProjection.recordLiveMove(data).catch(error => {
           this.logger.warn('Failed to update minimap path projection from live move:', error.message);
         });
       }
     } else if (name === 'state-loaded') {
+      const stats = data?.stats || {};
       this.lastState = {
         ...this.lastState,
         runId: data?.runId ?? this.lastState.runId,
@@ -277,6 +301,16 @@ export class WorkerSupervisor {
         recentHistory: data?.decisionHistory ?? this.lastState.recentHistory,
         lastEventSequence: data?.sequence ?? this.lastState.lastEventSequence
       };
+      this.#recordWorkerMetrics({
+        ...this.lastMetrics,
+        runId: data?.runId ?? this.lastMetrics.runId,
+        stepCount: data?.stepCount ?? this.lastMetrics.stepCount,
+        lastCompletedStep: data?.stepCount ?? this.lastMetrics.lastCompletedStep,
+        locationsVisited: stats.locationsVisited ?? this.lastMetrics.locationsVisited,
+        distanceTraveled: stats.distanceTraveled ?? this.lastMetrics.distanceTraveled,
+        pathLength: stats.pathLength ?? this.lastMetrics.pathLength,
+        lastEventSequence: data?.sequence ?? this.lastMetrics.lastEventSequence
+      });
       if (this.lastState.runId) {
         this.pathProjection.invalidateRun(this.lastState.runId);
         this.#broadcastPathState(this.lastState.runId);

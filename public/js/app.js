@@ -11,6 +11,17 @@ class ExplorationApp {
   initialize() {
     this.connectSocket();
     this.setupEventListeners();
+    this.updateHeaderOffset();
+
+    window.addEventListener('resize', () => this.updateHeaderOffset());
+    window.addEventListener('orientationchange', () => this.updateHeaderOffset());
+  }
+
+  updateHeaderOffset() {
+    const header = document.querySelector('header');
+    if (!header) return;
+    const headerHeight = Math.ceil(header.getBoundingClientRect().height);
+    document.documentElement.style.setProperty('--app-header-height', `${headerHeight}px`);
   }
 
   connectSocket() {

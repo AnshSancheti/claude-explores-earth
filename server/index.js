@@ -15,6 +15,13 @@ import crypto, { randomUUID } from 'crypto';
 import { verifySignature } from './utils/urlSigner.js';
 import { RunStore } from './services/runStore.js';
 import { WorkerSupervisor } from './worker/workerSupervisor.js';
+import {
+  DEFAULT_PERSISTENT_LOG_MAX_BYTES,
+  DEFAULT_PERSISTENT_LOG_MAX_FILE_BYTES,
+  DEFAULT_PERSISTENT_LOG_MAX_FILES,
+  prunePersistentLogs,
+  shouldRotatePersistentLog
+} from './utils/persistentLogRetention.js';
 
 dotenv.config();
 const IS_WORKER_PROCESS = process.env.EXPLORATION_WORKER === '1';
@@ -167,6 +174,18 @@ const STOP_STEP_DRAIN_TIMEOUT_MS = parseIntOr(process.env.STOP_STEP_DRAIN_TIMEOU
 const TILE_TAIL_POINTS = parseInt(process.env.TILE_RECENT_TAIL_POINTS) || 1500; // recent points kept as vector
 const TILE_MAX_CACHE = parseInt(process.env.TILE_MAX_CACHE) || 256;
 const TILE_VERSION_STEP = parseInt(process.env.TILE_VERSION_STEP) || 1000; // archive version increments every N archived points
+const PERSISTENT_LOG_MAX_FILES = parseIntOr(
+  process.env.PERSISTENT_LOG_MAX_FILES,
+  DEFAULT_PERSISTENT_LOG_MAX_FILES
+);
+const PERSISTENT_LOG_MAX_BYTES = parseIntOr(
+  process.env.PERSISTENT_LOG_MAX_BYTES,
+  DEFAULT_PERSISTENT_LOG_MAX_BYTES
+);
+const PERSISTENT_LOG_MAX_FILE_BYTES = parseIntOr(
+  process.env.PERSISTENT_LOG_MAX_FILE_BYTES,
+  DEFAULT_PERSISTENT_LOG_MAX_FILE_BYTES
+);
 
 // Path simplification settings (configurable via environment variables)
 const PATH_SIMPLIFICATION = {
@@ -407,6 +426,25 @@ class GlobalExploration {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
     const logPath = path.join(logsDir, `exploration-${timestamp}.jsonl`);
     return logPath;
+  }
+
+  async enforcePersistentLogRetention() {
+    const logsDir = path.join(DATA_DIR, 'persistent_logs');
+    try {
+      if (await shouldRotatePersistentLog(this.persistentLogger, {
+        maxFileBytes: PERSISTENT_LOG_MAX_FILE_BYTES
+      })) {
+        this.persistentLogger = this.createPersistentLogger();
+      }
+      await prunePersistentLogs(logsDir, {
+        currentLogPath: this.persistentLogger,
+        maxFiles: PERSISTENT_LOG_MAX_FILES,
+        maxBytes: PERSISTENT_LOG_MAX_BYTES,
+        logger: console
+      });
+    } catch (error) {
+      console.warn('Failed to enforce persistent log retention:', error.message);
+    }
   }
 
   // Save current state to a JSON file (serialized: only one write at a time)
@@ -1162,10 +1200,11 @@ class GlobalExploration {
       timestamp: stepData.timestamp || new Date().toISOString()
     };
     const logLine = JSON.stringify(logData) + '\n';
-    const logPath = this.persistentLogger; // Capture current log file before async enqueue
-    this._logQueue = this._logQueue.then(() =>
-      fsp.appendFile(logPath, logLine)
-    ).catch(err => {
+    this._logQueue = this._logQueue.then(async () => {
+      await this.enforcePersistentLogRetention();
+      const logPath = this.persistentLogger;
+      await fsp.appendFile(logPath, logLine);
+    }).catch(err => {
       console.error('Failed to write persistent log:', err);
     });
   }
@@ -1585,8 +1624,39 @@ function verifyAdminToken(token) {
 
 function sendWorkerMessage(message) {
   if (typeof process.send === 'function') {
-    process.send(message);
+    try {
+      process.send(message);
+    } catch (error) {
+      console.error('Failed to send worker IPC message:', error.message);
+    }
   }
+}
+
+const WORKER_TELEMETRY_FLUSH_MS = parseIntOr(process.env.WORKER_TELEMETRY_FLUSH_MS, 1000);
+let workerTelemetryTimer = null;
+
+function flushWorkerTelemetry() {
+  if (!IS_WORKER_PROCESS) return;
+  if (workerTelemetryTimer) {
+    clearTimeout(workerTelemetryTimer);
+    workerTelemetryTimer = null;
+  }
+  sendWorkerState(false);
+  sendWorkerMetrics();
+}
+
+function scheduleWorkerTelemetry({ immediate = false } = {}) {
+  if (!IS_WORKER_PROCESS) return;
+  if (immediate) {
+    flushWorkerTelemetry();
+    return;
+  }
+  if (workerTelemetryTimer) return;
+  workerTelemetryTimer = setTimeout(() => {
+    workerTelemetryTimer = null;
+    sendWorkerState(false);
+    sendWorkerMetrics();
+  }, WORKER_TELEMETRY_FLUSH_MS);
 }
 
 function sendWorkerState(includeFullPath = false) {
@@ -1623,8 +1693,7 @@ function sendWorkerMetrics() {
 
 function sendWorkerBroadcast(name, data) {
   sendWorkerMessage({ kind: 'broadcast', name, data });
-  sendWorkerState(false);
-  sendWorkerMetrics();
+  scheduleWorkerTelemetry();
 }
 
 async function bootWorker({ autoRestore = true, autoStart = false } = {}) {
@@ -1641,8 +1710,7 @@ async function bootWorker({ autoRestore = true, autoStart = false } = {}) {
     startResult = await globalExploration.startExploration();
   }
 
-  sendWorkerState(false);
-  sendWorkerMetrics();
+  scheduleWorkerTelemetry();
   return {
     success: !(restoreResult?.error || startResult?.error),
     savePath,
@@ -1711,17 +1779,20 @@ function runWorkerProcess() {
 
     try {
       const result = await dispatchWorkerCommand(message.command, message.payload || {});
-      sendWorkerState(false);
-      sendWorkerMetrics();
       sendWorkerMessage({
         kind: 'response',
         requestId: message.requestId,
         ok: true,
         result
       });
+      scheduleWorkerTelemetry({ immediate: true });
 
       if (message.command === 'shutdown') {
         clearInterval(heartbeatTimer);
+        if (workerTelemetryTimer) {
+          clearTimeout(workerTelemetryTimer);
+          workerTelemetryTimer = null;
+        }
         setTimeout(() => process.exit(result?.error ? 1 : 0), 25);
       }
     } catch (error) {
@@ -1736,12 +1807,20 @@ function runWorkerProcess() {
 
   process.on('SIGTERM', async () => {
     clearInterval(heartbeatTimer);
+    if (workerTelemetryTimer) {
+      clearTimeout(workerTelemetryTimer);
+      workerTelemetryTimer = null;
+    }
     const result = await shutdownWorkerRuntime().catch(error => ({ error: error.message }));
     process.exit(result?.error ? 1 : 0);
   });
 
   process.on('SIGINT', async () => {
     clearInterval(heartbeatTimer);
+    if (workerTelemetryTimer) {
+      clearTimeout(workerTelemetryTimer);
+      workerTelemetryTimer = null;
+    }
     const result = await shutdownWorkerRuntime().catch(error => ({ error: error.message }));
     process.exit(result?.error ? 1 : 0);
   });
