@@ -145,7 +145,8 @@ class MapManager {
 
   addArchiveTiles(tileVersion = null, tileRendererRevision = null) {
     try {
-      const version = Number.isFinite(Number(tileVersion)) ? Number(tileVersion) : 0;
+      const version = Number(tileVersion);
+      if (!Number.isFinite(version) || version <= 0) return;
       const rendererRevision = Number.isFinite(Number(tileRendererRevision)) ? Number(tileRendererRevision) : 0;
       this.archiveTileVersion = version;
       this.archiveTileRendererRevision = rendererRevision;
@@ -183,7 +184,7 @@ class MapManager {
   updateArchiveTiles(meta = {}) {
     const version = Number(meta.tileVersion);
     const rendererRevision = Number(meta.tileRendererRevision);
-    if (!Number.isFinite(version)) return;
+    if (!Number.isFinite(version) || version <= 0) return;
     const resolvedRendererRevision = Number.isFinite(rendererRevision) ? rendererRevision : 0;
     if (!this.isReady()) {
       this.archiveTileVersion = version;
