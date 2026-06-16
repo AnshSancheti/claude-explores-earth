@@ -15,6 +15,7 @@ class MapManager {
     this.userHasInteracted = false; // Track if user manually adjusted the map
     this.updatesSinceFit = 0; // Reduce expensive fit computations
     this.fitEveryNUpdates = 20; // Fit bounds every N incremental updates
+    this.recentFitPointLimit = 300;
     this.initializeMinimapSize(); // Initialize saved size preferences
   }
   
@@ -195,10 +196,10 @@ class MapManager {
     this.pathCoordinates = this.pathState.coordinates;
     this.#renderPath();
 
-    // Fit once on batch load
+    // Fit once on batch load. Use the recent/current area by default; the reset
+    // control still shows the full historical path on demand.
     if (!this.userHasInteracted && this.pathCoordinates.length > 1) {
-      const bounds = this.pathCoordinates.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(this.pathCoordinates[0], this.pathCoordinates[0]));
-      this.map.fitBounds(bounds, { padding: 50, maxZoom: 16 });
+      this.#fitRecentPath();
       this.updatesSinceFit = 0;
     }
   }
@@ -321,8 +322,7 @@ class MapManager {
       if (this.pathCoordinates.length > 1) {
         this.updatesSinceFit += 1;
         if (this.updatesSinceFit >= this.fitEveryNUpdates) {
-          const bounds = this.pathCoordinates.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(this.pathCoordinates[0], this.pathCoordinates[0]));
-          this.map.fitBounds(bounds, { padding: 50, maxZoom: 16 });
+          this.#fitRecentPath(position);
           this.updatesSinceFit = 0;
         }
       } else {
@@ -344,6 +344,32 @@ class MapManager {
           type: 'LineString',
           coordinates: this.pathCoordinates
         }
+      });
+    }
+  }
+
+  #fitRecentPath(position = null) {
+    const recentCoordinates = this.pathCoordinates.slice(-this.recentFitPointLimit);
+    if (position) {
+      const current = [position.lng, position.lat];
+      const last = recentCoordinates[recentCoordinates.length - 1];
+      if (!last || last[0] !== current[0] || last[1] !== current[1]) {
+        recentCoordinates.push(current);
+      }
+    }
+
+    if (recentCoordinates.length > 1) {
+      const bounds = recentCoordinates.reduce((b, c) => b.extend(c), new maplibregl.LngLatBounds(recentCoordinates[0], recentCoordinates[0]));
+      this.map.fitBounds(bounds, { padding: 40, maxZoom: 17 });
+    } else if (recentCoordinates.length === 1) {
+      this.map.flyTo({
+        center: recentCoordinates[0],
+        zoom: 16
+      });
+    } else if (position) {
+      this.map.flyTo({
+        center: [position.lng, position.lat],
+        zoom: 16
       });
     }
   }
