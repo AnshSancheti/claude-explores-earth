@@ -5,6 +5,17 @@ import { randomUUID } from 'crypto';
 export const EVENT_LOG_VERSION = 1;
 export const SNAPSHOT_SCHEMA_VERSION = 2;
 const EVENT_LOG_TAIL_READ_CHUNK_BYTES = 1024 * 1024;
+const DEFAULT_EVENT_LOG_COMPACT_MAX_BYTES = 128 * 1024 * 1024;
+
+function parseIntOr(value, fallback) {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+const EVENT_LOG_COMPACT_MAX_BYTES = parseIntOr(
+  process.env.RUN_EVENT_LOG_COMPACT_MAX_BYTES,
+  DEFAULT_EVENT_LOG_COMPACT_MAX_BYTES
+);
 
 function cloneJson(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
@@ -155,13 +166,14 @@ export function reduceSnapshotWithEvents(snapshot, events = []) {
 }
 
 export class RunStore {
-  constructor({ dataDir, logger = console } = {}) {
+  constructor({ dataDir, logger = console, eventLogCompactMaxBytes = EVENT_LOG_COMPACT_MAX_BYTES } = {}) {
     if (!dataDir) {
       throw new Error('RunStore requires dataDir');
     }
 
     this.dataDir = dataDir;
     this.logger = logger;
+    this.eventLogCompactMaxBytes = eventLogCompactMaxBytes;
     this.lastSequenceByRun = new Map();
     this.appendQueues = new Map();
   }
@@ -241,10 +253,14 @@ export class RunStore {
       throw new Error('Cannot append run event without type');
     }
 
+    return this.#withEventLogLock(runId, () => this.#appendEventUnlocked(runId, eventInput));
+  }
+
+  async #withEventLogLock(runId, operation) {
     const previous = this.appendQueues.get(runId) || Promise.resolve();
-    const append = previous.then(() => this.#appendEventUnlocked(runId, eventInput));
-    this.appendQueues.set(runId, append.catch(() => {}));
-    return append;
+    const next = previous.catch(() => {}).then(operation);
+    this.appendQueues.set(runId, next.catch(() => {}));
+    return next;
   }
 
   async #appendEventUnlocked(runId, eventInput) {
@@ -468,7 +484,73 @@ export class RunStore {
 
     await atomicWriteJson(this.getSnapshotPath(runId), normalized);
     await atomicWriteJson(this.getCurrentSavePath(), normalized);
+    await this.compactEventLogIfNeeded(runId, normalized);
     return normalized;
+  }
+
+  async compactEventLogIfNeeded(runId, snapshot = null) {
+    if (!runId || this.eventLogCompactMaxBytes <= 0) return false;
+
+    const logPath = this.getEventLogPath(runId);
+    let stat = null;
+    try {
+      stat = await fsp.stat(logPath);
+    } catch (error) {
+      if (error.code === 'ENOENT') return false;
+      throw error;
+    }
+
+    if (stat.size <= this.eventLogCompactMaxBytes) return false;
+
+    return this.#withEventLogLock(runId, async () => {
+      const freshStat = await fsp.stat(logPath).catch(error => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (!freshStat || freshStat.size <= this.eventLogCompactMaxBytes) return false;
+
+      const compactSnapshot = snapshot || await this.readSnapshot(runId);
+      const checkpointSequence = Number(compactSnapshot?.eventLog?.lastSequence) || 0;
+      if (checkpointSequence <= 0) return false;
+
+      const { events: trailingEvents, warnings } = await this.readEvents(runId, {
+        afterSequence: checkpointSequence
+      });
+      for (const warning of warnings) {
+        this.logger.warn?.(warning);
+      }
+
+      const checkpointEvent = {
+        version: EVENT_LOG_VERSION,
+        eventId: `checkpoint-${checkpointSequence}`,
+        runId,
+        epoch: Number(compactSnapshot.activeEpoch) || 0,
+        sequence: checkpointSequence,
+        type: 'snapshot_checkpoint',
+        timestamp: compactSnapshot.lastUpdated || new Date().toISOString(),
+        stepId: null,
+        stepCount: Number(compactSnapshot.stepCount) || null,
+        payload: {
+          snapshotStepCount: Number(compactSnapshot.stepCount) || 0,
+          compactedAt: new Date().toISOString()
+        }
+      };
+      const compactEvents = [checkpointEvent, ...trailingEvents];
+      const tempPath = `${logPath}.${process.pid}.${Date.now()}.${randomUUID()}.compact`;
+      const contents = compactEvents.map(event => JSON.stringify(event)).join('\n') + '\n';
+
+      await fsp.writeFile(tempPath, contents);
+      await fsp.rename(tempPath, logPath);
+      const lastSequence = compactEvents.reduce(
+        (max, event) => Math.max(max, Number(event.sequence) || 0),
+        checkpointSequence
+      );
+      this.lastSequenceByRun.set(runId, lastSequence);
+      this.logger.log?.(
+        `Compacted event log for run ${runId}: ${freshStat.size} bytes -> ${Buffer.byteLength(contents)} bytes`
+      );
+      return true;
+    });
   }
 
   async readSnapshot(runId) {

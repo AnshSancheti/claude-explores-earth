@@ -5,11 +5,11 @@ import os from 'os';
 import path from 'path';
 import { RunStore, reduceSnapshotWithEvents } from '../server/services/runStore.js';
 
-async function makeStore() {
+async function makeStore(options = {}) {
   const dataDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'run-store-'));
   return {
     dataDir,
-    store: new RunStore({ dataDir, logger: { warn: () => {}, error: () => {} } })
+    store: new RunStore({ dataDir, logger: { log: () => {}, warn: () => {}, error: () => {} }, ...options })
   };
 }
 
@@ -57,6 +57,63 @@ test('RunStore writes run snapshots and the compatibility current-run pointer', 
   const currentSnapshot = await store.readCurrentSnapshot();
   assert.equal(runSnapshot.stepCount, 4);
   assert.equal(currentSnapshot.currentState.panoId, 'P4');
+});
+
+test('RunStore compacts snapshotted event log history and preserves sequence continuity', async () => {
+  const { store } = await makeStore({ eventLogCompactMaxBytes: 1 });
+
+  for (let i = 1; i <= 5; i += 1) {
+    await store.appendEvent('run-compact-log', {
+      type: 'step_completed',
+      stepCount: i,
+      payload: { stepData: { stepCount: i, panoId: `P${i}` } }
+    });
+  }
+
+  await store.writeSnapshot('run-compact-log', {
+    stepCount: 5,
+    currentState: { panoId: 'P5' },
+    stats: { locationsVisited: 5 },
+    graph: {},
+    recentHistory: [],
+    decisionHistory: [],
+    eventLog: { lastSequence: 5, lastEventId: 'event-5' }
+  });
+
+  await store.appendEvent('run-compact-log', {
+    type: 'step_completed',
+    stepCount: 6,
+    payload: { stepData: { stepCount: 6, panoId: 'P6' } }
+  });
+  await store.appendEvent('run-compact-log', {
+    type: 'step_completed',
+    stepCount: 7,
+    payload: { stepData: { stepCount: 7, panoId: 'P7' } }
+  });
+
+  const compacted = await store.compactEventLogIfNeeded('run-compact-log');
+  assert.equal(compacted, true);
+
+  const { events } = await store.readEvents('run-compact-log');
+  assert.deepEqual(
+    events.map(event => [event.sequence, event.type, event.stepCount]),
+    [
+      [5, 'snapshot_checkpoint', 5],
+      [6, 'step_completed', 6],
+      [7, 'step_completed', 7]
+    ]
+  );
+
+  const next = await store.appendEvent('run-compact-log', {
+    type: 'step_completed',
+    stepCount: 8,
+    payload: { stepData: { stepCount: 8, panoId: 'P8' } }
+  });
+  assert.equal(next.sequence, 8);
+
+  const restored = await store.restoreCurrent();
+  assert.equal(restored.snapshot.stepCount, 8);
+  assert.equal(restored.restoreSource, 'v2-snapshot+events');
 });
 
 test('RunStore reads only events after a known sequence', async () => {
