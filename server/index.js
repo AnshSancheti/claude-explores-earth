@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import { ExplorationAgent } from './agents/explorationAgent.js';
 import { Logger } from './utils/logger.js';
-import { simplifyPathWithTiers, getSimplificationStats } from './utils/pathSimplification.js';
+import { simplifyPathWithTiers, simplifyPath, getSimplificationStats } from './utils/pathSimplification.js';
 import fs from 'fs';
 import * as fsp from 'fs/promises';
 import path from 'path';
@@ -244,6 +244,7 @@ class GlobalExploration {
     this.gcInterval = null;
     // Tile cache for archived path rendering
     this.tileCache = new Map(); // key: `${z}/${x}/${y}@${archivedCount}` -> Buffer
+    this.tilePathCache = new Map(); // key: `${archiveVersion}:${z}:${archivedCount}` -> simplified points
     this.fullPathCache = {
       stepCount: null,
       generatedAt: 0,
@@ -639,6 +640,9 @@ class GlobalExploration {
       // Clear in-memory tile cache; tiles will be re-generated for this run/version
       if (this.tileCache) {
         this.tileCache.clear();
+      }
+      if (this.tilePathCache) {
+        this.tilePathCache.clear();
       }
 
       // Broadcast restored state to all clients
@@ -1156,6 +1160,9 @@ class GlobalExploration {
     if (this.tileCache) {
       this.tileCache.clear();
     }
+    if (this.tilePathCache) {
+      this.tilePathCache.clear();
+    }
 
     // Reset the agent
     if (this.agent) {
@@ -1373,7 +1380,9 @@ class GlobalExploration {
       cacheSet(this.tileCache, cacheKey, data);
       return data;
     } catch {
-      const buf = await drawArchiveTile(this.agent, z, x, y);
+      const buf = await drawArchiveTile(this.agent, z, x, y, {
+        pathCache: this.tilePathCache
+      });
       fsp.mkdir(path.dirname(filePath), { recursive: true })
         .then(() => fsp.writeFile(filePath, buf))
         .catch(() => {});
@@ -1472,6 +1481,35 @@ function lonLatToWorldPixels(lng, lat, z) {
   return [x, y];
 }
 
+function tileYToLat(tileY, z) {
+  const n = Math.PI - 2 * Math.PI * tileY / Math.pow(2, z);
+  return (180 / Math.PI) * Math.atan(Math.sinh(n));
+}
+
+function tileGeoBounds(z, x, y, marginPixels = 0) {
+  const marginTiles = marginPixels / 256;
+  return {
+    west: ((x - marginTiles) / Math.pow(2, z)) * 360 - 180,
+    east: ((x + 1 + marginTiles) / Math.pow(2, z)) * 360 - 180,
+    north: tileYToLat(y - marginTiles, z),
+    south: tileYToLat(y + 1 + marginTiles, z)
+  };
+}
+
+function segmentIntersectsBounds(a, b, bounds) {
+  if (!a || !b) return false;
+  const minLat = Math.min(a.lat, b.lat);
+  const maxLat = Math.max(a.lat, b.lat);
+  const minLng = Math.min(a.lng, b.lng);
+  const maxLng = Math.max(a.lng, b.lng);
+  return (
+    maxLat >= bounds.south &&
+    minLat <= bounds.north &&
+    maxLng >= bounds.west &&
+    minLng <= bounds.east
+  );
+}
+
 function getArchivedCount(agent) {
   if (!agent || !agent.coverage) return 0;
   const len = agent.coverage.path.length;
@@ -1484,14 +1522,44 @@ function getArchiveVersion(agent) {
   return Math.floor(archived / Math.max(1, TILE_VERSION_STEP));
 }
 
-async function drawArchiveTile(agent, z, x, y) {
+function archiveTileEpsilonForZoom(z) {
+  if (z <= 8) return 0.001;
+  if (z === 9) return 0.0005;
+  if (z === 10) return 0.00025;
+  if (z === 11) return 0.00012;
+  if (z === 12) return 0.00006;
+  if (z === 13) return 0.00003;
+  if (z === 14) return 0.000015;
+  return 0;
+}
+
+function getArchiveTilePath(agent, z, archivedCount, pathCache = null) {
+  const sourcePath = agent.coverage.path;
+  const epsilon = archiveTileEpsilonForZoom(z);
+  if (epsilon <= 0) {
+    return sourcePath.slice(0, archivedCount);
+  }
+
+  const version = getArchiveVersion(agent);
+  const cacheKey = `${version}:${z}:${archivedCount}`;
+  const cached = pathCache?.get(cacheKey);
+  if (cached) return cached;
+
+  const simplified = simplifyPath(sourcePath.slice(0, archivedCount), epsilon);
+  if (pathCache) {
+    cacheSet(pathCache, cacheKey, simplified);
+  }
+  return simplified;
+}
+
+async function drawArchiveTile(agent, z, x, y, { pathCache = null } = {}) {
   const createCanvas = await getCreateCanvas();
   const archivedCount = getArchivedCount(agent);
   if (archivedCount < 2) {
     const c = createCanvas(256, 256);
     return c.toBuffer('image/png');
   }
-  const pathArr = agent.coverage.path; // [{lat,lng,...}]
+  const pathArr = getArchiveTilePath(agent, z, archivedCount, pathCache);
   const canvas = createCanvas(256, 256);
   const ctx = canvas.getContext('2d');
   // Scale stroke width with zoom so lines remain visible when zoomed in
@@ -1514,41 +1582,44 @@ async function drawArchiveTile(agent, z, x, y) {
   const tileOriginX = x * 256;
   const tileOriginY = y * 256;
   const margin = strokeWidth;
+  const bounds = tileGeoBounds(z, x, y, margin);
   const minPixelStep = z <= 9 ? 0.75 : z <= 12 ? 0.5 : 0.25;
   const minPixelStepSq = minPixelStep * minPixelStep;
 
   let started = false;
   let lastDrawn = null;
-  let lastVisible = false;
   let segmentsDrawn = 0;
   ctx.beginPath();
 
-  for (let i = 0; i < archivedCount; i += 1) {
-    const point = pathArr[i];
-    if (!point) continue;
-
-    const [worldX, worldY] = lonLatToWorldPixels(point.lng, point.lat, z);
-    const px = worldX - tileOriginX;
-    const py = worldY - tileOriginY;
-    const visible = px >= -margin && px <= 256 + margin && py >= -margin && py <= 256 + margin;
-
-    if (!started) {
-      ctx.moveTo(px, py);
-      started = true;
-      lastDrawn = [px, py];
-      lastVisible = visible;
+  for (let i = 0; i < pathArr.length - 1; i += 1) {
+    const a = pathArr[i];
+    const b = pathArr[i + 1];
+    if (!segmentIntersectsBounds(a, b, bounds)) {
+      started = false;
       continue;
     }
 
-    const dx = px - lastDrawn[0];
-    const dy = py - lastDrawn[1];
+    const [awx, awy] = lonLatToWorldPixels(a.lng, a.lat, z);
+    const [bwx, bwy] = lonLatToWorldPixels(b.lng, b.lat, z);
+    const ax = awx - tileOriginX;
+    const ay = awy - tileOriginY;
+    const bx = bwx - tileOriginX;
+    const by = bwy - tileOriginY;
+
+    if (!started) {
+      ctx.moveTo(ax, ay);
+      started = true;
+      lastDrawn = [ax, ay];
+    }
+
+    const dx = bx - lastDrawn[0];
+    const dy = by - lastDrawn[1];
     const movedEnough = dx * dx + dy * dy >= minPixelStepSq;
-    if (visible || lastVisible || movedEnough || i === archivedCount - 1) {
-      ctx.lineTo(px, py);
-      lastDrawn = [px, py];
+    if (movedEnough || i === pathArr.length - 2) {
+      ctx.lineTo(bx, by);
+      lastDrawn = [bx, by];
       segmentsDrawn += 1;
     }
-    lastVisible = visible;
   }
 
   if (segmentsDrawn > 0) {
