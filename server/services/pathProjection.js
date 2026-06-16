@@ -1,6 +1,7 @@
 import * as fsp from 'fs/promises';
 import path from 'path';
 import { randomUUID } from 'crypto';
+import { TILE_RENDERER_REVISION } from './archiveTileRenderer.js';
 
 function cloneJson(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
@@ -24,8 +25,6 @@ const DEFAULT_VECTOR_TAIL_POINTS = parseIntOr(
   process.env.MINIMAP_VECTOR_TAIL_POINTS || process.env.TILE_RECENT_TAIL_POINTS,
   1500
 );
-const DEFAULT_TILE_VERSION_STEP = parseIntOr(process.env.TILE_VERSION_STEP, 1000);
-
 function validPosition(position) {
   if (!position || typeof position !== 'object') return null;
   const lat = Number(position.lat);
@@ -136,7 +135,6 @@ export class PathProjection {
     logger = console,
     writeDebounceMs = 10000,
     vectorTailPoints = DEFAULT_VECTOR_TAIL_POINTS,
-    tileVersionStep = DEFAULT_TILE_VERSION_STEP
   } = {}) {
     if (!runStore) {
       throw new Error('PathProjection requires runStore');
@@ -146,7 +144,6 @@ export class PathProjection {
     this.logger = logger;
     this.writeDebounceMs = writeDebounceMs;
     this.vectorTailPoints = Math.max(0, parseIntOr(vectorTailPoints, DEFAULT_VECTOR_TAIL_POINTS));
-    this.tileVersionStep = Math.max(1, parseIntOr(tileVersionStep, DEFAULT_TILE_VERSION_STEP));
     this.cacheByRun = new Map();
     this.queues = new Map();
     this.writeTimers = new Map();
@@ -257,6 +254,42 @@ export class PathProjection {
 
       return this.#toState(current, { includeFullPath: false });
     });
+  }
+
+  async getRenderPath(runId, {
+    expectedSequence = 0,
+    maxStaleEvents = 5,
+    clonePoints = true
+  } = {}) {
+    if (!runId) {
+      return {
+        runId: null,
+        sequence: 0,
+        pathSequence: 0,
+        stepCount: 0,
+        points: []
+      };
+    }
+
+    await this.getPathState(runId, { expectedSequence, maxStaleEvents, vectorTailPoints: 0 });
+    const cache = this.cacheByRun.get(runId);
+    if (!cache) {
+      return {
+        runId,
+        sequence: 0,
+        pathSequence: 0,
+        stepCount: 0,
+        points: []
+      };
+    }
+
+    return {
+      runId: cache.runId,
+      sequence: cache.eventSequence,
+      pathSequence: cache.pathSequence,
+      stepCount: cache.stepCount,
+      points: clonePoints ? cache.points.slice() : cache.points
+    };
   }
 
   async flushWrites() {
@@ -400,6 +433,7 @@ export class PathProjection {
       vectorTailPoints: 0,
       archivedPoints: 0,
       tileVersion: 0,
+      tileRendererRevision: TILE_RENDERER_REVISION,
       bounds: null,
       fullPath: []
     };
@@ -452,7 +486,10 @@ export class PathProjection {
       totalPoints: pointCount,
       vectorTailPoints: tailCount,
       archivedPoints,
-      tileVersion: Math.floor(archivedPoints / this.tileVersionStep),
+      // Exact archived cutover. Coarse buckets can create path gaps because the
+      // client vector tail moves every step while immutable raster URLs do not.
+      tileVersion: archivedPoints,
+      tileRendererRevision: TILE_RENDERER_REVISION,
       bounds: cloneBounds(cache.bounds),
       fullPath
     };

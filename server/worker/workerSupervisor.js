@@ -2,8 +2,15 @@ import { fork } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
+import * as fsp from 'fs/promises';
 import { RunStore } from '../services/runStore.js';
 import { PathProjection } from '../services/pathProjection.js';
+import {
+  TILE_RENDERER_REVISION,
+  archivedPointCount,
+  archiveVersionForPoints,
+  drawArchiveTileFromPath
+} from '../services/archiveTileRenderer.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -19,6 +26,8 @@ const DEFAULT_COMMAND_TIMEOUT_MS = parseIntOr(process.env.WORKER_COMMAND_TIMEOUT
 const DEFAULT_HEARTBEAT_STALE_MS = parseIntOr(process.env.WORKER_HEARTBEAT_STALE_MS, 120000);
 const DEFAULT_RESTART_WINDOW_MS = parseIntOr(process.env.WORKER_RESTART_WINDOW_MS, 300000);
 const DEFAULT_MAX_RESTARTS = parseIntOr(process.env.WORKER_MAX_RESTARTS, 5);
+const TILE_TAIL_POINTS = parseIntOr(process.env.TILE_RECENT_TAIL_POINTS || process.env.MINIMAP_VECTOR_TAIL_POINTS, 1500);
+const TILE_MAX_CACHE = parseIntOr(process.env.TILE_MAX_CACHE, 256);
 const START_LOCATION = {
   lat: parseFloat(process.env.START_LAT),
   lng: parseFloat(process.env.START_LNG)
@@ -36,6 +45,22 @@ function createFallbackState() {
     stepStatus: 'worker-unavailable',
     recentHistory: []
   };
+}
+
+function cacheSet(map, key, value) {
+  if (map.has(key)) map.delete(key);
+  map.set(key, value);
+  if (map.size > TILE_MAX_CACHE) {
+    const firstKey = map.keys().next().value;
+    map.delete(firstKey);
+  }
+}
+
+function resolveRequestedArchivedCount(tileVersion, currentArchivedCount) {
+  const requested = Number(tileVersion);
+  if (!Number.isFinite(requested) || requested < 0) return currentArchivedCount;
+  if (currentArchivedCount > 10000 && requested < 10000) return currentArchivedCount;
+  return Math.max(0, Math.min(Math.floor(requested), currentArchivedCount));
 }
 
 export class WorkerSupervisor {
@@ -59,6 +84,7 @@ export class WorkerSupervisor {
     this.connectedClients = new Set();
     this.pendingRequests = new Map();
     this.tileCache = new Map();
+    this.tilePathCache = new Map();
     this.lastState = createFallbackState();
     this.lastMetrics = {};
     this.lastHeartbeatAt = null;
@@ -313,10 +339,14 @@ export class WorkerSupervisor {
       });
       if (this.lastState.runId) {
         this.pathProjection.invalidateRun(this.lastState.runId);
+        this.tileCache.clear();
+        this.tilePathCache.clear();
         this.#broadcastPathState(this.lastState.runId);
       }
     } else if (name === 'exploration-reset') {
       this.lastState = createFallbackState();
+      this.tileCache.clear();
+      this.tilePathCache.clear();
     }
   }
 
@@ -445,10 +475,48 @@ export class WorkerSupervisor {
     return this.#sendCommand('saveNow');
   }
 
-  async renderTile(z, x, y) {
-    return this.#sendCommand('renderTile', { z, x, y }, {
-      timeoutMs: parseIntOr(process.env.WORKER_TILE_TIMEOUT_MS, 30000)
+  async renderTile(z, x, y, { tileVersion = null } = {}) {
+    const runId = this.lastState?.runId || this.lastMetrics?.runId || null;
+    if (!runId) {
+      return drawArchiveTileFromPath([], z, x, y, { archivedCount: 0 });
+    }
+
+    const renderPath = await this.pathProjection.getRenderPath(runId, {
+      expectedSequence: this.lastState?.lastEventSequence || this.lastMetrics?.lastEventSequence || 0,
+      clonePoints: false
     });
+    const currentArchivedCount = archivedPointCount(renderPath.points.length, TILE_TAIL_POINTS);
+    const requestedArchivedCount = resolveRequestedArchivedCount(tileVersion, currentArchivedCount);
+    const version = archiveVersionForPoints(requestedArchivedCount);
+    const cacheKey = `${runId}/${z}/${x}/${y}@r${TILE_RENDERER_REVISION}@v${version}`;
+    const cached = this.tileCache.get(cacheKey);
+    if (cached) return cached;
+
+    const filePath = join(
+      DATA_DIR,
+      'tiles',
+      runId,
+      `renderer-${TILE_RENDERER_REVISION}`,
+      String(version),
+      String(z),
+      String(x),
+      `${y}.png`
+    );
+    try {
+      const data = fs.readFileSync(filePath);
+      cacheSet(this.tileCache, cacheKey, data);
+      return data;
+    } catch {
+      const tile = await drawArchiveTileFromPath(renderPath.points, z, x, y, {
+        archivedCount: requestedArchivedCount,
+        pathCache: this.tilePathCache
+      });
+      fsp.mkdir(join(DATA_DIR, 'tiles', runId, `renderer-${TILE_RENDERER_REVISION}`, String(version), String(z), String(x)), { recursive: true })
+        .then(() => fsp.writeFile(filePath, tile))
+        .catch(() => {});
+      cacheSet(this.tileCache, cacheKey, tile);
+      return tile;
+    }
   }
 
   async getCurrentState({ includeFullPath = true } = {}) {

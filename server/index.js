@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 import cors from 'cors';
 import { ExplorationAgent } from './agents/explorationAgent.js';
 import { Logger } from './utils/logger.js';
-import { simplifyPathWithTiers, simplifyPath, getSimplificationStats } from './utils/pathSimplification.js';
+import { simplifyPathWithTiers, getSimplificationStats } from './utils/pathSimplification.js';
 import fs from 'fs';
 import * as fsp from 'fs/promises';
 import path from 'path';
@@ -15,6 +15,12 @@ import crypto, { randomUUID } from 'crypto';
 import { verifySignature } from './utils/urlSigner.js';
 import { RunStore } from './services/runStore.js';
 import { WorkerSupervisor } from './worker/workerSupervisor.js';
+import {
+  TILE_RENDERER_REVISION,
+  archivedPointCount,
+  archiveVersionForPoints,
+  drawArchiveTileFromPath
+} from './services/archiveTileRenderer.js';
 import {
   DEFAULT_PERSISTENT_LOG_MAX_BYTES,
   DEFAULT_PERSISTENT_LOG_MAX_FILE_BYTES,
@@ -173,7 +179,6 @@ const OPENAI_RATE_LIMIT_BACKOFF_MS = parseIntOr(process.env.OPENAI_RATE_LIMIT_BA
 const STOP_STEP_DRAIN_TIMEOUT_MS = parseIntOr(process.env.STOP_STEP_DRAIN_TIMEOUT_MS, 120000);
 const TILE_TAIL_POINTS = parseInt(process.env.TILE_RECENT_TAIL_POINTS) || 1500; // recent points kept as vector
 const TILE_MAX_CACHE = parseInt(process.env.TILE_MAX_CACHE) || 256;
-const TILE_VERSION_STEP = parseInt(process.env.TILE_VERSION_STEP) || 1000; // archive version increments every N archived points
 const PERSISTENT_LOG_MAX_FILES = parseIntOr(
   process.env.PERSISTENT_LOG_MAX_FILES,
   DEFAULT_PERSISTENT_LOG_MAX_FILES
@@ -207,15 +212,6 @@ const EMPTY_TILE_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAYAAABccqhmAAAAGUlEQVR42u3BAQ0AAADCoPdPbQ43oAAAAAAAAAAA4N8AAQAAATGM2YAAAAAASUVORK5CYII=',
   'base64'
 );
-let createCanvasFn = null;
-
-async function getCreateCanvas() {
-  if (!createCanvasFn) {
-    ({ createCanvas: createCanvasFn } = await import('canvas'));
-  }
-  return createCanvasFn;
-}
-
 // Global exploration state
 class GlobalExploration {
   constructor({ emit = null } = {}) {
@@ -1363,24 +1359,36 @@ class GlobalExploration {
     };
   }
 
-  async renderTile(z, x, y) {
+  async renderTile(z, x, y, { tileVersion = null } = {}) {
     if (!this.agent || !this.agent.coverage) {
       return emptyTilePng();
     }
 
-    const version = getArchiveVersion(this.agent);
-    const cacheKey = `${z}/${x}/${y}@v${version}`;
+    const currentArchivedCount = getArchivedCount(this.agent);
+    const requestedArchivedCount = resolveRequestedArchivedCount(tileVersion, currentArchivedCount);
+    const version = archiveVersionForPoints(requestedArchivedCount);
+    const cacheKey = `${z}/${x}/${y}@r${TILE_RENDERER_REVISION}@v${version}`;
     const cached = this.tileCache.get(cacheKey);
     if (cached) return cached;
 
     const runId = this.agent.runId || 'current';
-    const filePath = path.join(DATA_DIR, 'tiles', runId, String(version), String(z), String(x), `${y}.png`);
+    const filePath = path.join(
+      DATA_DIR,
+      'tiles',
+      runId,
+      `renderer-${TILE_RENDERER_REVISION}`,
+      String(version),
+      String(z),
+      String(x),
+      `${y}.png`
+    );
     try {
       const data = fs.readFileSync(filePath);
       cacheSet(this.tileCache, cacheKey, data);
       return data;
     } catch {
       const buf = await drawArchiveTile(this.agent, z, x, y, {
+        archivedCount: requestedArchivedCount,
         pathCache: this.tilePathCache
       });
       fsp.mkdir(path.dirname(filePath), { recursive: true })
@@ -1472,161 +1480,25 @@ const globalExploration = IS_WORKER_PROCESS
     });
 
 // Tile rendering helpers
-function lonLatToWorldPixels(lng, lat, z) {
-  const tile = 256;
-  const scale = tile * Math.pow(2, z);
-  const x = (lng + 180) / 360 * scale;
-  const sinLat = Math.sin((lat * Math.PI) / 180);
-  const y = (0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * scale;
-  return [x, y];
-}
-
-function tileYToLat(tileY, z) {
-  const n = Math.PI - 2 * Math.PI * tileY / Math.pow(2, z);
-  return (180 / Math.PI) * Math.atan(Math.sinh(n));
-}
-
-function tileGeoBounds(z, x, y, marginPixels = 0) {
-  const marginTiles = marginPixels / 256;
-  return {
-    west: ((x - marginTiles) / Math.pow(2, z)) * 360 - 180,
-    east: ((x + 1 + marginTiles) / Math.pow(2, z)) * 360 - 180,
-    north: tileYToLat(y - marginTiles, z),
-    south: tileYToLat(y + 1 + marginTiles, z)
-  };
-}
-
-function segmentIntersectsBounds(a, b, bounds) {
-  if (!a || !b) return false;
-  const minLat = Math.min(a.lat, b.lat);
-  const maxLat = Math.max(a.lat, b.lat);
-  const minLng = Math.min(a.lng, b.lng);
-  const maxLng = Math.max(a.lng, b.lng);
-  return (
-    maxLat >= bounds.south &&
-    minLat <= bounds.north &&
-    maxLng >= bounds.west &&
-    minLng <= bounds.east
-  );
-}
-
 function getArchivedCount(agent) {
   if (!agent || !agent.coverage) return 0;
-  const len = agent.coverage.path.length;
-  return Math.max(0, len - TILE_TAIL_POINTS);
+  return archivedPointCount(agent.coverage.path.length, TILE_TAIL_POINTS);
 }
 
-function getArchiveVersion(agent) {
-  const archived = getArchivedCount(agent);
-  if (archived <= 0) return 0;
-  return Math.floor(archived / Math.max(1, TILE_VERSION_STEP));
+function resolveRequestedArchivedCount(tileVersion, currentArchivedCount) {
+  const requested = Number(tileVersion);
+  if (!Number.isFinite(requested) || requested < 0) return currentArchivedCount;
+  // Old clients used coarse version buckets such as 128. Those must not mean
+  // "render only 128 archived points" after exact cutover versioning ships.
+  if (currentArchivedCount > 10000 && requested < 10000) return currentArchivedCount;
+  return Math.max(0, Math.min(Math.floor(requested), currentArchivedCount));
 }
 
-function archiveTileEpsilonForZoom(z) {
-  if (z <= 8) return 0.001;
-  if (z === 9) return 0.0005;
-  if (z === 10) return 0.00025;
-  if (z === 11) return 0.00012;
-  if (z === 12) return 0.00006;
-  if (z === 13) return 0.00003;
-  if (z === 14) return 0.000015;
-  return 0;
-}
-
-function getArchiveTilePath(agent, z, archivedCount, pathCache = null) {
-  const sourcePath = agent.coverage.path;
-  const epsilon = archiveTileEpsilonForZoom(z);
-  if (epsilon <= 0) {
-    return sourcePath.slice(0, archivedCount);
-  }
-
-  const version = getArchiveVersion(agent);
-  const cacheKey = `${version}:${z}:${archivedCount}`;
-  const cached = pathCache?.get(cacheKey);
-  if (cached) return cached;
-
-  const simplified = simplifyPath(sourcePath.slice(0, archivedCount), epsilon);
-  if (pathCache) {
-    cacheSet(pathCache, cacheKey, simplified);
-  }
-  return simplified;
-}
-
-async function drawArchiveTile(agent, z, x, y, { pathCache = null } = {}) {
-  const createCanvas = await getCreateCanvas();
-  const archivedCount = getArchivedCount(agent);
-  if (archivedCount < 2) {
-    const c = createCanvas(256, 256);
-    return c.toBuffer('image/png');
-  }
-  const pathArr = getArchiveTilePath(agent, z, archivedCount, pathCache);
-  const canvas = createCanvas(256, 256);
-  const ctx = canvas.getContext('2d');
-  // Scale stroke width with zoom so lines remain visible when zoomed in
-  function strokeWidthForZoom(zoom) {
-    if (zoom >= 20) return 12;
-    if (zoom >= 19) return 10;
-    if (zoom >= 18) return 8;
-    if (zoom >= 17) return 6;
-    if (zoom >= 16) return 4;
-    if (zoom >= 15) return 3;
-    return 2;
-  }
-  const strokeWidth = strokeWidthForZoom(z);
-  ctx.lineWidth = strokeWidth;
-  ctx.strokeStyle = '#f44336';
-  ctx.globalAlpha = 0.8;
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-
-  const tileOriginX = x * 256;
-  const tileOriginY = y * 256;
-  const margin = strokeWidth;
-  const bounds = tileGeoBounds(z, x, y, margin);
-  const minPixelStep = z <= 9 ? 0.75 : z <= 12 ? 0.5 : 0.25;
-  const minPixelStepSq = minPixelStep * minPixelStep;
-
-  let started = false;
-  let lastDrawn = null;
-  let segmentsDrawn = 0;
-  ctx.beginPath();
-
-  for (let i = 0; i < pathArr.length - 1; i += 1) {
-    const a = pathArr[i];
-    const b = pathArr[i + 1];
-    if (!segmentIntersectsBounds(a, b, bounds)) {
-      started = false;
-      continue;
-    }
-
-    const [awx, awy] = lonLatToWorldPixels(a.lng, a.lat, z);
-    const [bwx, bwy] = lonLatToWorldPixels(b.lng, b.lat, z);
-    const ax = awx - tileOriginX;
-    const ay = awy - tileOriginY;
-    const bx = bwx - tileOriginX;
-    const by = bwy - tileOriginY;
-
-    if (!started) {
-      ctx.moveTo(ax, ay);
-      started = true;
-      lastDrawn = [ax, ay];
-    }
-
-    const dx = bx - lastDrawn[0];
-    const dy = by - lastDrawn[1];
-    const movedEnough = dx * dx + dy * dy >= minPixelStepSq;
-    if (movedEnough || i === pathArr.length - 2) {
-      ctx.lineTo(bx, by);
-      lastDrawn = [bx, by];
-      segmentsDrawn += 1;
-    }
-  }
-
-  if (segmentsDrawn > 0) {
-    ctx.stroke();
-  }
-
-  return canvas.toBuffer('image/png');
+async function drawArchiveTile(agent, z, x, y, { archivedCount = null, pathCache = null } = {}) {
+  return drawArchiveTileFromPath(agent.coverage.path, z, x, y, {
+    archivedCount: archivedCount ?? getArchivedCount(agent),
+    pathCache
+  });
 }
 
 // Simple LRU eviction for tile cache
@@ -1665,7 +1537,9 @@ app.get('/tiles/:z/:x/:y.png', async (req, res) => {
   }
 
   try {
-    const tile = await globalExploration.renderTile(z, x, y);
+    const tile = await globalExploration.renderTile(z, x, y, {
+      tileVersion: req.query.v
+    });
     const body = toTileBuffer(tile);
     res
       .set('Cache-Control', 'public, max-age=31536000, immutable')
@@ -1870,7 +1744,9 @@ async function dispatchWorkerCommand(command, payload = {}) {
     case 'getMetrics':
       return globalExploration.getMetrics();
     case 'renderTile':
-      return globalExploration.renderTile(payload.z, payload.x, payload.y);
+      return globalExploration.renderTile(payload.z, payload.x, payload.y, {
+        tileVersion: payload.tileVersion
+      });
     case 'shutdown':
       return shutdownWorkerRuntime();
     default:

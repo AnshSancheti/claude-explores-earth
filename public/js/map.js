@@ -18,6 +18,7 @@ class MapManager {
     this.recentFitPointLimit = 300;
     this.fullPathBounds = null;
     this.archiveTileVersion = null;
+    this.archiveTileRendererRevision = null;
     this.hasInitialPathFit = false;
     this.initializeMinimapSize(); // Initialize saved size preferences
   }
@@ -124,7 +125,7 @@ class MapManager {
         this.addStartMarker();
         this.addCurrentMarker();
         this.initializePath();
-        this.addArchiveTiles(this.archiveTileVersion);
+        this.addArchiveTiles(this.archiveTileVersion, this.archiveTileRendererRevision);
         this.addResetButton();
         this.mapLoaded = true;
         
@@ -142,14 +143,16 @@ class MapManager {
     }
   }
 
-  addArchiveTiles(tileVersion = null) {
+  addArchiveTiles(tileVersion = null, tileRendererRevision = null) {
     try {
       const version = Number.isFinite(Number(tileVersion)) ? Number(tileVersion) : 0;
+      const rendererRevision = Number.isFinite(Number(tileRendererRevision)) ? Number(tileRendererRevision) : 0;
       this.archiveTileVersion = version;
+      this.archiveTileRendererRevision = rendererRevision;
       if (!this.map.getSource('archive-tiles')) {
         this.map.addSource('archive-tiles', {
           type: 'raster',
-          tiles: [`/tiles/{z}/{x}/{y}.png?v=${encodeURIComponent(version)}`],
+          tiles: [`/tiles/{z}/{x}/{y}.png?v=${encodeURIComponent(version)}&r=${encodeURIComponent(rendererRevision)}`],
           tileSize: 256
         });
       }
@@ -179,12 +182,21 @@ class MapManager {
 
   updateArchiveTiles(meta = {}) {
     const version = Number(meta.tileVersion);
+    const rendererRevision = Number(meta.tileRendererRevision);
     if (!Number.isFinite(version)) return;
+    const resolvedRendererRevision = Number.isFinite(rendererRevision) ? rendererRevision : 0;
     if (!this.isReady()) {
       this.archiveTileVersion = version;
+      this.archiveTileRendererRevision = resolvedRendererRevision;
       return;
     }
-    if (this.archiveTileVersion === version && this.map.getSource('archive-tiles')) return;
+    if (
+      this.archiveTileVersion === version &&
+      this.archiveTileRendererRevision === resolvedRendererRevision &&
+      this.map.getSource('archive-tiles')
+    ) {
+      return;
+    }
 
     try {
       if (this.map.getLayer('archive-tiles-layer')) {
@@ -193,7 +205,7 @@ class MapManager {
       if (this.map.getSource('archive-tiles')) {
         this.map.removeSource('archive-tiles');
       }
-      this.addArchiveTiles(version);
+      this.addArchiveTiles(version, resolvedRendererRevision);
     } catch (e) {
       console.error('Failed to refresh archive tiles:', e);
     }
@@ -442,6 +454,7 @@ class MapManager {
     this.updatesSinceFit = 0;
     this.fullPathBounds = null;
     this.archiveTileVersion = null;
+    this.archiveTileRendererRevision = null;
     this.hasInitialPathFit = false;
     
     if (this.map && this.map.getSource('path')) {
