@@ -101,6 +101,40 @@ test('resolvePanoAlias removes stale frontier and rewires graph neighbors', () =
   assert.equal(coverage.graph.get('A').neighbors.has('CANONICAL'), true);
 });
 
+test('resolved aliases do not re-enter frontier when links keep reporting stale pano IDs', () => {
+  const coverage = new CoverageTracker();
+  coverage.addVisited('CURRENT', { lat: 40, lng: -73 }, [{ pano: 'STALE_ALIAS' }]);
+
+  assert.equal(coverage.frontier.has('STALE_ALIAS'), true);
+
+  coverage.resolvePanoAlias('STALE_ALIAS', 'CURRENT');
+  coverage.addVisited('CURRENT', { lat: 40, lng: -73 }, [{ pano: 'STALE_ALIAS' }]);
+
+  assert.equal(coverage.hasVisited('STALE_ALIAS'), true);
+  assert.equal(coverage.frontier.has('STALE_ALIAS'), false);
+  assert.equal(coverage.graph.get('CURRENT').neighbors.has('CURRENT'), false);
+  assert.equal(coverage.graph.get('CURRENT').neighbors.has('STALE_ALIAS'), false);
+});
+
+test('pano aliases survive save restore and continue canonicalizing links', () => {
+  const coverage = new CoverageTracker();
+  coverage.addVisited('CURRENT', { lat: 40, lng: -73 }, [{ pano: 'STALE_ALIAS' }]);
+  coverage.resolvePanoAlias('STALE_ALIAS', 'CURRENT');
+
+  const restored = new CoverageTracker();
+  restored.restoreFromSave({
+    graph: coverage.serializeGraph(),
+    panoAliases: coverage.serializePanoAliases(),
+    stats: coverage.getStats(),
+    recentHistory: coverage.recentHistory
+  });
+  restored.addVisited('CURRENT', { lat: 40, lng: -73 }, [{ pano: 'STALE_ALIAS' }]);
+
+  assert.equal(restored.hasVisited('STALE_ALIAS'), true);
+  assert.equal(restored.frontier.has('STALE_ALIAS'), false);
+  assert.equal(restored.graph.get('CURRENT').neighbors.has('CURRENT'), false);
+});
+
 test('run-log replay tail would trigger repeating-cycle guard', (t) => {
   const logPath = path.join(__dirname, '..', 'runs', 'exploration_logs', 'exploration-1755553502417.log');
   if (!fs.existsSync(logPath)) {

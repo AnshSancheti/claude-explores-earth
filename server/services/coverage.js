@@ -15,12 +15,43 @@ export class CoverageTracker {
     // Graph structure with full node information
     // panoId -> { lat, lng, visited, neighbors: Set, timestamp }
     this.graph = new Map();
+    this.panoAliases = new Map(); // stale/alias panoId -> canonical panoId
 
     // Spatial de-duplication to detect alias loops (different pano IDs, same spot)
     this.cellSizeMeters = parseFloat(process.env.LOOP_CELL_SIZE_M || '3');
   }
 
+  canonicalizePanoId(panoId) {
+    if (!panoId) return panoId;
+    let current = panoId;
+    const seen = new Set();
+    while (this.panoAliases.has(current) && !seen.has(current)) {
+      seen.add(current);
+      current = this.panoAliases.get(current);
+    }
+    return current;
+  }
+
+  normalizeLinks(links = [], currentPanoId = null) {
+    const normalized = new Map();
+    const canonicalCurrent = this.canonicalizePanoId(currentPanoId);
+
+    for (const link of links || []) {
+      const canonicalPano = this.canonicalizePanoId(link?.pano);
+      if (!canonicalPano || canonicalPano === canonicalCurrent) continue;
+      if (!normalized.has(canonicalPano)) {
+        normalized.set(canonicalPano, { ...link, pano: canonicalPano });
+      }
+    }
+
+    return Array.from(normalized.values());
+  }
+
   addVisited(panoId, position, links = []) {
+    const originalPanoId = panoId;
+    panoId = this.canonicalizePanoId(panoId);
+    links = this.normalizeLinks(links, panoId);
+
     const isNewPano = !this.visitedPanos.has(panoId);
     this.visitedPanos.add(panoId);
 
@@ -40,6 +71,9 @@ export class CoverageTracker {
     }
     
     // Remove from frontier since we've now visited it
+    if (originalPanoId && originalPanoId !== panoId) {
+      this.frontier.delete(originalPanoId);
+    }
     this.frontier.delete(panoId);
     
     // Only store visited nodes in the graph
@@ -62,6 +96,7 @@ export class CoverageTracker {
     // Process all links - add ALL neighbors (visited and unvisited)
     links.forEach(link => {
       // Add to current node's neighbors
+      if (link.pano === panoId) return;
       node.neighbors.add(link.pano);
 
       // Intentionally mirror to treat Street View pano graph as logically bidirectional.
@@ -92,7 +127,7 @@ export class CoverageTracker {
   }
 
   hasVisited(panoId) {
-    return this.visitedPanos.has(panoId);
+    return this.visitedPanos.has(this.canonicalizePanoId(panoId));
   }
 
   getVisitedList() {
@@ -239,14 +274,30 @@ export class CoverageTracker {
       return false;
     }
 
+    canonicalPanoId = this.canonicalizePanoId(canonicalPanoId);
+    if (aliasPanoId === canonicalPanoId) {
+      return false;
+    }
+
+    this.panoAliases.set(aliasPanoId, canonicalPanoId);
+    for (const [alias, target] of this.panoAliases.entries()) {
+      if (target === aliasPanoId) {
+        this.panoAliases.set(alias, canonicalPanoId);
+      }
+    }
+
     this.frontier.delete(aliasPanoId);
+    if (this.visitedPanos.has(canonicalPanoId)) {
+      this.frontier.delete(canonicalPanoId);
+    }
 
     const aliasNode = this.graph.get(aliasPanoId);
     const canonicalNode = this.graph.get(canonicalPanoId);
     if (aliasNode && canonicalNode) {
       for (const neighbor of aliasNode.neighbors || []) {
-        if (neighbor !== canonicalPanoId) {
-          canonicalNode.neighbors.add(neighbor);
+        const canonicalNeighbor = this.canonicalizePanoId(neighbor);
+        if (canonicalNeighbor && canonicalNeighbor !== canonicalPanoId) {
+          canonicalNode.neighbors.add(canonicalNeighbor);
         }
       }
       if (typeof aliasNode.lat === 'number' && typeof aliasNode.lng === 'number') {
@@ -255,10 +306,46 @@ export class CoverageTracker {
       this.graph.delete(aliasPanoId);
     }
 
-    for (const node of this.graph.values()) {
+    if (this.visitedPanos.has(aliasPanoId)) {
+      this.visitedPanos.delete(aliasPanoId);
+      this.visitedPanos.add(canonicalPanoId);
+    }
+    if (this.visitCounts.has(aliasPanoId)) {
+      this.visitCounts.set(
+        canonicalPanoId,
+        (this.visitCounts.get(canonicalPanoId) || 0) + this.visitCounts.get(aliasPanoId)
+      );
+      this.visitCounts.delete(aliasPanoId);
+    }
+    this.recentHistory = this.recentHistory.map(panoId =>
+      panoId === aliasPanoId ? canonicalPanoId : panoId
+    );
+    for (const point of this.path) {
+      if (point.panoId === aliasPanoId) {
+        point.panoId = canonicalPanoId;
+      }
+    }
+
+    for (const [nodeId, node] of this.graph.entries()) {
       if (!node?.neighbors?.has(aliasPanoId)) continue;
       node.neighbors.delete(aliasPanoId);
-      node.neighbors.add(canonicalPanoId);
+      if (nodeId !== canonicalPanoId) {
+        node.neighbors.add(canonicalPanoId);
+      }
+    }
+
+    for (const [frontierPanoId, data] of this.frontier.entries()) {
+      if (data?.discoveredFrom === aliasPanoId) {
+        this.frontier.set(frontierPanoId, {
+          ...data,
+          discoveredFrom: canonicalPanoId
+        });
+      }
+    }
+
+    const resolvedCanonicalNode = this.graph.get(canonicalPanoId);
+    if (resolvedCanonicalNode) {
+      resolvedCanonicalNode.neighbors.delete(canonicalPanoId);
     }
 
     return true;
@@ -289,6 +376,7 @@ export class CoverageTracker {
     this.visitCounts.clear();
     this.recentHistory = [];
     this.graph.clear();
+    this.panoAliases.clear();
   }
   
   // Serialize the graph for saving (converts Sets to Arrays, rounds coordinates)
@@ -305,24 +393,47 @@ export class CoverageTracker {
     }
     return serialized;
   }
+
+  serializePanoAliases() {
+    return Object.fromEntries(this.panoAliases.entries());
+  }
   
   // Restore graph from saved data
   restoreFromSave(saveData) {
     // Clear current state
     this.reset();
+
+    if (saveData.panoAliases && typeof saveData.panoAliases === 'object') {
+      for (const [aliasPanoId, canonicalPanoId] of Object.entries(saveData.panoAliases)) {
+        if (aliasPanoId && canonicalPanoId && aliasPanoId !== canonicalPanoId) {
+          this.panoAliases.set(aliasPanoId, canonicalPanoId);
+        }
+      }
+    }
     
     // Restore graph (all nodes in saved graph are visited)
     if (saveData.graph) {
       for (const [panoId, node] of Object.entries(saveData.graph)) {
-        this.graph.set(panoId, {
+        const canonicalPanoId = this.canonicalizePanoId(panoId);
+        const graphNode = this.graph.get(canonicalPanoId) || {
           lat: node.lat,
           lng: node.lng,
-          neighbors: new Set(node.neighbors),
+          neighbors: new Set(),
           timestamp: node.timestamp
-        });
+        };
+        graphNode.lat = node.lat;
+        graphNode.lng = node.lng;
+        graphNode.timestamp = Math.max(Number(graphNode.timestamp) || 0, Number(node.timestamp) || 0);
+        for (const neighborId of node.neighbors || []) {
+          const canonicalNeighborId = this.canonicalizePanoId(neighborId);
+          if (canonicalNeighborId && canonicalNeighborId !== canonicalPanoId) {
+            graphNode.neighbors.add(canonicalNeighborId);
+          }
+        }
+        this.graph.set(canonicalPanoId, graphNode);
         
         // All nodes in graph are visited
-        this.visitedPanos.add(panoId);
+        this.visitedPanos.add(canonicalPanoId);
         this.visitedCells.add(this.positionToCell({ lat: node.lat, lng: node.lng }));
       }
       

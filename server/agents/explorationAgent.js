@@ -244,6 +244,12 @@ export class ExplorationAgent {
     }
   }
 
+  #isNoopNavigation(previousPanoId, previousPosition, nextPanoId, nextPosition) {
+    if (!previousPanoId || previousPanoId !== nextPanoId) return false;
+    if (!previousPosition || !nextPosition) return true;
+    return this.coverage.calculateDistance(previousPosition, nextPosition) < 0.5;
+  }
+
   async initialize() {
     await this.streetViewHeadless.initialize();
     await this.screenshot.initialize();
@@ -351,63 +357,72 @@ export class ExplorationAgent {
           this.currentPosition = { lat: newPanoData.position.lat, lng: newPanoData.position.lng };
           this.#resolveNavigatedPanoAlias(fastPathTarget, this.currentPanoId, 'Fast-path navigation');
 
-          const travelHeading = await this.#syncHeadingAfterNavigation(
-            previousPosition,
-            this.lastNavigationHeading
-          );
+          if (this.#isNoopNavigation(previousPanoId, previousPosition, this.currentPanoId, this.currentPosition)) {
+            console.warn(
+              `Fast-path navigation to ${fastPathTarget} resolved back to current pano ${this.currentPanoId}; ` +
+              'discarding alias edge and falling back to normal selection.'
+            );
+            this.pathToFrontier = null;
+          } else {
 
-          const newLinks = newPanoData.links || [];
-          const visitInfo = this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
-          this.stepsSinceNewCell = visitInfo?.isNewCell ? 0 : this.stepsSinceNewCell + 1;
+            const travelHeading = await this.#syncHeadingAfterNavigation(
+              previousPosition,
+              this.lastNavigationHeading
+            );
 
-          const remainingPathSteps = this.pathToFrontier ? this.pathToFrontier.length : null;
-          const actionReason = fastPathReason || `Autopilot: following planned frontier route (${remainingPathSteps} step${remainingPathSteps === 1 ? '' : 's'} remaining)`;
-          const diaryLine = this.buildAutopilotDiaryLine({
-            stepNumber: currentStep,
-            eventType: fastPathEvent,
-            remainingPathSteps,
-            locationEntered: !!visitInfo?.isNewCell
-          });
+            const newLinks = newPanoData.links || [];
+            const visitInfo = this.coverage.addVisited(this.currentPanoId, this.currentPosition, newLinks);
+            this.stepsSinceNewCell = visitInfo?.isNewCell ? 0 : this.stepsSinceNewCell + 1;
 
-          this.recentMovements.push({
-            from: previousPanoId,
-            to: this.currentPanoId,
-            fromPosition: previousPosition,
-            toPosition: { ...this.currentPosition },
-            heading: travelHeading,
-            step: currentStep,
-            reasoning: actionReason
-          });
-          if (this.recentMovements.length > 20) this.recentMovements.shift();
+            const remainingPathSteps = this.pathToFrontier ? this.pathToFrontier.length : null;
+            const actionReason = fastPathReason || `Autopilot: following planned frontier route (${remainingPathSteps} step${remainingPathSteps === 1 ? '' : 's'} remaining)`;
+            const diaryLine = this.buildAutopilotDiaryLine({
+              stepNumber: currentStep,
+              eventType: fastPathEvent,
+              remainingPathSteps,
+              locationEntered: !!visitInfo?.isNewCell
+            });
 
-          const stepData = {
-            stepCount: currentStep,
-            reasoning: diaryLine || actionReason,
-            actionReason,
-            diaryLine,
-            eventType: fastPathEvent,
-            autoMove: true,
-            fallbackCause: null,
-            sceneTag: null,
-            panoId: this.currentPanoId,
-            previousPanoId,
-            previousPosition,
-            newPosition: this.currentPosition,
-            stats: this.coverage.getStats(),
-            direction: Number.isFinite(travelHeading) ? travelHeading : this.currentHeading,
-            mode: 'pathfinding',
-            screenshots: [],
-            remainingPathSteps,
-            coverageDelta: this.buildCoverageDelta({
+            this.recentMovements.push({
+              from: previousPanoId,
+              to: this.currentPanoId,
+              fromPosition: previousPosition,
+              toPosition: { ...this.currentPosition },
+              heading: travelHeading,
+              step: currentStep,
+              reasoning: actionReason
+            });
+            if (this.recentMovements.length > 20) this.recentMovements.shift();
+
+            const stepData = {
+              stepCount: currentStep,
+              reasoning: diaryLine || actionReason,
+              actionReason,
+              diaryLine,
+              eventType: fastPathEvent,
+              autoMove: true,
+              fallbackCause: null,
+              sceneTag: null,
               panoId: this.currentPanoId,
-              position: this.currentPosition,
-              links: newLinks,
               previousPanoId,
-              visitInfo
-            })
-          };
-          console.log(`Fast-path step ${currentStep} (${fastPathEvent}): ${previousPanoId} -> ${this.currentPanoId}`);
-          return stepData;
+              previousPosition,
+              newPosition: this.currentPosition,
+              stats: this.coverage.getStats(),
+              direction: Number.isFinite(travelHeading) ? travelHeading : this.currentHeading,
+              mode: 'pathfinding',
+              screenshots: [],
+              remainingPathSteps,
+              coverageDelta: this.buildCoverageDelta({
+                panoId: this.currentPanoId,
+                position: this.currentPosition,
+                links: newLinks,
+                previousPanoId,
+                visitInfo
+              })
+            };
+            console.log(`Fast-path step ${currentStep} (${fastPathEvent}): ${previousPanoId} -> ${this.currentPanoId}`);
+            return stepData;
+          }
         } catch (err) {
           // Navigation failed; invalidate plan and fall through to normal flow
           console.warn(`Fast-path navigation to ${fastPathTarget} failed: ${err.message}. Falling back to full step.`);
@@ -857,6 +872,21 @@ export class ExplorationAgent {
       this.currentPanoId = newPanoData.panoId;  // Use the actual pano ID from the panorama
       this.#resolveNavigatedPanoAlias(requestedPanoId, this.currentPanoId, 'Selected navigation');
 
+      if (this.#isNoopNavigation(previousPanoId, previousPosition, this.currentPanoId, this.currentPosition)) {
+        console.warn(
+          `Selected navigation to ${requestedPanoId} resolved back to current pano ${this.currentPanoId}; ` +
+          'discarding alias edge and trying frontier recovery.'
+        );
+        this.pathToFrontier = null;
+        if (this.coverage.hasFrontier()) {
+          const teleportStep = await this.teleportToFrontier(currentStep);
+          if (teleportStep) {
+            return teleportStep;
+          }
+        }
+        throw new Error(`Navigation to ${requestedPanoId} did not leave current panorama ${this.currentPanoId}`);
+      }
+
       const selectedHeading = parseFloat(selectedLink.heading);
       const travelHeading = await this.#syncHeadingAfterNavigation(
         previousPosition,
@@ -1185,6 +1215,16 @@ export class ExplorationAgent {
         lng: newPanoData.position.lng
       };
       this.#resolveNavigatedPanoAlias(closestFrontier.panoId, this.currentPanoId, 'Frontier teleport');
+
+      if (this.#isNoopNavigation(previousPanoId, previousPosition, this.currentPanoId, this.currentPosition)) {
+        console.warn(
+          `Frontier teleport to ${closestFrontier.panoId} resolved back to current pano ${this.currentPanoId}; ` +
+          'discarding alias frontier.'
+        );
+        this.pathToFrontier = null;
+        return null;
+      }
+
       const travelHeading = await this.#syncHeadingAfterNavigation(
         previousPosition,
         this.lastNavigationHeading

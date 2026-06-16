@@ -314,6 +314,7 @@ class GlobalExploration {
       },
       stats: this.agent.coverage.getStats(),
       graph: this.agent.coverage.serializeGraph(),
+      panoAliases: this.agent.coverage.serializePanoAliases(),
       recentHistory: this.agent.coverage.recentHistory,
       decisionHistory: this.decisionHistory.slice(-DECISION_HISTORY_LIMIT),
       eventLog: this.getEventLogMeta(),
