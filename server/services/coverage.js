@@ -233,6 +233,36 @@ export class CoverageTracker {
   getVisitCount(panoId) {
     return this.visitCounts.get(panoId) || 0;
   }
+
+  resolvePanoAlias(aliasPanoId, canonicalPanoId) {
+    if (!aliasPanoId || !canonicalPanoId || aliasPanoId === canonicalPanoId) {
+      return false;
+    }
+
+    this.frontier.delete(aliasPanoId);
+
+    const aliasNode = this.graph.get(aliasPanoId);
+    const canonicalNode = this.graph.get(canonicalPanoId);
+    if (aliasNode && canonicalNode) {
+      for (const neighbor of aliasNode.neighbors || []) {
+        if (neighbor !== canonicalPanoId) {
+          canonicalNode.neighbors.add(neighbor);
+        }
+      }
+      if (typeof aliasNode.lat === 'number' && typeof aliasNode.lng === 'number') {
+        this.visitedCells.add(this.positionToCell({ lat: aliasNode.lat, lng: aliasNode.lng }));
+      }
+      this.graph.delete(aliasPanoId);
+    }
+
+    for (const node of this.graph.values()) {
+      if (!node?.neighbors?.has(aliasPanoId)) continue;
+      node.neighbors.delete(aliasPanoId);
+      node.neighbors.add(canonicalPanoId);
+    }
+
+    return true;
+  }
   
   getFrontierSize() {
     return this.frontier.size;

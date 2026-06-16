@@ -237,6 +237,13 @@ export class ExplorationAgent {
     return travelHeading;
   }
 
+  #resolveNavigatedPanoAlias(requestedPanoId, actualPanoId, context = 'navigation') {
+    if (!requestedPanoId || !actualPanoId || requestedPanoId === actualPanoId) return;
+    if (this.coverage.resolvePanoAlias(requestedPanoId, actualPanoId)) {
+      console.warn(`${context}: requested pano ${requestedPanoId} resolved to ${actualPanoId}; rewired graph alias.`);
+    }
+  }
+
   async initialize() {
     await this.streetViewHeadless.initialize();
     await this.screenshot.initialize();
@@ -342,6 +349,7 @@ export class ExplorationAgent {
           const previousPosition = { ...this.currentPosition };
           this.currentPanoId = newPanoData.panoId;
           this.currentPosition = { lat: newPanoData.position.lat, lng: newPanoData.position.lng };
+          this.#resolveNavigatedPanoAlias(fastPathTarget, this.currentPanoId, 'Fast-path navigation');
 
           const travelHeading = await this.#syncHeadingAfterNavigation(
             previousPosition,
@@ -839,6 +847,7 @@ export class ExplorationAgent {
       }
 
       // Navigate and fetch panorama data in one operation (saves a Puppeteer roundtrip)
+      const requestedPanoId = selectedLink.pano;
       const newPanoData = await this.streetViewHeadless.navigateAndGetPanorama(selectedLink.pano);
       
       this.currentPosition = {
@@ -846,6 +855,7 @@ export class ExplorationAgent {
         lng: newPanoData.position.lng
       };
       this.currentPanoId = newPanoData.panoId;  // Use the actual pano ID from the panorama
+      this.#resolveNavigatedPanoAlias(requestedPanoId, this.currentPanoId, 'Selected navigation');
 
       const selectedHeading = parseFloat(selectedLink.heading);
       const travelHeading = await this.#syncHeadingAfterNavigation(
@@ -959,6 +969,7 @@ export class ExplorationAgent {
       const newPanoData = await this.streetViewHeadless.navigateAndGetPanorama(targetPanoId);
       this.currentPanoId = newPanoData.panoId;
       this.currentPosition = { lat: newPanoData.position.lat, lng: newPanoData.position.lng };
+      this.#resolveNavigatedPanoAlias(targetPanoId, this.currentPanoId, 'Cluster reposition');
       const travelHeading = await this.#syncHeadingAfterNavigation(
         previousPosition,
         this.lastNavigationHeading
@@ -1173,6 +1184,7 @@ export class ExplorationAgent {
         lat: newPanoData.position.lat,
         lng: newPanoData.position.lng
       };
+      this.#resolveNavigatedPanoAlias(closestFrontier.panoId, this.currentPanoId, 'Frontier teleport');
       const travelHeading = await this.#syncHeadingAfterNavigation(
         previousPosition,
         this.lastNavigationHeading

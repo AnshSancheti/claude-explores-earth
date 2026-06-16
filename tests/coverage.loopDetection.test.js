@@ -85,6 +85,22 @@ test('wouldExtendRepeatingCycle detects 3-node repeating tail', () => {
   );
 });
 
+test('resolvePanoAlias removes stale frontier and rewires graph neighbors', () => {
+  const coverage = new CoverageTracker();
+  coverage.addVisited('A', { lat: 1, lng: 1 }, [{ pano: 'FRONTIER_ALIAS' }]);
+  coverage.addVisited('CANONICAL', { lat: 1.0001, lng: 1.0001 }, [{ pano: 'A' }]);
+
+  assert.equal(coverage.frontier.has('FRONTIER_ALIAS'), true);
+  assert.equal(coverage.graph.get('A').neighbors.has('FRONTIER_ALIAS'), true);
+
+  const resolved = coverage.resolvePanoAlias('FRONTIER_ALIAS', 'CANONICAL');
+
+  assert.equal(resolved, true);
+  assert.equal(coverage.frontier.has('FRONTIER_ALIAS'), false);
+  assert.equal(coverage.graph.get('A').neighbors.has('FRONTIER_ALIAS'), false);
+  assert.equal(coverage.graph.get('A').neighbors.has('CANONICAL'), true);
+});
+
 test('run-log replay tail would trigger repeating-cycle guard', (t) => {
   const logPath = path.join(__dirname, '..', 'runs', 'exploration_logs', 'exploration-1755553502417.log');
   if (!fs.existsSync(logPath)) {
