@@ -1513,29 +1513,45 @@ async function drawArchiveTile(agent, z, x, y) {
 
   const tileOriginX = x * 256;
   const tileOriginY = y * 256;
+  const margin = strokeWidth;
+  const minPixelStep = z <= 9 ? 0.75 : z <= 12 ? 0.5 : 0.25;
+  const minPixelStepSq = minPixelStep * minPixelStep;
 
-  let prevPx = null;
-  for (let i = 0; i < archivedCount - 1; i++) {
-    const a = pathArr[i];
-    const b = pathArr[i + 1];
-    if (!a || !b) continue;
-    const [awx, awy] = lonLatToWorldPixels(a.lng, a.lat, z);
-    const [bwx, bwy] = lonLatToWorldPixels(b.lng, b.lat, z);
-    const ax = awx - tileOriginX;
-    const ay = awy - tileOriginY;
-    const bx = bwx - tileOriginX;
-    const by = bwy - tileOriginY;
-    const margin = strokeWidth;
-    const minX = Math.min(ax, bx) - margin;
-    const maxX = Math.max(ax, bx) + margin;
-    const minY = Math.min(ay, by) - margin;
-    const maxY = Math.max(ay, by) + margin;
-    if (maxX < 0 || maxY < 0 || minX > 256 || minY > 256) {
-      continue; // no intersection with tile
+  let started = false;
+  let lastDrawn = null;
+  let lastVisible = false;
+  let segmentsDrawn = 0;
+  ctx.beginPath();
+
+  for (let i = 0; i < archivedCount; i += 1) {
+    const point = pathArr[i];
+    if (!point) continue;
+
+    const [worldX, worldY] = lonLatToWorldPixels(point.lng, point.lat, z);
+    const px = worldX - tileOriginX;
+    const py = worldY - tileOriginY;
+    const visible = px >= -margin && px <= 256 + margin && py >= -margin && py <= 256 + margin;
+
+    if (!started) {
+      ctx.moveTo(px, py);
+      started = true;
+      lastDrawn = [px, py];
+      lastVisible = visible;
+      continue;
     }
-    ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.lineTo(bx, by);
+
+    const dx = px - lastDrawn[0];
+    const dy = py - lastDrawn[1];
+    const movedEnough = dx * dx + dy * dy >= minPixelStepSq;
+    if (visible || lastVisible || movedEnough || i === archivedCount - 1) {
+      ctx.lineTo(px, py);
+      lastDrawn = [px, py];
+      segmentsDrawn += 1;
+    }
+    lastVisible = visible;
+  }
+
+  if (segmentsDrawn > 0) {
     ctx.stroke();
   }
 
