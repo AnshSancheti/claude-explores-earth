@@ -19,7 +19,8 @@ import {
   TILE_RENDERER_REVISION,
   archivedPointCount,
   archiveVersionForPoints,
-  drawArchiveTileFromPath
+  drawArchiveTileFromPath,
+  pruneArchiveTileVersions
 } from './services/archiveTileRenderer.js';
 import {
   DEFAULT_PERSISTENT_LOG_MAX_BYTES,
@@ -1393,6 +1394,7 @@ class GlobalExploration {
       });
       fsp.mkdir(path.dirname(filePath), { recursive: true })
         .then(() => fsp.writeFile(filePath, buf))
+        .then(() => pruneArchiveTileVersions(DATA_DIR, runId))
         .catch(() => {});
       cacheSet(this.tileCache, cacheKey, buf);
       return buf;

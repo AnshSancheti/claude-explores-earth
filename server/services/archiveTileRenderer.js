@@ -1,7 +1,10 @@
 import { simplifyPath } from '../utils/pathSimplification.js';
+import * as fsp from 'fs/promises';
+import path from 'path';
 
 export const TILE_RENDERER_REVISION = 2;
 const TILE_PATH_CACHE_LIMIT = 256;
+const DEFAULT_TILE_VERSION_DIR_LIMIT = 20;
 
 let createCanvasFn = null;
 
@@ -178,4 +181,30 @@ export async function drawArchiveTileFromPath(sourcePath, z, x, y, {
   }
 
   return canvas.toBuffer('image/png');
+}
+
+export async function pruneArchiveTileVersions(dataDir, runId, {
+  rendererRevision = TILE_RENDERER_REVISION,
+  keepVersions = DEFAULT_TILE_VERSION_DIR_LIMIT
+} = {}) {
+  if (!dataDir || !runId || keepVersions <= 0) return;
+
+  const rendererDir = path.join(dataDir, 'tiles', runId, `renderer-${rendererRevision}`);
+  let entries = [];
+  try {
+    entries = await fsp.readdir(rendererDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  const versionDirs = entries
+    .filter(entry => entry.isDirectory() && Number.isFinite(Number(entry.name)))
+    .map(entry => ({ name: entry.name, version: Number(entry.name) }))
+    .sort((a, b) => b.version - a.version);
+
+  await Promise.all(
+    versionDirs
+      .slice(Math.max(0, keepVersions))
+      .map(entry => fsp.rm(path.join(rendererDir, entry.name), { recursive: true, force: true }).catch(() => {}))
+  );
 }

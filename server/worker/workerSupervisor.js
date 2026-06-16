@@ -9,7 +9,8 @@ import {
   TILE_RENDERER_REVISION,
   archivedPointCount,
   archiveVersionForPoints,
-  drawArchiveTileFromPath
+  drawArchiveTileFromPath,
+  pruneArchiveTileVersions
 } from '../services/archiveTileRenderer.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -513,6 +514,7 @@ export class WorkerSupervisor {
       });
       fsp.mkdir(join(DATA_DIR, 'tiles', runId, `renderer-${TILE_RENDERER_REVISION}`, String(version), String(z), String(x)), { recursive: true })
         .then(() => fsp.writeFile(filePath, tile))
+        .then(() => pruneArchiveTileVersions(DATA_DIR, runId))
         .catch(() => {});
       cacheSet(this.tileCache, cacheKey, tile);
       return tile;
