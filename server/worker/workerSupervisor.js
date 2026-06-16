@@ -29,6 +29,11 @@ const DEFAULT_RESTART_WINDOW_MS = parseIntOr(process.env.WORKER_RESTART_WINDOW_M
 const DEFAULT_MAX_RESTARTS = parseIntOr(process.env.WORKER_MAX_RESTARTS, 5);
 const TILE_TAIL_POINTS = parseIntOr(process.env.TILE_RECENT_TAIL_POINTS || process.env.MINIMAP_VECTOR_TAIL_POINTS, 1500);
 const TILE_MAX_CACHE = parseIntOr(process.env.TILE_MAX_CACHE, 256);
+const TILE_WARM_MAX_TILES = parseIntOr(process.env.MINIMAP_TILE_WARM_MAX_TILES, 32);
+const TILE_WARM_ZOOMS = (process.env.MINIMAP_TILE_WARM_ZOOMS || '8,9,10')
+  .split(',')
+  .map(value => parseInt(value, 10))
+  .filter(value => Number.isFinite(value) && value >= 0 && value <= 22);
 const START_LOCATION = {
   lat: parseFloat(process.env.START_LAT),
   lng: parseFloat(process.env.START_LNG)
@@ -64,6 +69,44 @@ function resolveRequestedArchivedCount(tileVersion, currentArchivedCount) {
   return Math.max(0, Math.min(Math.floor(requested), currentArchivedCount));
 }
 
+function lonLatToTile(lng, lat, z) {
+  const n = Math.pow(2, z);
+  const boundedLat = Math.max(-85.05112878, Math.min(85.05112878, lat));
+  const latRad = boundedLat * Math.PI / 180;
+  const x = Math.floor(((lng + 180) / 360) * n);
+  const y = Math.floor((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n);
+  return {
+    x: Math.max(0, Math.min(n - 1, x)),
+    y: Math.max(0, Math.min(n - 1, y))
+  };
+}
+
+function overviewTilesForBounds(bounds, zooms = TILE_WARM_ZOOMS, maxTiles = TILE_WARM_MAX_TILES) {
+  if (!bounds || maxTiles <= 0) return [];
+  const minLat = Number(bounds.minLat);
+  const minLng = Number(bounds.minLng);
+  const maxLat = Number(bounds.maxLat);
+  const maxLng = Number(bounds.maxLng);
+  if (![minLat, minLng, maxLat, maxLng].every(Number.isFinite)) return [];
+
+  const tiles = [];
+  for (const z of zooms) {
+    const sw = lonLatToTile(Math.min(minLng, maxLng), Math.min(minLat, maxLat), z);
+    const ne = lonLatToTile(Math.max(minLng, maxLng), Math.max(minLat, maxLat), z);
+    const minX = Math.min(sw.x, ne.x);
+    const maxX = Math.max(sw.x, ne.x);
+    const minY = Math.min(sw.y, ne.y);
+    const maxY = Math.max(sw.y, ne.y);
+    for (let x = minX; x <= maxX; x += 1) {
+      for (let y = minY; y <= maxY; y += 1) {
+        tiles.push({ z, x, y });
+        if (tiles.length >= maxTiles) return tiles;
+      }
+    }
+  }
+  return tiles;
+}
+
 export class WorkerSupervisor {
   constructor({
     workerPath = join(__dirname, 'explorationWorker.js'),
@@ -86,6 +129,8 @@ export class WorkerSupervisor {
     this.pendingRequests = new Map();
     this.tileCache = new Map();
     this.tilePathCache = new Map();
+    this.tileRenderPromises = new Map();
+    this.tileWarmupKeys = new Set();
     this.lastState = createFallbackState();
     this.lastMetrics = {};
     this.lastHeartbeatAt = null;
@@ -132,9 +177,11 @@ export class WorkerSupervisor {
     this.#spawnWorker();
     this.#startHeartbeatMonitor();
     try {
-      return await this.#sendCommand('boot', { autoRestore, autoStart }, {
+      const result = await this.#sendCommand('boot', { autoRestore, autoStart }, {
         timeoutMs: this.commandTimeoutMs
       });
+      this.#warmCurrentArchiveOverview();
+      return result;
     } finally {
       this.workerBooting = false;
       this.workerBootStartedAt = null;
@@ -312,9 +359,11 @@ export class WorkerSupervisor {
           pathLength: stats.pathLength ?? this.lastMetrics.pathLength,
           lastEventSequence: data?.sequence ?? this.lastMetrics.lastEventSequence
         });
-        this.pathProjection.recordLiveMove(data).catch(error => {
-          this.logger.warn('Failed to update minimap path projection from live move:', error.message);
-        });
+        this.pathProjection.recordLiveMove(data)
+          .then(pathState => this.#warmArchiveOverviewTiles(pathState))
+          .catch(error => {
+            this.logger.warn('Failed to update minimap path projection from live move:', error.message);
+          });
       }
     } else if (name === 'state-loaded') {
       const stats = data?.stats || {};
@@ -492,6 +541,8 @@ export class WorkerSupervisor {
     const cacheKey = `${runId}/${z}/${x}/${y}@r${TILE_RENDERER_REVISION}@v${version}`;
     const cached = this.tileCache.get(cacheKey);
     if (cached) return cached;
+    const inFlight = this.tileRenderPromises.get(cacheKey);
+    if (inFlight) return inFlight;
 
     const filePath = join(
       DATA_DIR,
@@ -503,22 +554,28 @@ export class WorkerSupervisor {
       String(x),
       `${y}.png`
     );
-    try {
-      const data = fs.readFileSync(filePath);
-      cacheSet(this.tileCache, cacheKey, data);
-      return data;
-    } catch {
-      const tile = await drawArchiveTileFromPath(renderPath.points, z, x, y, {
-        archivedCount: requestedArchivedCount,
-        pathCache: this.tilePathCache
-      });
-      fsp.mkdir(join(DATA_DIR, 'tiles', runId, `renderer-${TILE_RENDERER_REVISION}`, String(version), String(z), String(x)), { recursive: true })
-        .then(() => fsp.writeFile(filePath, tile))
-        .then(() => pruneArchiveTileVersions(DATA_DIR, runId))
-        .catch(() => {});
-      cacheSet(this.tileCache, cacheKey, tile);
-      return tile;
-    }
+    const renderPromise = (async () => {
+      try {
+        const data = fs.readFileSync(filePath);
+        cacheSet(this.tileCache, cacheKey, data);
+        return data;
+      } catch {
+        const tile = await drawArchiveTileFromPath(renderPath.points, z, x, y, {
+          archivedCount: requestedArchivedCount,
+          pathCache: this.tilePathCache
+        });
+        fsp.mkdir(join(DATA_DIR, 'tiles', runId, `renderer-${TILE_RENDERER_REVISION}`, String(version), String(z), String(x)), { recursive: true })
+          .then(() => fsp.writeFile(filePath, tile))
+          .then(() => pruneArchiveTileVersions(DATA_DIR, runId))
+          .catch(() => {});
+        cacheSet(this.tileCache, cacheKey, tile);
+        return tile;
+      }
+    })().finally(() => {
+      this.tileRenderPromises.delete(cacheKey);
+    });
+    this.tileRenderPromises.set(cacheKey, renderPromise);
+    return renderPromise;
   }
 
   async getCurrentState({ includeFullPath = true } = {}) {
@@ -550,6 +607,7 @@ export class WorkerSupervisor {
     this.getPathState(runId, {
       expectedSequence: this.lastState?.lastEventSequence
     }).then(pathState => {
+      this.#warmArchiveOverviewTiles(pathState);
       if (socket.connected && pathState.fullPath.length > 0) {
         socket.emit('path-state', pathState);
       }
@@ -565,11 +623,49 @@ export class WorkerSupervisor {
     this.getPathState(runId, {
       expectedSequence: this.lastState?.lastEventSequence
     }).then(pathState => {
+      this.#warmArchiveOverviewTiles(pathState);
       if (pathState.fullPath.length > 0) {
         this.onBroadcast('path-state', pathState);
       }
     }).catch(error => {
       this.logger.warn('Failed to broadcast minimap path state:', error.message);
+    });
+  }
+
+  #warmCurrentArchiveOverview() {
+    const runId = this.lastState?.runId || this.lastMetrics?.runId || null;
+    if (!runId) return;
+    this.getPathState(runId, {
+      expectedSequence: this.lastState?.lastEventSequence || this.lastMetrics?.lastEventSequence || 0
+    })
+      .then(pathState => this.#warmArchiveOverviewTiles(pathState))
+      .catch(error => {
+        this.logger.warn('Failed to warm minimap archive overview:', error.message);
+      });
+  }
+
+  #warmArchiveOverviewTiles(pathState) {
+    const runId = pathState?.runId;
+    const version = Number(pathState?.tileVersion);
+    if (!runId || !Number.isFinite(version) || version <= 0) return;
+
+    const warmupKey = `${runId}@r${TILE_RENDERER_REVISION}@v${version}`;
+    if (this.tileWarmupKeys.has(warmupKey)) return;
+    this.tileWarmupKeys.add(warmupKey);
+    while (this.tileWarmupKeys.size > 20) {
+      this.tileWarmupKeys.delete(this.tileWarmupKeys.values().next().value);
+    }
+
+    const tiles = overviewTilesForBounds(pathState.bounds);
+    if (tiles.length === 0) return;
+
+    (async () => {
+      for (const tile of tiles) {
+        await this.renderTile(tile.z, tile.x, tile.y, { tileVersion: version });
+      }
+      this.logger.log(`Warmed ${tiles.length} minimap archive tiles for v${version}`);
+    })().catch(error => {
+      this.logger.warn(`Failed to warm minimap archive tiles for v${version}: ${error.message}`);
     });
   }
 

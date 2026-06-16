@@ -244,7 +244,8 @@ test('PathProjection skips event replay when hydrated cache is fresh enough', as
 
 test('PathProjection limits client vector payload while preserving full-path metadata', async () => {
   const { runStore, projection } = await makeProjection({
-    vectorTailPoints: 2
+    vectorTailPoints: 2,
+    tileVersionBucketPoints: 0
   });
 
   for (let i = 1; i <= 5; i += 1) {
@@ -264,15 +265,67 @@ test('PathProjection limits client vector payload while preserving full-path met
   const state = await projection.getPathState('run-tail');
 
   assert.equal(state.totalPoints, 5);
-  assert.equal(state.vectorTailPoints, 2);
+  assert.equal(state.vectorTailPoints, 3);
   assert.equal(state.archivedPoints, 3);
   assert.equal(state.tileVersion, 3);
   assert.equal(state.tileRendererRevision, 2);
-  assert.deepEqual(state.fullPath.map(point => point.panoId), ['P4', 'P5']);
+  assert.deepEqual(state.fullPath.map(point => point.panoId), ['P3', 'P4', 'P5']);
   assert.deepEqual(state.bounds, {
     minLat: 1,
     minLng: -5,
     maxLat: 5,
     maxLng: -1
   });
+});
+
+test('PathProjection overlaps vector tail to archive tile bucket boundary', async () => {
+  const { runStore, projection } = await makeProjection({
+    vectorTailPoints: 2,
+    tileVersionBucketPoints: 3
+  });
+
+  for (let i = 1; i <= 8; i += 1) {
+    await runStore.appendEvent('run-bucket-tail', {
+      type: 'step_completed',
+      stepCount: i,
+      payload: {
+        stepData: {
+          stepCount: i,
+          panoId: `P${i}`,
+          newPosition: { lat: i, lng: -i }
+        }
+      }
+    });
+  }
+
+  const state = await projection.getPathState('run-bucket-tail');
+
+  assert.equal(state.totalPoints, 8);
+  assert.equal(state.tileVersion, 6);
+  assert.equal(state.archivedPoints, 6);
+  assert.equal(state.vectorTailPoints, 3);
+  assert.deepEqual(state.fullPath.map(point => point.panoId), ['P6', 'P7', 'P8']);
+
+  await runStore.appendEvent('run-bucket-tail', {
+    type: 'step_completed',
+    stepCount: 9,
+    payload: {
+      stepData: {
+        stepCount: 9,
+        panoId: 'P9',
+        newPosition: { lat: 9, lng: -9 }
+      }
+    }
+  });
+
+  const overlapped = await projection.getPathState('run-bucket-tail', {
+    expectedSequence: 9,
+    maxStaleEvents: 0
+  });
+
+  assert.equal(overlapped.totalPoints, 9);
+  assert.equal(overlapped.tileVersion, 6);
+  assert.equal(overlapped.archivedPoints, 6);
+  assert.equal(overlapped.vectorTailPoints, 4);
+  assert.deepEqual(overlapped.fullPath.map(point => point.panoId), ['P6', 'P7', 'P8', 'P9']);
 });

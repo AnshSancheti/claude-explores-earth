@@ -25,6 +25,10 @@ const DEFAULT_VECTOR_TAIL_POINTS = parseIntOr(
   process.env.MINIMAP_VECTOR_TAIL_POINTS || process.env.TILE_RECENT_TAIL_POINTS,
   1500
 );
+const DEFAULT_TILE_VERSION_BUCKET_POINTS = parseIntOr(
+  process.env.MINIMAP_TILE_VERSION_BUCKET_POINTS,
+  1000
+);
 function validPosition(position) {
   if (!position || typeof position !== 'object') return null;
   const lat = Number(position.lat);
@@ -135,6 +139,7 @@ export class PathProjection {
     logger = console,
     writeDebounceMs = 10000,
     vectorTailPoints = DEFAULT_VECTOR_TAIL_POINTS,
+    tileVersionBucketPoints = DEFAULT_TILE_VERSION_BUCKET_POINTS,
   } = {}) {
     if (!runStore) {
       throw new Error('PathProjection requires runStore');
@@ -144,6 +149,7 @@ export class PathProjection {
     this.logger = logger;
     this.writeDebounceMs = writeDebounceMs;
     this.vectorTailPoints = Math.max(0, parseIntOr(vectorTailPoints, DEFAULT_VECTOR_TAIL_POINTS));
+    this.tileVersionBucketPoints = Math.max(0, parseIntOr(tileVersionBucketPoints, DEFAULT_TILE_VERSION_BUCKET_POINTS));
     this.cacheByRun = new Map();
     this.queues = new Map();
     this.writeTimers = new Map();
@@ -473,10 +479,16 @@ export class PathProjection {
 
   #toState(cache, { includeFullPath = true, vectorTailPoints = this.vectorTailPoints } = {}) {
     const pointCount = cache.points.length;
-    const tailCount = Math.max(0, Math.min(parseIntOr(vectorTailPoints, this.vectorTailPoints), pointCount));
-    const archivedPoints = Math.max(0, pointCount - tailCount);
-    const fullPath = includeFullPath && tailCount > 0
-      ? cache.points.slice(pointCount - tailCount).map(clonePathPoint)
+    const requestedTailCount = Math.max(0, Math.min(parseIntOr(vectorTailPoints, this.vectorTailPoints), pointCount));
+    const rawArchivedCutoff = Math.max(0, pointCount - requestedTailCount);
+    const bucket = this.tileVersionBucketPoints;
+    const tileVersion = bucket > 0
+      ? Math.floor(rawArchivedCutoff / bucket) * bucket
+      : rawArchivedCutoff;
+    const vectorStartIndex = Math.max(0, Math.min(tileVersion > 0 ? tileVersion - 1 : 0, pointCount));
+    const vectorTailCount = Math.max(0, pointCount - vectorStartIndex);
+    const fullPath = includeFullPath && vectorTailCount > 0
+      ? cache.points.slice(vectorStartIndex).map(clonePathPoint)
       : [];
     return {
       runId: cache.runId,
@@ -484,11 +496,11 @@ export class PathProjection {
       pathSequence: cache.pathSequence,
       stepCount: cache.stepCount,
       totalPoints: pointCount,
-      vectorTailPoints: tailCount,
-      archivedPoints,
-      // Exact archived cutover. Coarse buckets can create path gaps because the
-      // client vector tail moves every step while immutable raster URLs do not.
-      tileVersion: archivedPoints,
+      vectorTailPoints: vectorTailCount,
+      archivedPoints: tileVersion,
+      // Stable archive buckets keep raster tiles reusable. The vector payload
+      // starts at the bucket boundary, so bucketed tiles never leave a path gap.
+      tileVersion,
       tileRendererRevision: TILE_RENDERER_REVISION,
       bounds: cloneBounds(cache.bounds),
       fullPath
