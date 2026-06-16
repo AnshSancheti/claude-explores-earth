@@ -242,6 +242,42 @@ test('PathProjection skips event replay when hydrated cache is fresh enough', as
   assert.deepEqual(state.fullPath.map(point => point.panoId), ['A']);
 });
 
+test('PathProjection normalizes production-sized path caches without spreading point arrays', async () => {
+  const { projection } = await makeProjection();
+  const runId = 'run-large-cache';
+  const pointCount = 130000;
+  const cachePath = projection.getCachePath(runId);
+
+  await fsp.mkdir(path.dirname(cachePath), { recursive: true });
+  await fsp.writeFile(cachePath, `${JSON.stringify({
+    version: 1,
+    runId,
+    eventSequence: 1,
+    pathSequence: 1,
+    stepCount: pointCount,
+    bounds: {
+      minLat: 35,
+      minLng: 139,
+      maxLat: 36,
+      maxLng: 140
+    },
+    points: Array.from({ length: pointCount }, (_, i) => ({
+      lat: 35 + i * 0.000001,
+      lng: 139 + i * 0.000001,
+      panoId: `P${i}`,
+      stepCount: i,
+      sequence: i,
+      timestamp: null
+    }))
+  })}\n`);
+
+  const state = await projection.getPathState(runId);
+
+  assert.equal(state.totalPoints, pointCount);
+  assert.equal(state.stepCount, pointCount);
+  assert.equal(state.fullPath.length > 0, true);
+});
+
 test('PathProjection limits client vector payload while preserving full-path metadata', async () => {
   const { runStore, projection } = await makeProjection({
     vectorTailPoints: 2,

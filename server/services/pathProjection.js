@@ -406,11 +406,15 @@ export class PathProjection {
       (max, point) => Math.max(max, numberOr(point.sequence, 0)),
       0
     );
+    const maxPointStep = points.reduce(
+      (max, point) => Math.max(max, numberOr(point.stepCount, 0)),
+      0
+    );
     return {
       runId,
       eventSequence: Math.max(numberOr(raw?.eventSequence, numberOr(raw?.sequence, 0)), maxPointSequence),
       pathSequence: Math.max(numberOr(raw?.pathSequence, 0), maxPointSequence),
-      stepCount: Math.max(numberOr(raw?.stepCount, 0), ...points.map(point => numberOr(point.stepCount, 0))),
+      stepCount: Math.max(numberOr(raw?.stepCount, 0), maxPointStep),
       points,
       bounds: raw?.bounds || buildBounds(points),
       hydrated: false
