@@ -16,6 +16,9 @@ class MapManager {
     this.updatesSinceFit = 0; // Reduce expensive fit computations
     this.fitEveryNUpdates = 20; // Fit bounds every N incremental updates
     this.recentFitPointLimit = 300;
+    this.fullPathBounds = null;
+    this.archiveTileVersion = null;
+    this.hasInitialPathFit = false;
     this.initializeMinimapSize(); // Initialize saved size preferences
   }
   
@@ -121,7 +124,7 @@ class MapManager {
         this.addStartMarker();
         this.addCurrentMarker();
         this.initializePath();
-        this.addArchiveTiles();
+        this.addArchiveTiles(this.archiveTileVersion);
         this.addResetButton();
         this.mapLoaded = true;
         
@@ -139,12 +142,14 @@ class MapManager {
     }
   }
 
-  addArchiveTiles() {
+  addArchiveTiles(tileVersion = null) {
     try {
+      const version = Number.isFinite(Number(tileVersion)) ? Number(tileVersion) : 0;
+      this.archiveTileVersion = version;
       if (!this.map.getSource('archive-tiles')) {
         this.map.addSource('archive-tiles', {
           type: 'raster',
-          tiles: ['/tiles/{z}/{x}/{y}.png'],
+          tiles: [`/tiles/{z}/{x}/{y}.png?v=${encodeURIComponent(version)}`],
           tileSize: 256
         });
       }
@@ -172,6 +177,28 @@ class MapManager {
     }
   }
 
+  updateArchiveTiles(meta = {}) {
+    const version = Number(meta.tileVersion);
+    if (!Number.isFinite(version)) return;
+    if (!this.isReady()) {
+      this.archiveTileVersion = version;
+      return;
+    }
+    if (this.archiveTileVersion === version && this.map.getSource('archive-tiles')) return;
+
+    try {
+      if (this.map.getLayer('archive-tiles-layer')) {
+        this.map.removeLayer('archive-tiles-layer');
+      }
+      if (this.map.getSource('archive-tiles')) {
+        this.map.removeSource('archive-tiles');
+      }
+      this.addArchiveTiles(version);
+    } catch (e) {
+      console.error('Failed to refresh archive tiles:', e);
+    }
+  }
+
   setRun(runId) {
     const previousRunId = this.pathState.runId;
     this.pathState.setRun(runId);
@@ -193,13 +220,20 @@ class MapManager {
 
     const result = this.pathState.applyFullPath(points, meta);
     if (!result.applied) return;
+    this.fullPathBounds = this.#normalizeBounds(meta.bounds) || this.fullPathBounds;
+    this.updateArchiveTiles(meta);
     this.pathCoordinates = this.pathState.coordinates;
     this.#renderPath();
 
-    // Fit once on batch load. Use the recent/current area by default; the reset
-    // control still shows the full historical path on demand.
-    if (!this.userHasInteracted && this.pathCoordinates.length > 1) {
-      this.#fitRecentPath();
+    // Fit once on batch load. The historical path is rendered as tiles, so this
+    // can show the whole journey without loading every point into GeoJSON.
+    if (!this.userHasInteracted && !this.hasInitialPathFit) {
+      if (this.fullPathBounds) {
+        this.#fitBoundsObject(this.fullPathBounds, { padding: 45, maxZoom: 16 });
+      } else if (this.pathCoordinates.length > 1) {
+        this.#fitRecentPath();
+      }
+      this.hasInitialPathFit = true;
       this.updatesSinceFit = 0;
     }
   }
@@ -406,6 +440,9 @@ class MapManager {
     this.pendingMarkerPosition = null;
     this.userHasInteracted = false; // Reset interaction tracking
     this.updatesSinceFit = 0;
+    this.fullPathBounds = null;
+    this.archiveTileVersion = null;
+    this.hasInitialPathFit = false;
     
     if (this.map && this.map.getSource('path')) {
       this.map.getSource('path').setData({
@@ -465,7 +502,9 @@ class MapManager {
     this.userHasInteracted = false;
     
     // Recenter map to show full path
-    if (this.pathCoordinates.length > 1) {
+    if (this.fullPathBounds) {
+      this.#fitBoundsObject(this.fullPathBounds, { padding: 50, maxZoom: 16 });
+    } else if (this.pathCoordinates.length > 1) {
       const bounds = this.pathCoordinates.reduce((bounds, coord) => {
         return bounds.extend(coord);
       }, new maplibregl.LngLatBounds(this.pathCoordinates[0], this.pathCoordinates[0]));
@@ -488,6 +527,38 @@ class MapManager {
     }
     
     console.log('Minimap view reset to show full path');
+  }
+
+  #normalizeBounds(bounds) {
+    if (!bounds || typeof bounds !== 'object') return null;
+    const minLat = Number(bounds.minLat);
+    const minLng = Number(bounds.minLng);
+    const maxLat = Number(bounds.maxLat);
+    const maxLng = Number(bounds.maxLng);
+    if (![minLat, minLng, maxLat, maxLng].every(Number.isFinite)) return null;
+    return {
+      minLat: Math.min(minLat, maxLat),
+      minLng: Math.min(minLng, maxLng),
+      maxLat: Math.max(minLat, maxLat),
+      maxLng: Math.max(minLng, maxLng)
+    };
+  }
+
+  #fitBoundsObject(bounds, options = {}) {
+    const normalized = this.#normalizeBounds(bounds);
+    if (!normalized || !this.map) return;
+
+    const sw = [normalized.minLng, normalized.minLat];
+    const ne = [normalized.maxLng, normalized.maxLat];
+    if (sw[0] === ne[0] && sw[1] === ne[1]) {
+      this.map.flyTo({ center: sw, zoom: options.maxZoom || 16 });
+      return;
+    }
+
+    this.map.fitBounds(new maplibregl.LngLatBounds(sw, ne), {
+      padding: options.padding ?? 50,
+      maxZoom: options.maxZoom ?? 16
+    });
   }
 }
 

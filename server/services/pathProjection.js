@@ -15,12 +15,54 @@ function numberOr(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parseIntOr(value, fallback) {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+const DEFAULT_VECTOR_TAIL_POINTS = parseIntOr(
+  process.env.MINIMAP_VECTOR_TAIL_POINTS || process.env.TILE_RECENT_TAIL_POINTS,
+  1500
+);
+const DEFAULT_TILE_VERSION_STEP = parseIntOr(process.env.TILE_VERSION_STEP, 1000);
+
 function validPosition(position) {
   if (!position || typeof position !== 'object') return null;
   const lat = Number(position.lat);
   const lng = Number(position.lng);
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
   return { lat, lng };
+}
+
+function extendBounds(bounds, position) {
+  const valid = validPosition(position);
+  if (!valid) return bounds || null;
+  if (!bounds) {
+    return {
+      minLat: valid.lat,
+      minLng: valid.lng,
+      maxLat: valid.lat,
+      maxLng: valid.lng
+    };
+  }
+  return {
+    minLat: Math.min(bounds.minLat, valid.lat),
+    minLng: Math.min(bounds.minLng, valid.lng),
+    maxLat: Math.max(bounds.maxLat, valid.lat),
+    maxLng: Math.max(bounds.maxLng, valid.lng)
+  };
+}
+
+function buildBounds(points) {
+  let bounds = null;
+  for (const point of points || []) {
+    bounds = extendBounds(bounds, point);
+  }
+  return bounds;
+}
+
+function cloneBounds(bounds) {
+  return bounds ? { ...bounds } : null;
 }
 
 async function atomicWriteJson(filePath, value) {
@@ -92,7 +134,9 @@ export class PathProjection {
   constructor({
     runStore,
     logger = console,
-    writeDebounceMs = 10000
+    writeDebounceMs = 10000,
+    vectorTailPoints = DEFAULT_VECTOR_TAIL_POINTS,
+    tileVersionStep = DEFAULT_TILE_VERSION_STEP
   } = {}) {
     if (!runStore) {
       throw new Error('PathProjection requires runStore');
@@ -101,6 +145,8 @@ export class PathProjection {
     this.runStore = runStore;
     this.logger = logger;
     this.writeDebounceMs = writeDebounceMs;
+    this.vectorTailPoints = Math.max(0, parseIntOr(vectorTailPoints, DEFAULT_VECTOR_TAIL_POINTS));
+    this.tileVersionStep = Math.max(1, parseIntOr(tileVersionStep, DEFAULT_TILE_VERSION_STEP));
     this.cacheByRun = new Map();
     this.queues = new Map();
     this.writeTimers = new Map();
@@ -133,7 +179,8 @@ export class PathProjection {
 
   async getPathState(runId, {
     expectedSequence = 0,
-    maxStaleEvents = 5
+    maxStaleEvents = 5,
+    vectorTailPoints = this.vectorTailPoints
   } = {}) {
     if (!runId) return this.#emptyState(null);
     return this.#enqueue(runId, async () => {
@@ -146,7 +193,7 @@ export class PathProjection {
           buildMs: Date.now() - start,
           cacheHit
         });
-        return this.#toState(cache);
+        return this.#toState(cache, { vectorTailPoints });
       }
 
       const { events, warnings } = await this.runStore.readEvents(runId, {
@@ -175,7 +222,7 @@ export class PathProjection {
         buildMs: Date.now() - start,
         cacheHit
       });
-      return this.#toState(cache);
+      return this.#toState(cache, { vectorTailPoints });
     });
   }
 
@@ -295,6 +342,7 @@ export class PathProjection {
       pathSequence: sequence,
       stepCount: numberOr(snapshot.stepCount, 0),
       points,
+      bounds: buildBounds(points),
       hydrated: false
     };
   }
@@ -325,6 +373,7 @@ export class PathProjection {
       pathSequence: Math.max(numberOr(raw?.pathSequence, 0), maxPointSequence),
       stepCount: Math.max(numberOr(raw?.stepCount, 0), ...points.map(point => numberOr(point.stepCount, 0))),
       points,
+      bounds: raw?.bounds || buildBounds(points),
       hydrated: false
     };
   }
@@ -336,6 +385,7 @@ export class PathProjection {
       pathSequence: 0,
       stepCount: 0,
       points: [],
+      bounds: null,
       hydrated: false
     };
   }
@@ -346,6 +396,11 @@ export class PathProjection {
       sequence: 0,
       pathSequence: 0,
       stepCount: 0,
+      totalPoints: 0,
+      vectorTailPoints: 0,
+      archivedPoints: 0,
+      tileVersion: 0,
+      bounds: null,
       fullPath: []
     };
   }
@@ -375,19 +430,31 @@ export class PathProjection {
     if (!point || point.sequence <= cache.pathSequence) return false;
 
     cache.points.push(clonePathPoint(point));
+    cache.bounds = extendBounds(cache.bounds, point);
     cache.pathSequence = point.sequence;
     cache.stepCount = Math.max(cache.stepCount, numberOr(point.stepCount, 0));
     cache.eventSequence = Math.max(cache.eventSequence, point.sequence);
     return true;
   }
 
-  #toState(cache, { includeFullPath = true } = {}) {
+  #toState(cache, { includeFullPath = true, vectorTailPoints = this.vectorTailPoints } = {}) {
+    const pointCount = cache.points.length;
+    const tailCount = Math.max(0, Math.min(parseIntOr(vectorTailPoints, this.vectorTailPoints), pointCount));
+    const archivedPoints = Math.max(0, pointCount - tailCount);
+    const fullPath = includeFullPath && tailCount > 0
+      ? cache.points.slice(pointCount - tailCount).map(clonePathPoint)
+      : [];
     return {
       runId: cache.runId,
       sequence: cache.eventSequence,
       pathSequence: cache.pathSequence,
       stepCount: cache.stepCount,
-      fullPath: includeFullPath ? cache.points.map(clonePathPoint) : []
+      totalPoints: pointCount,
+      vectorTailPoints: tailCount,
+      archivedPoints,
+      tileVersion: Math.floor(archivedPoints / this.tileVersionStep),
+      bounds: cloneBounds(cache.bounds),
+      fullPath
     };
   }
 
@@ -424,6 +491,7 @@ export class PathProjection {
       eventSequence: cache.eventSequence,
       pathSequence: cache.pathSequence,
       stepCount: cache.stepCount,
+      bounds: cache.bounds,
       points: cache.points
     });
   }

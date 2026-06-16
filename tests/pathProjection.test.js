@@ -241,3 +241,38 @@ test('PathProjection skips event replay when hydrated cache is fresh enough', as
   assert.equal(readEventsCount, 0);
   assert.deepEqual(state.fullPath.map(point => point.panoId), ['A']);
 });
+
+test('PathProjection limits client vector payload while preserving full-path metadata', async () => {
+  const { runStore, projection } = await makeProjection({
+    vectorTailPoints: 2,
+    tileVersionStep: 3
+  });
+
+  for (let i = 1; i <= 5; i += 1) {
+    await runStore.appendEvent('run-tail', {
+      type: 'step_completed',
+      stepCount: i,
+      payload: {
+        stepData: {
+          stepCount: i,
+          panoId: `P${i}`,
+          newPosition: { lat: i, lng: -i }
+        }
+      }
+    });
+  }
+
+  const state = await projection.getPathState('run-tail');
+
+  assert.equal(state.totalPoints, 5);
+  assert.equal(state.vectorTailPoints, 2);
+  assert.equal(state.archivedPoints, 3);
+  assert.equal(state.tileVersion, 1);
+  assert.deepEqual(state.fullPath.map(point => point.panoId), ['P4', 'P5']);
+  assert.deepEqual(state.bounds, {
+    minLat: 1,
+    minLng: -5,
+    maxLat: 5,
+    maxLng: -1
+  });
+});

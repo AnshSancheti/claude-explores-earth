@@ -1367,7 +1367,7 @@ class GlobalExploration {
     if (cached) return cached;
 
     const runId = this.agent.runId || 'current';
-    const filePath = path.join(ROOT_DIR, 'runs', 'tiles', runId, String(version), String(z), String(x), `${y}.png`);
+    const filePath = path.join(DATA_DIR, 'tiles', runId, String(version), String(z), String(x), `${y}.png`);
     try {
       const data = fs.readFileSync(filePath);
       cacheSet(this.tileCache, cacheKey, data);
@@ -1556,15 +1556,41 @@ function emptyTilePng() {
   return EMPTY_TILE_PNG;
 }
 
+function toTileBuffer(tile) {
+  if (Buffer.isBuffer(tile)) return tile;
+  if (tile?.type === 'Buffer' && Array.isArray(tile.data)) return Buffer.from(tile.data);
+  if (ArrayBuffer.isView(tile)) return Buffer.from(tile.buffer, tile.byteOffset, tile.byteLength);
+  if (tile instanceof ArrayBuffer) return Buffer.from(tile);
+  return emptyTilePng();
+}
+
 // Raster tiles for archived path
 app.get('/tiles/:z/:x/:y.png', async (req, res) => {
   const z = parseInt(req.params.z, 10);
   const x = parseInt(req.params.x, 10);
   const y = parseInt(req.params.y, 10);
-  if (!Number.isFinite(z) || !Number.isFinite(x) || !Number.isFinite(y)) {
+  const maxTile = Math.pow(2, z);
+  if (
+    !Number.isFinite(z) || !Number.isFinite(x) || !Number.isFinite(y) ||
+    z < 0 || z > 22 || x < 0 || y < 0 || x >= maxTile || y >= maxTile
+  ) {
     return res.status(400).send('bad tile');
   }
-  res.type('image/png').send(emptyTilePng());
+
+  try {
+    const tile = await globalExploration.renderTile(z, x, y);
+    const body = toTileBuffer(tile);
+    res
+      .set('Cache-Control', 'public, max-age=31536000, immutable')
+      .type('image/png')
+      .send(body);
+  } catch (error) {
+    console.warn(`Failed to render archive tile ${z}/${x}/${y}: ${error.message}`);
+    res
+      .set('Cache-Control', 'public, max-age=30')
+      .type('image/png')
+      .send(emptyTilePng());
+  }
 });
 
 // Lightweight health and metrics endpoints
