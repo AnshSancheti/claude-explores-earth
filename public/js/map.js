@@ -453,14 +453,7 @@ class MapManager {
       },
       paint: {
         'line-color': '#d32f2f',
-        'line-width': [
-          'interpolate',
-          ['linear'],
-          ['zoom'],
-          8, 1.25,
-          14, 2,
-          18, 4
-        ],
+        'line-width': 3,
         'line-opacity': 0.75
       }
     });
