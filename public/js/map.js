@@ -150,34 +150,97 @@ class MapManager {
       const rendererRevision = Number.isFinite(Number(tileRendererRevision)) ? Number(tileRendererRevision) : 0;
       this.archiveTileVersion = version;
       this.archiveTileRendererRevision = rendererRevision;
-      if (!this.map.getSource('archive-tiles')) {
-        this.map.addSource('archive-tiles', {
+      const tileUrl = `/tiles/{z}/{x}/{y}.png?v=${encodeURIComponent(version)}&r=${encodeURIComponent(rendererRevision)}`;
+
+      if (!this.map.getSource('archive-overview-tiles')) {
+        this.map.addSource('archive-overview-tiles', {
           type: 'raster',
-          tiles: [`/tiles/{z}/{x}/{y}.png?v=${encodeURIComponent(version)}&r=${encodeURIComponent(rendererRevision)}`],
-          tileSize: 256
+          tiles: [tileUrl],
+          tileSize: 256,
+          maxzoom: 10
         });
       }
+      if (!this.map.getSource('archive-detail-tiles')) {
+        this.map.addSource('archive-detail-tiles', {
+          type: 'raster',
+          tiles: [tileUrl],
+          tileSize: 256,
+          minzoom: 11
+        });
+      }
+
       // Place below the live path layer if present
       const beforeId = this.map.getLayer('path-layer') ? 'path-layer' : undefined;
-      if (!this.map.getLayer('archive-tiles-layer')) {
+      if (!this.map.getLayer('archive-overview-tiles-layer')) {
         if (beforeId) {
           this.map.addLayer({
-            id: 'archive-tiles-layer',
+            id: 'archive-overview-tiles-layer',
             type: 'raster',
-            source: 'archive-tiles',
-            paint: { 'raster-opacity': 0.8, 'raster-resampling': 'nearest' }
+            source: 'archive-overview-tiles',
+            paint: {
+              'raster-opacity': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                10, 0.8,
+                12, 0.6,
+                16, 0.35
+              ],
+              'raster-resampling': 'linear'
+            }
           }, beforeId);
         } else {
           this.map.addLayer({
-            id: 'archive-tiles-layer',
+            id: 'archive-overview-tiles-layer',
             type: 'raster',
-            source: 'archive-tiles',
-            paint: { 'raster-opacity': 0.8, 'raster-resampling': 'nearest' }
+            source: 'archive-overview-tiles',
+            paint: {
+              'raster-opacity': [
+                'interpolate',
+                ['linear'],
+                ['zoom'],
+                10, 0.8,
+                12, 0.6,
+                16, 0.35
+              ],
+              'raster-resampling': 'linear'
+            }
           });
         }
       }
+      if (!this.map.getLayer('archive-detail-tiles-layer')) {
+        this.map.addLayer({
+          id: 'archive-detail-tiles-layer',
+          type: 'raster',
+          source: 'archive-detail-tiles',
+          minzoom: 11,
+          paint: { 'raster-opacity': 0.65, 'raster-resampling': 'nearest' }
+        }, beforeId);
+      }
     } catch (e) {
       console.error('Failed to add archive tiles:', e);
+    }
+  }
+
+  removeArchiveTiles() {
+    if (!this.map) return;
+    for (const layerId of [
+      'archive-detail-tiles-layer',
+      'archive-overview-tiles-layer',
+      'archive-tiles-layer'
+    ]) {
+      if (this.map.getLayer(layerId)) {
+        this.map.removeLayer(layerId);
+      }
+    }
+    for (const sourceId of [
+      'archive-detail-tiles',
+      'archive-overview-tiles',
+      'archive-tiles'
+    ]) {
+      if (this.map.getSource(sourceId)) {
+        this.map.removeSource(sourceId);
+      }
     }
   }
 
@@ -194,18 +257,14 @@ class MapManager {
     if (
       this.archiveTileVersion === version &&
       this.archiveTileRendererRevision === resolvedRendererRevision &&
-      this.map.getSource('archive-tiles')
+      this.map.getSource('archive-overview-tiles') &&
+      this.map.getSource('archive-detail-tiles')
     ) {
       return;
     }
 
     try {
-      if (this.map.getLayer('archive-tiles-layer')) {
-        this.map.removeLayer('archive-tiles-layer');
-      }
-      if (this.map.getSource('archive-tiles')) {
-        this.map.removeSource('archive-tiles');
-      }
+      this.removeArchiveTiles();
       this.addArchiveTiles(version, resolvedRendererRevision);
     } catch (e) {
       console.error('Failed to refresh archive tiles:', e);
@@ -457,6 +516,7 @@ class MapManager {
     this.archiveTileVersion = null;
     this.archiveTileRendererRevision = null;
     this.hasInitialPathFit = false;
+    this.removeArchiveTiles();
     
     if (this.map && this.map.getSource('path')) {
       this.map.getSource('path').setData({
