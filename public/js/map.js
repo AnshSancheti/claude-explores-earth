@@ -599,11 +599,12 @@ class MapManager {
   #setArchiveRasterMode(fullVectorLoaded) {
     if (!this.map) return;
     if (this.map.getLayer('archive-overview-tiles-layer')) {
+      this.map.setLayoutProperty('archive-overview-tiles-layer', 'visibility', fullVectorLoaded ? 'none' : 'visible');
       this.map.setPaintProperty(
         'archive-overview-tiles-layer',
         'raster-opacity',
         fullVectorLoaded
-          ? 0.14
+          ? 0
           : [
               'interpolate',
               ['linear'],
