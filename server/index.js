@@ -1600,6 +1600,34 @@ app.get('/api/path-vectors', async (req, res) => {
   }
 });
 
+app.get('/api/path-vectors.bin', async (req, res) => {
+  try {
+    const runId = typeof req.query.runId === 'string' ? req.query.runId : null;
+    const expectedSequence = Number(req.query.sequence);
+    const snapshot = await globalExploration.getFullPathVectorBinarySnapshot({
+      runId,
+      expectedSequence: Number.isFinite(expectedSequence) ? expectedSequence : 0
+    });
+    res
+      .type('application/octet-stream')
+      .set('Cache-Control', 'private, max-age=15')
+      .set('X-Path-Run-Id', snapshot.runId || '')
+      .set('X-Path-Sequence', String(snapshot.sequence || 0))
+      .set('X-Path-Path-Sequence', String(snapshot.pathSequence || 0))
+      .set('X-Path-Step-Count', String(snapshot.stepCount || 0))
+      .set('X-Path-Total-Points', String(snapshot.totalPoints || 0))
+      .set('X-Path-Coordinate-Count', String(snapshot.coordinateCount || 0))
+      .set('X-Path-Coordinate-Precision', String(snapshot.coordinatePrecision || 6))
+      .set('X-Path-Coordinate-Format', 'int32le-microdegrees-lng-lat')
+      .set('Content-Length', String(snapshot.body.length))
+      .send(snapshot.body);
+  } catch (error) {
+    const status = Number(error.statusCode) || 500;
+    console.warn(`Failed to prepare full path vector binary payload: ${error.message}`);
+    res.status(status).json({ error: status === 404 ? 'path_not_found' : 'path_vectors_failed' });
+  }
+});
+
 // Lightweight health and metrics endpoints
 app.get('/healthz', (req, res) => {
   res.json({ status: 'ok' });

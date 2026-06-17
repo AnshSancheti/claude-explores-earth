@@ -544,20 +544,32 @@ class MapManager {
       runId,
       sequence: String(sequence)
     });
-    const response = await fetch(`/api/path-vectors?${params.toString()}`, {
+    const response = await fetch(`/api/path-vectors.bin?${params.toString()}`, {
       signal: controller.signal,
-      headers: { Accept: 'application/json' }
+      headers: { Accept: 'application/octet-stream' }
     });
     if (!response.ok) {
       throw new Error(`Full path vector request failed (${response.status})`);
     }
 
-    const payload = await response.json();
+    const buffer = await response.arrayBuffer();
     if (controller.signal.aborted) return;
-    if (payload.runId !== runId) return;
-    const coordinates = Array.isArray(payload.coordinates) ? payload.coordinates : [];
+    if (response.headers.get('x-path-run-id') !== runId) return;
+    const responseTotalPoints = Number(response.headers.get('x-path-total-points'));
+    const precision = Number(response.headers.get('x-path-coordinate-precision')) || 6;
+    const scale = Math.pow(10, precision);
+    const view = new DataView(buffer);
+    const coordinateCount = Math.floor(view.byteLength / 8);
+    const coordinates = new Array(coordinateCount);
+    for (let i = 0; i < coordinateCount; i += 1) {
+      const offset = i * 8;
+      coordinates[i] = [
+        view.getInt32(offset, true) / scale,
+        view.getInt32(offset + 4, true) / scale
+      ];
+    }
     if (coordinates.length < 2) return;
-    if (Number(payload.totalPoints) < totalPoints - 5) return;
+    if (responseTotalPoints < totalPoints - 5) return;
 
     if (this.pathState.runId && this.pathState.runId !== runId) return;
     if (this.fullVectorPathLoadingKey !== key) return;

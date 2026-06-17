@@ -359,6 +359,18 @@ test('WorkerSupervisor returns compact full vector path snapshots for the curren
     [142.987654, 38.123457]
   ]);
 
+  const binary = await supervisor.getFullPathVectorBinarySnapshot({
+    runId: 'run-vector-snapshot',
+    expectedSequence: 3
+  });
+  assert.equal(binary.runId, 'run-vector-snapshot');
+  assert.equal(binary.sequence, 3);
+  assert.equal(binary.totalPoints, 3);
+  assert.equal(binary.coordinateCount, 3);
+  assert.equal(binary.body.length, 24);
+  assert.equal(binary.body.readInt32LE(0), 140987654);
+  assert.equal(binary.body.readInt32LE(4), 36123457);
+
   await assert.rejects(
     () => supervisor.getFullPathVectorSnapshot({ runId: 'other-run' }),
     /Requested path run is not current/

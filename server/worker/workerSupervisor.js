@@ -139,6 +139,7 @@ export class WorkerSupervisor {
     this.tilePathCache = new Map();
     this.tileRenderPromises = new Map();
     this.tileWarmupKeys = new Set();
+    this.fullVectorBinaryCache = new Map();
     this.lastState = createFallbackState();
     this.lastMetrics = {};
     this.lastHeartbeatAt = null;
@@ -399,12 +400,14 @@ export class WorkerSupervisor {
         this.pathProjection.invalidateRun(this.lastState.runId);
         this.tileCache.clear();
         this.tilePathCache.clear();
+        this.fullVectorBinaryCache.clear();
         this.#broadcastPathState(this.lastState.runId);
       }
     } else if (name === 'exploration-reset') {
       this.lastState = createFallbackState();
       this.tileCache.clear();
       this.tilePathCache.clear();
+      this.fullVectorBinaryCache.clear();
     }
   }
 
@@ -655,6 +658,68 @@ export class WorkerSupervisor {
       coordinatePrecision: VECTOR_COORDINATE_PRECISION,
       coordinates
     };
+  }
+
+  async getFullPathVectorBinarySnapshot({
+    runId = null,
+    expectedSequence = 0
+  } = {}) {
+    const currentRunId = this.lastState?.runId || this.lastMetrics?.runId || null;
+    const resolvedRunId = runId || currentRunId;
+    if (!resolvedRunId) {
+      return {
+        runId: null,
+        sequence: 0,
+        pathSequence: 0,
+        stepCount: 0,
+        totalPoints: 0,
+        coordinateCount: 0,
+        coordinatePrecision: VECTOR_COORDINATE_PRECISION,
+        body: Buffer.alloc(0)
+      };
+    }
+    if (currentRunId && resolvedRunId !== currentRunId) {
+      const error = new Error('Requested path run is not current');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const renderPath = await this.pathProjection.getRenderPath(resolvedRunId, {
+      expectedSequence,
+      maxStaleEvents: 0,
+      clonePoints: false
+    });
+    const cacheKey = `${renderPath.runId}:${renderPath.pathSequence}:${renderPath.points.length}:${VECTOR_COORDINATE_PRECISION}`;
+    const cached = this.fullVectorBinaryCache.get(cacheKey);
+    if (cached) return cached;
+
+    const scale = Math.pow(10, VECTOR_COORDINATE_PRECISION);
+    const body = Buffer.allocUnsafe(renderPath.points.length * 8);
+    let offset = 0;
+    for (const point of renderPath.points) {
+      const lng = Math.round(Number(point?.lng) * scale);
+      const lat = Math.round(Number(point?.lat) * scale);
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+      body.writeInt32LE(lng, offset);
+      body.writeInt32LE(lat, offset + 4);
+      offset += 8;
+    }
+
+    const snapshot = {
+      runId: renderPath.runId,
+      sequence: renderPath.sequence,
+      pathSequence: renderPath.pathSequence,
+      stepCount: renderPath.stepCount,
+      totalPoints: renderPath.points.length,
+      coordinateCount: offset / 8,
+      coordinatePrecision: VECTOR_COORDINATE_PRECISION,
+      body: offset === body.length ? body : body.subarray(0, offset)
+    };
+    this.fullVectorBinaryCache.set(cacheKey, snapshot);
+    while (this.fullVectorBinaryCache.size > 3) {
+      this.fullVectorBinaryCache.delete(this.fullVectorBinaryCache.keys().next().value);
+    }
+    return snapshot;
   }
 
   #emitPathState(socket, runId) {
