@@ -316,3 +316,51 @@ test('WorkerSupervisor serves client path state without worker full-path command
   assert.equal(pathState.sequence, 2);
   assert.deepEqual(pathState.fullPath.map(point => point.panoId), ['A', 'B']);
 });
+
+test('WorkerSupervisor returns compact full vector path snapshots for the current run', async (t) => {
+  const fakeWorker = new FakeWorker();
+  const supervisor = await makeSupervisor(fakeWorker);
+  t.after(() => supervisor.dispose());
+
+  for (let i = 1; i <= 3; i += 1) {
+    await supervisor.runStore.appendEvent('run-vector-snapshot', {
+      type: 'step_completed',
+      stepCount: i,
+      payload: {
+        stepData: {
+          stepCount: i,
+          panoId: `P${i}`,
+          newPosition: {
+            lat: 35.123456789 + i,
+            lng: 139.987654321 + i
+          }
+        }
+      }
+    });
+  }
+  supervisor.lastState = {
+    ...supervisor.lastState,
+    runId: 'run-vector-snapshot',
+    lastEventSequence: 3
+  };
+
+  const snapshot = await supervisor.getFullPathVectorSnapshot({
+    runId: 'run-vector-snapshot',
+    expectedSequence: 3
+  });
+
+  assert.equal(snapshot.runId, 'run-vector-snapshot');
+  assert.equal(snapshot.sequence, 3);
+  assert.equal(snapshot.totalPoints, 3);
+  assert.equal(snapshot.coordinatePrecision, 6);
+  assert.deepEqual(snapshot.coordinates, [
+    [140.987654, 36.123457],
+    [141.987654, 37.123457],
+    [142.987654, 38.123457]
+  ]);
+
+  await assert.rejects(
+    () => supervisor.getFullPathVectorSnapshot({ runId: 'other-run' }),
+    /Requested path run is not current/
+  );
+});

@@ -19,6 +19,9 @@ class MapManager {
     this.fullPathBounds = null;
     this.archiveTileVersion = null;
     this.archiveTileRendererRevision = null;
+    this.fullVectorPathKey = null;
+    this.fullVectorPathLoadingKey = null;
+    this.fullVectorAbortController = null;
     this.hasInitialPathFit = false;
     this.initializeMinimapSize(); // Initialize saved size preferences
   }
@@ -169,8 +172,12 @@ class MapManager {
         });
       }
 
-      // Place below the live path layer if present
-      const beforeId = this.map.getLayer('path-layer') ? 'path-layer' : undefined;
+      // Place below hydrated vector and live vector path layers if present.
+      const beforeId = this.map.getLayer('full-vector-path-layer')
+        ? 'full-vector-path-layer'
+        : this.map.getLayer('path-layer')
+          ? 'path-layer'
+          : undefined;
       if (!this.map.getLayer('archive-overview-tiles-layer')) {
         if (beforeId) {
           this.map.addLayer({
@@ -217,6 +224,7 @@ class MapManager {
           paint: { 'raster-opacity': 0.65, 'raster-resampling': 'nearest' }
         }, beforeId);
       }
+      this.#setArchiveRasterMode(Boolean(this.fullVectorPathKey));
     } catch (e) {
       console.error('Failed to add archive tiles:', e);
     }
@@ -271,11 +279,53 @@ class MapManager {
     }
   }
 
+  hydrateFullVectorPath(meta = {}) {
+    const runId = meta.runId || this.pathState.runId;
+    const sequence = Number(meta.pathSequence || meta.sequence);
+    const totalPoints = Number(meta.totalPoints);
+    if (!runId || !Number.isFinite(sequence) || sequence <= 0) return;
+    if (!Number.isFinite(totalPoints) || totalPoints <= this.pathCoordinates.length) return;
+
+    const key = `${runId}:${sequence}:${totalPoints}`;
+    if (this.fullVectorPathKey === key || this.fullVectorPathLoadingKey === key) return;
+
+    if (this.fullVectorAbortController) {
+      this.fullVectorAbortController.abort();
+    }
+    const controller = new AbortController();
+    this.fullVectorAbortController = controller;
+    this.fullVectorPathLoadingKey = key;
+
+    const startFetch = () => {
+      this.#fetchFullVectorPath({ runId, sequence, totalPoints, key, controller })
+        .catch(error => {
+          if (error?.name !== 'AbortError') {
+            console.warn('Failed to hydrate full minimap vector path:', error);
+          }
+        })
+        .finally(() => {
+          if (this.fullVectorPathLoadingKey === key) {
+            this.fullVectorPathLoadingKey = null;
+          }
+          if (this.fullVectorAbortController === controller) {
+            this.fullVectorAbortController = null;
+          }
+        });
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(startFetch, { timeout: 1500 });
+    } else {
+      window.setTimeout(startFetch, 500);
+    }
+  }
+
   setRun(runId) {
     const previousRunId = this.pathState.runId;
     this.pathState.setRun(runId);
     if (previousRunId && runId && previousRunId !== runId) {
       this.pathCoordinates = [];
+      this.#resetFullVectorPath();
       this.#renderPath();
     }
   }
@@ -294,6 +344,7 @@ class MapManager {
     if (!result.applied) return;
     this.fullPathBounds = this.#normalizeBounds(meta.bounds) || this.fullPathBounds;
     this.updateArchiveTiles(meta);
+    this.hydrateFullVectorPath(meta);
     this.pathCoordinates = this.pathState.coordinates;
     this.#renderPath();
 
@@ -368,6 +419,18 @@ class MapManager {
   }
 
   initializePath() {
+    this.map.addSource('full-vector-path', {
+      type: 'geojson',
+      data: {
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates: []
+        }
+      }
+    });
+
     this.map.addSource('path', {
       type: 'geojson',
       data: {
@@ -377,6 +440,28 @@ class MapManager {
           type: 'LineString',
           coordinates: []
         }
+      }
+    });
+
+    this.map.addLayer({
+      id: 'full-vector-path-layer',
+      type: 'line',
+      source: 'full-vector-path',
+      layout: {
+        'line-join': 'round',
+        'line-cap': 'round'
+      },
+      paint: {
+        'line-color': '#d32f2f',
+        'line-width': [
+          'interpolate',
+          ['linear'],
+          ['zoom'],
+          8, 1.25,
+          14, 2,
+          18, 4
+        ],
+        'line-opacity': 0.75
       }
     });
 
@@ -454,6 +539,86 @@ class MapManager {
     }
   }
 
+  async #fetchFullVectorPath({ runId, sequence, totalPoints, key, controller }) {
+    const params = new URLSearchParams({
+      runId,
+      sequence: String(sequence)
+    });
+    const response = await fetch(`/api/path-vectors?${params.toString()}`, {
+      signal: controller.signal,
+      headers: { Accept: 'application/json' }
+    });
+    if (!response.ok) {
+      throw new Error(`Full path vector request failed (${response.status})`);
+    }
+
+    const payload = await response.json();
+    if (controller.signal.aborted) return;
+    if (payload.runId !== runId) return;
+    const coordinates = Array.isArray(payload.coordinates) ? payload.coordinates : [];
+    if (coordinates.length < 2) return;
+    if (Number(payload.totalPoints) < totalPoints - 5) return;
+
+    if (this.pathState.runId && this.pathState.runId !== runId) return;
+    if (this.fullVectorPathLoadingKey !== key) return;
+    this.#renderFullVectorPath(coordinates);
+    this.fullVectorPathKey = key;
+    this.fullVectorPathLoadingKey = null;
+    if (this.fullVectorAbortController === controller) {
+      this.fullVectorAbortController = null;
+    }
+    this.#setArchiveRasterMode(true);
+    console.log(`Hydrated ${coordinates.length} full vector path points`);
+  }
+
+  #renderFullVectorPath(coordinates) {
+    if (this.map && this.map.getSource('full-vector-path')) {
+      this.map.getSource('full-vector-path').setData({
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates
+        }
+      });
+    }
+  }
+
+  #setArchiveRasterMode(fullVectorLoaded) {
+    if (!this.map) return;
+    if (this.map.getLayer('archive-overview-tiles-layer')) {
+      this.map.setPaintProperty(
+        'archive-overview-tiles-layer',
+        'raster-opacity',
+        fullVectorLoaded
+          ? 0.14
+          : [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              10, 0.8,
+              12, 0.6,
+              16, 0.35
+            ]
+      );
+    }
+    if (this.map.getLayer('archive-detail-tiles-layer')) {
+      this.map.setLayoutProperty('archive-detail-tiles-layer', 'visibility', fullVectorLoaded ? 'none' : 'visible');
+      this.map.setPaintProperty('archive-detail-tiles-layer', 'raster-opacity', fullVectorLoaded ? 0 : 0.65);
+    }
+  }
+
+  #resetFullVectorPath() {
+    if (this.fullVectorAbortController) {
+      this.fullVectorAbortController.abort();
+    }
+    this.fullVectorAbortController = null;
+    this.fullVectorPathLoadingKey = null;
+    this.fullVectorPathKey = null;
+    this.#renderFullVectorPath([]);
+    this.#setArchiveRasterMode(false);
+  }
+
   #fitRecentPath(position = null) {
     const recentCoordinates = this.pathCoordinates.slice(-this.recentFitPointLimit);
     if (position) {
@@ -516,6 +681,7 @@ class MapManager {
     this.archiveTileVersion = null;
     this.archiveTileRendererRevision = null;
     this.hasInitialPathFit = false;
+    this.#resetFullVectorPath();
     this.removeArchiveTiles();
     
     if (this.map && this.map.getSource('path')) {

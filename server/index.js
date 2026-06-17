@@ -12,6 +12,8 @@ import fs from 'fs';
 import * as fsp from 'fs/promises';
 import path from 'path';
 import crypto, { randomUUID } from 'crypto';
+import zlib from 'zlib';
+import { promisify } from 'util';
 import { verifySignature } from './utils/urlSigner.js';
 import { RunStore } from './services/runStore.js';
 import { WorkerSupervisor } from './worker/workerSupervisor.js';
@@ -32,6 +34,7 @@ import {
 
 dotenv.config();
 const IS_WORKER_PROCESS = process.env.EXPLORATION_WORKER === '1';
+const gzipAsync = promisify(zlib.gzip);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1525,6 +1528,29 @@ function toTileBuffer(tile) {
   return emptyTilePng();
 }
 
+async function sendCompressedJson(req, res, payload, {
+  cacheControl = 'private, max-age=15'
+} = {}) {
+  const body = Buffer.from(JSON.stringify(payload));
+  res
+    .type('application/json')
+    .set('Cache-Control', cacheControl)
+    .set('Vary', 'Accept-Encoding');
+
+  if (/\bgzip\b/.test(String(req.headers['accept-encoding'] || '')) && body.length > 1024) {
+    const gzipped = await gzipAsync(body);
+    res
+      .set('Content-Encoding', 'gzip')
+      .set('Content-Length', String(gzipped.length))
+      .send(gzipped);
+    return;
+  }
+
+  res
+    .set('Content-Length', String(body.length))
+    .send(body);
+}
+
 // Raster tiles for archived path
 app.get('/tiles/:z/:x/:y.png', async (req, res) => {
   const z = parseInt(req.params.z, 10);
@@ -1553,6 +1579,24 @@ app.get('/tiles/:z/:x/:y.png', async (req, res) => {
       .set('Cache-Control', 'public, max-age=30')
       .type('image/png')
       .send(emptyTilePng());
+  }
+});
+
+app.get('/api/path-vectors', async (req, res) => {
+  try {
+    const runId = typeof req.query.runId === 'string' ? req.query.runId : null;
+    const expectedSequence = Number(req.query.sequence);
+    const snapshot = await globalExploration.getFullPathVectorSnapshot({
+      runId,
+      expectedSequence: Number.isFinite(expectedSequence) ? expectedSequence : 0
+    });
+    await sendCompressedJson(req, res, snapshot, {
+      cacheControl: 'private, max-age=15'
+    });
+  } catch (error) {
+    const status = Number(error.statusCode) || 500;
+    console.warn(`Failed to prepare full path vector payload: ${error.message}`);
+    res.status(status).json({ error: status === 404 ? 'path_not_found' : 'path_vectors_failed' });
   }
 });
 

@@ -34,6 +34,7 @@ const TILE_WARM_ZOOMS = (process.env.MINIMAP_TILE_WARM_ZOOMS || '8,9,10')
   .split(',')
   .map(value => parseInt(value, 10))
   .filter(value => Number.isFinite(value) && value >= 0 && value <= 22);
+const VECTOR_COORDINATE_PRECISION = parseIntOr(process.env.MINIMAP_VECTOR_COORDINATE_PRECISION, 6);
 const START_LOCATION = {
   lat: parseFloat(process.env.START_LAT),
   lng: parseFloat(process.env.START_LNG)
@@ -105,6 +106,13 @@ function overviewTilesForBounds(bounds, zooms = TILE_WARM_ZOOMS, maxTiles = TILE
     }
   }
   return tiles;
+}
+
+function roundCoordinate(value, precision = VECTOR_COORDINATE_PRECISION) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  const factor = Math.pow(10, Math.max(0, precision));
+  return Math.round(number * factor) / factor;
 }
 
 export class WorkerSupervisor {
@@ -601,6 +609,52 @@ export class WorkerSupervisor {
       return { runId: null, sequence: 0, pathSequence: 0, stepCount: 0, fullPath: [] };
     }
     return this.pathProjection.getPathState(runId, options);
+  }
+
+  async getFullPathVectorSnapshot({
+    runId = null,
+    expectedSequence = 0
+  } = {}) {
+    const currentRunId = this.lastState?.runId || this.lastMetrics?.runId || null;
+    const resolvedRunId = runId || currentRunId;
+    if (!resolvedRunId) {
+      return {
+        runId: null,
+        sequence: 0,
+        pathSequence: 0,
+        stepCount: 0,
+        totalPoints: 0,
+        coordinates: []
+      };
+    }
+    if (currentRunId && resolvedRunId !== currentRunId) {
+      const error = new Error('Requested path run is not current');
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const renderPath = await this.pathProjection.getRenderPath(resolvedRunId, {
+      expectedSequence,
+      maxStaleEvents: 0,
+      clonePoints: false
+    });
+    const coordinates = [];
+    for (const point of renderPath.points) {
+      const lng = roundCoordinate(point?.lng);
+      const lat = roundCoordinate(point?.lat);
+      if (lng == null || lat == null) continue;
+      coordinates.push([lng, lat]);
+    }
+
+    return {
+      runId: renderPath.runId,
+      sequence: renderPath.sequence,
+      pathSequence: renderPath.pathSequence,
+      stepCount: renderPath.stepCount,
+      totalPoints: renderPath.points.length,
+      coordinatePrecision: VECTOR_COORDINATE_PRECISION,
+      coordinates
+    };
   }
 
   #emitPathState(socket, runId) {
