@@ -809,7 +809,10 @@ export class WorkerSupervisor {
       });
     };
 
+    const scheduledPathRunIds = new Set();
     const schedulePathState = (runId) => {
+      if (!runId || scheduledPathRunIds.has(runId)) return;
+      scheduledPathRunIds.add(runId);
       setTimeout(async () => {
         if (!socket.connected) return;
         this.#emitPathState(socket, runId);
