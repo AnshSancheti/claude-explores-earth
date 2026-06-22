@@ -317,6 +317,40 @@ test('WorkerSupervisor serves client path state without worker full-path command
   assert.deepEqual(pathState.fullPath.map(point => point.panoId), ['A', 'B']);
 });
 
+test('WorkerSupervisor emits cached initial state immediately on client connect', async (t) => {
+  const fakeWorker = new FakeWorker();
+  const supervisor = await makeSupervisor(fakeWorker);
+  t.after(() => supervisor.dispose());
+  await supervisor.start({ autoRestore: false, autoStart: false });
+
+  supervisor.lastState = {
+    ...supervisor.lastState,
+    runId: 'cached-run',
+    isExploring: true,
+    position: { lat: 10, lng: 20 },
+    panoId: 'cached-pano',
+    stepCount: 42,
+    recentHistory: [{ stepCount: 42, reasoning: 'cached' }]
+  };
+  fakeWorker.autoRespond = false;
+
+  const emitted = [];
+  const socket = {
+    id: 'socket-cached',
+    connected: true,
+    emit: (name, data) => emitted.push({ name, data })
+  };
+  supervisor.addClient(socket);
+
+  const initial = emitted.find(event => event.name === 'initial-state')?.data;
+  assert.ok(initial);
+  assert.equal(initial.runId, 'cached-run');
+  assert.equal(initial.panoId, 'cached-pano');
+  assert.equal(initial.stepCount, 42);
+  assert.deepEqual(initial.recentHistory.map(entry => entry.stepCount), [42]);
+  assert.equal(fakeWorker.sent.some(message => message.command === 'getState'), true);
+});
+
 test('WorkerSupervisor returns compact full vector path snapshots for the current run', async (t) => {
   const fakeWorker = new FakeWorker();
   const supervisor = await makeSupervisor(fakeWorker);

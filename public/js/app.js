@@ -123,6 +123,38 @@ class ExplorationApp {
       }
     });
 
+    this.socket.on('state-refresh', (data) => {
+      console.log('State refresh received', data);
+
+      if (data.runId) {
+        this.mapManager.setRun(data.runId);
+      }
+
+      if (data.stats) {
+        this.uiManager.updateStats(data.stats);
+      }
+      if (data.stepCount !== undefined) {
+        this.uiManager.updateStep(data.stepCount);
+      }
+
+      this.isExploring = data.isExploring || false;
+      this.uiManager.setExplorationState(this.isExploring);
+
+      if (data.recentHistory && data.recentHistory.length > 0) {
+        this.uiManager.clearDecisionLog();
+        data.recentHistory.forEach(entry => {
+          this.uiManager.addDecisionEntry(entry);
+        });
+      }
+
+      if (data.position) {
+        this.mapManager.setCurrentPosition(data.position);
+      }
+      if (data.panoId && this.streetViewManager.panorama) {
+        this.streetViewManager.updatePosition(data.panoId, 0);
+      }
+    });
+
     this.socket.on('exploration-started', (data) => {
       console.log('Exploration started', data);
       

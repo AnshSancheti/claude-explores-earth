@@ -356,6 +356,12 @@ export class WorkerSupervisor {
         lastEventSequence: data?.sequence ?? this.lastState.lastEventSequence
       };
       if (!data?.intermediate) {
+        const recentHistory = Array.isArray(this.lastState.recentHistory) ? this.lastState.recentHistory : [];
+        const dedupedHistory = recentHistory.filter(entry => entry?.stepCount !== data?.stepCount);
+        this.lastState = {
+          ...this.lastState,
+          recentHistory: [...dedupedHistory, data].slice(-100)
+        };
         this.#recordWorkerMetrics({
           ...this.lastMetrics,
           isExploring: true,
@@ -589,9 +595,9 @@ export class WorkerSupervisor {
     return renderPromise;
   }
 
-  async getCurrentState({ includeFullPath = true } = {}) {
+  async getCurrentState({ includeFullPath = true, timeoutMs = 15000 } = {}) {
     try {
-      const state = await this.#sendCommand('getState', { includeFullPath }, { timeoutMs: 15000 });
+      const state = await this.#sendCommand('getState', { includeFullPath }, { timeoutMs });
       this.lastState = { ...this.lastState, ...state };
       return this.lastState;
     } catch (error) {
@@ -792,26 +798,33 @@ export class WorkerSupervisor {
     this.connectedClients.add(socket.id);
     this.logger.log(`Client connected: ${socket.id}. Total clients: ${this.connectedClients.size}`);
 
-    const sendInitialState = async () => {
-      const state = await this.getCurrentState({ includeFullPath: false });
+    const emitClientState = (eventName, state) => {
       if (!socket.connected) return;
-      socket.emit('initial-state', {
+      socket.emit(eventName, {
         ...state,
         startLocation: START_LOCATION,
         startPanoId: START_PANO_ID,
         recentHistory: state.recentHistory || [],
         connectedClients: this.connectedClients.size
       });
+    };
 
+    const schedulePathState = (runId) => {
       setTimeout(async () => {
         if (!socket.connected) return;
-        this.#emitPathState(socket, state.runId);
+        this.#emitPathState(socket, runId);
       }, 100);
     };
 
-    sendInitialState().catch(error => {
-      this.logger.error('Failed to send initial worker state:', error);
-      socket.emit('error', { message: 'Failed to load exploration state' });
+    const cachedState = this.lastState || createFallbackState();
+    emitClientState('initial-state', cachedState);
+    schedulePathState(cachedState.runId);
+
+    this.getCurrentState({ includeFullPath: false, timeoutMs: 1000 }).then(state => {
+      emitClientState('state-refresh', state);
+      schedulePathState(state.runId);
+    }).catch(error => {
+      this.logger.warn('Failed to refresh worker state for client:', error.message);
     });
   }
 
