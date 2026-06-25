@@ -16,6 +16,16 @@ const EVENT_LOG_COMPACT_MAX_BYTES = parseIntOr(
   process.env.RUN_EVENT_LOG_COMPACT_MAX_BYTES,
   DEFAULT_EVENT_LOG_COMPACT_MAX_BYTES
 );
+const RESTORE_RECOVERY_LOOKBACK_EVENTS = parseIntOr(
+  process.env.RUNSTORE_RESTORE_RECOVERY_LOOKBACK_EVENTS,
+  1000
+);
+const SNAPSHOT_REPLACEMENT_EVENTS = new Set([
+  'legacy_snapshot_imported',
+  'run_reset',
+  'snapshot_checkpoint',
+  'step_completed'
+]);
 
 function cloneJson(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
@@ -45,6 +55,8 @@ function applyCompletedStepDelta(snapshot, event) {
   const panoId = stepData.panoId || delta.panoId;
   const position = stepData.newPosition || delta.position;
   const stepCount = Number(stepData.stepCount) || Number(event.stepCount) || Number(reduced.stepCount) || 0;
+  const currentStepCount = Number(reduced.stepCount) || 0;
+  if (stepCount <= currentStepCount) return reduced;
 
   reduced.schemaVersion = SNAPSHOT_SCHEMA_VERSION;
   reduced.stepCount = stepCount;
@@ -112,6 +124,19 @@ function applyCompletedStepDelta(snapshot, event) {
   return reduced;
 }
 
+function shouldApplySnapshotPayload(event, snapshot, currentSnapshot) {
+  if (!event?.type || !snapshot || typeof snapshot !== 'object') return false;
+  if (!SNAPSHOT_REPLACEMENT_EVENTS.has(event.type)) return false;
+
+  if (event.type === 'run_reset' || event.type === 'legacy_snapshot_imported') {
+    return true;
+  }
+
+  const snapshotStepCount = Number(snapshot.stepCount) || 0;
+  const currentStepCount = Number(currentSnapshot?.stepCount) || 0;
+  return snapshotStepCount > currentStepCount;
+}
+
 async function atomicWriteJson(filePath, value) {
   await fsp.mkdir(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
@@ -141,7 +166,7 @@ export function reduceSnapshotWithEvents(snapshot, events = []) {
   const sortedEvents = [...events].sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
   for (const event of sortedEvents) {
     const eventSnapshot = event.payload?.snapshot;
-    if (eventSnapshot) {
+    if (shouldApplySnapshotPayload(event, eventSnapshot, reduced)) {
       reduced = cloneJson(eventSnapshot);
     } else if (event.type === 'step_completed' && event.payload?.stepData) {
       reduced = applyCompletedStepDelta(reduced, event);
@@ -593,16 +618,37 @@ export class RunStore {
 
     const afterSequence = Number(snapshot.eventLog.lastSequence) || 0;
     const { events, warnings } = await this.readEvents(snapshot.runId, { afterSequence });
-    const restoredSnapshot = reduceSnapshotWithEvents(snapshot, events);
+    let restoredSnapshot = reduceSnapshotWithEvents(snapshot, events);
+    let restoreEvents = events;
+    if (
+      RESTORE_RECOVERY_LOOKBACK_EVENTS > 0 &&
+      (Number(restoredSnapshot?.stepCount) || 0) <= (Number(snapshot.stepCount) || 0) &&
+      afterSequence > 0
+    ) {
+      const lookbackAfterSequence = Math.max(0, afterSequence - RESTORE_RECOVERY_LOOKBACK_EVENTS);
+      const { events: lookbackEvents, warnings: lookbackWarnings } = await this.readEvents(snapshot.runId, {
+        afterSequence: lookbackAfterSequence
+      });
+      warnings.push(...lookbackWarnings);
+      const lookbackRestoredSnapshot = reduceSnapshotWithEvents(snapshot, lookbackEvents);
+      if ((Number(lookbackRestoredSnapshot?.stepCount) || 0) > (Number(restoredSnapshot?.stepCount) || 0)) {
+        this.logger.warn?.(
+          `Recovered run ${snapshot.runId} from event-log lookback: ` +
+          `step ${snapshot.stepCount} -> ${lookbackRestoredSnapshot.stepCount}`
+        );
+        restoredSnapshot = lookbackRestoredSnapshot;
+        restoreEvents = lookbackEvents;
+      }
+    }
     this.lastSequenceByRun.set(
       snapshot.runId,
       Number(restoredSnapshot?.eventLog?.lastSequence) || afterSequence
     );
     return {
       snapshot: restoredSnapshot,
-      events,
+      events: restoreEvents,
       warnings,
-      restoreSource: events.length > 0 ? 'v2-snapshot+events' : 'v2-snapshot'
+      restoreSource: restoreEvents.length > 0 ? 'v2-snapshot+events' : 'v2-snapshot'
     };
   }
 }

@@ -628,11 +628,15 @@ class GlobalExploration {
       const loadEventType = this.restoreSource === 'legacy-snapshot'
         ? 'legacy_snapshot_imported'
         : 'state_loaded';
-      await this.appendRunEvent(loadEventType, {
+      const loadEventPayload = {
         restoreSource: this.restoreSource,
         replayedEvents: restore.events.length,
-        snapshot: this.createSaveSnapshot()
-      });
+        stepCount: this.agent.stepCount
+      };
+      if (loadEventType === 'legacy_snapshot_imported') {
+        loadEventPayload.snapshot = this.createSaveSnapshot();
+      }
+      await this.appendRunEvent(loadEventType, loadEventPayload);
 
       this.pendingSave = true;
       await this.saveState(true);
@@ -1763,6 +1767,30 @@ async function bootWorker({ autoRestore = true, autoStart = false } = {}) {
   let startResult = null;
   const savePath = globalExploration.getSavePath();
   const hasSave = fs.existsSync(savePath);
+  const hasLiveState = globalExploration.hasMeaningfulAgentState();
+  const isBusy = (
+    globalExploration.isExploring ||
+    globalExploration.isStepPipelineActive ||
+    globalExploration.agent?.isStepExecuting
+  );
+
+  if (hasLiveState) {
+    if (autoStart && !isBusy && !globalExploration.isExploring) {
+      startResult = await globalExploration.startExploration();
+    }
+
+    scheduleWorkerTelemetry();
+    return {
+      success: !startResult?.error,
+      savePath,
+      restored: {
+        success: true,
+        skippedRestore: true,
+        reason: isBusy ? 'worker-active' : 'live-state-present'
+      },
+      started: startResult || null
+    };
+  }
 
   if (autoRestore && hasSave) {
     restoreResult = await globalExploration.loadState();

@@ -314,3 +314,130 @@ test('reduceSnapshotWithEvents replays compact completed step deltas', () => {
   assert.equal(restored.decisionHistory[0].coverageDelta, undefined);
   assert.equal(restored.eventLog.lastSequence, 2);
 });
+
+test('reduceSnapshotWithEvents ignores stale state_loaded snapshots after completed steps', () => {
+  const base = {
+    schemaVersion: 2,
+    runId: 'run-stale-state-loaded',
+    stepCount: 291114,
+    currentState: {
+      panoId: 'old-pano',
+      position: { lat: 35.874589, lng: 140.390424 },
+      heading: 313,
+      mode: 'pathfinding'
+    },
+    stats: { locationsVisited: 200172, distanceTraveled: 3072630, pathLength: 200172 },
+    graph: {
+      'old-pano': { lat: 35.874589, lng: 140.390424, neighbors: ['new-pano'], timestamp: 1 }
+    },
+    recentHistory: ['old-pano'],
+    decisionHistory: [],
+    eventLog: { lastSequence: 566692, lastEventId: 'checkpoint-566692' }
+  };
+
+  const events = [
+    {
+      eventId: 'event-566695',
+      runId: 'run-stale-state-loaded',
+      epoch: 2779,
+      sequence: 566695,
+      type: 'step_completed',
+      timestamp: '2026-06-25T04:21:16.532Z',
+      stepCount: 291115,
+      payload: {
+        stepData: {
+          stepCount: 291115,
+          panoId: 'new-pano',
+          previousPanoId: 'old-pano',
+          newPosition: { lat: 35.874727, lng: 140.390289 },
+          direction: 321,
+          mode: 'exploration',
+          stats: { locationsVisited: 200173, distanceTraveled: 3072650, pathLength: 200173 },
+          coverageDelta: {
+            panoId: 'new-pano',
+            position: { lat: 35.874727, lng: 140.390289 },
+            traversedFrom: 'old-pano',
+            links: [{ pano: 'old-pano', heading: 136 }],
+            recentHistory: ['old-pano', 'new-pano']
+          }
+        }
+      }
+    },
+    {
+      eventId: 'event-566697',
+      runId: 'run-stale-state-loaded',
+      epoch: 2780,
+      sequence: 566697,
+      type: 'state_loaded',
+      timestamp: '2026-06-25T04:21:29.284Z',
+      payload: {
+        restoreSource: 'v2-snapshot+events',
+        snapshot: base
+      }
+    }
+  ];
+
+  const restored = reduceSnapshotWithEvents(base, events);
+  assert.equal(restored.stepCount, 291115);
+  assert.equal(restored.currentState.panoId, 'new-pano');
+  assert.equal(restored.stats.locationsVisited, 200173);
+  assert.equal(restored.eventLog.lastSequence, 566697);
+});
+
+test('RunStore restoreCurrent repairs snapshots that point past higher-step events', async () => {
+  const { store } = await makeStore();
+  const runId = 'run-lookback-repair';
+  const staleSnapshot = {
+    schemaVersion: 2,
+    runId,
+    stepCount: 10,
+    currentState: {
+      panoId: 'A',
+      position: { lat: 1, lng: 1 },
+      heading: 0,
+      mode: 'pathfinding'
+    },
+    stats: { locationsVisited: 10, distanceTraveled: 100, pathLength: 10 },
+    graph: {
+      A: { lat: 1, lng: 1, neighbors: ['B'], timestamp: 1 }
+    },
+    recentHistory: ['A'],
+    decisionHistory: [],
+    eventLog: { lastSequence: 4, lastEventId: 'event-4' }
+  };
+
+  await store.appendEvent(runId, { type: 'run_started' });
+  await store.appendEvent(runId, {
+    type: 'step_completed',
+    stepCount: 11,
+    payload: {
+      stepData: {
+        stepCount: 11,
+        panoId: 'B',
+        previousPanoId: 'A',
+        newPosition: { lat: 2, lng: 2 },
+        stats: { locationsVisited: 11, distanceTraveled: 120, pathLength: 11 },
+        coverageDelta: {
+          panoId: 'B',
+          position: { lat: 2, lng: 2 },
+          traversedFrom: 'A',
+          links: []
+        }
+      }
+    }
+  });
+  await store.appendEvent(runId, {
+    type: 'state_loaded',
+    payload: {
+      restoreSource: 'v2-snapshot+events',
+      snapshot: staleSnapshot
+    }
+  });
+  await store.appendEvent(runId, { type: 'run_started' });
+  await store.writeSnapshot(runId, staleSnapshot);
+
+  const restored = await store.restoreCurrent();
+  assert.equal(restored.snapshot.stepCount, 11);
+  assert.equal(restored.snapshot.currentState.panoId, 'B');
+  assert.equal(restored.snapshot.eventLog.lastSequence, 4);
+});

@@ -181,6 +181,10 @@ export class WorkerSupervisor {
   }
 
   async #startWorker({ autoRestore, autoStart }) {
+    if (this.#hasFreshWorkerHeartbeat()) {
+      return { success: true, reusedLiveWorker: true };
+    }
+
     this.workerBooting = true;
     this.workerBootStartedAt = Date.now();
     this.#spawnWorker();
@@ -218,6 +222,13 @@ export class WorkerSupervisor {
     worker.on('error', (error) => {
       this.logger.error('Exploration worker process error:', error);
     });
+  }
+
+  #hasFreshWorkerHeartbeat() {
+    if (!this.worker || !this.worker.connected || !this.workerReady || !this.lastHeartbeatAt) {
+      return false;
+    }
+    return Date.now() - this.lastHeartbeatAt <= this.heartbeatStaleMs;
   }
 
   #handleWorkerMessage(message) {
@@ -456,6 +467,14 @@ export class WorkerSupervisor {
     const delayMs = Math.min(30000, 1000 * Math.pow(2, this.restartTimestamps.length));
     this.restartTimer = setTimeout(async () => {
       this.restartTimer = null;
+      if (this.#hasFreshWorkerHeartbeat()) {
+        this.logger.warn?.('Skipping exploration worker restart; existing worker heartbeat is healthy.');
+        this.onBroadcast('worker-recovered', {
+          restarts: this.workerRestarts,
+          desiredExploring: this.desiredExploring
+        });
+        return;
+      }
       this.restartTimestamps.push(Date.now());
       this.workerRestarts += 1;
       try {

@@ -261,6 +261,39 @@ test('WorkerSupervisor preserves high-water metrics during restart boot', async 
   await wait(10);
 });
 
+test('WorkerSupervisor does not reboot a live worker after a restart boot timeout', async (t) => {
+  const firstWorker = new FakeWorker();
+  const secondWorker = new FakeWorker({ autoRespond: false });
+  const workers = [firstWorker, secondWorker];
+  const supervisor = await makeSupervisor(null, {
+    forkFn: () => workers.shift()
+  });
+  t.after(() => supervisor.dispose());
+
+  await supervisor.start({ autoRestore: false, autoStart: false });
+  await supervisor.startExploration();
+  firstWorker.emit('exit', 1, null);
+
+  await wait(1100);
+  assert.equal(secondWorker.sent.length, 1);
+  assert.equal(secondWorker.sent[0].command, 'boot');
+
+  secondWorker.emit('message', {
+    kind: 'heartbeat',
+    metrics: {
+      isExploring: true,
+      runId: 'run-still-alive',
+      stepCount: 200,
+      lastCompletedStep: 200,
+      stepStatus: 'idle'
+    }
+  });
+
+  await wait(2200);
+  assert.equal(secondWorker.sent.length, 1);
+  assert.equal(supervisor.getMetrics().workerReady, true);
+});
+
 test('WorkerSupervisor serves client path state without worker full-path command', async (t) => {
   const fakeWorker = new FakeWorker();
   fakeWorker.responses.set('getState', {
