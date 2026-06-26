@@ -203,7 +203,9 @@ export class WorkerSupervisor {
       return result;
     } catch (error) {
       if (!this.#hasFreshWorkerHeartbeat()) {
-        this.#discardCurrentWorker(`Exploration worker boot failed without a fresh heartbeat: ${error.message}`);
+        this.#discardCurrentWorker(`Exploration worker boot failed without a fresh heartbeat: ${error.message}`, {
+          scheduleRestart: true
+        });
       }
       throw error;
     } finally {

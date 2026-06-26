@@ -50,13 +50,14 @@ function applyCompletedStepDelta(snapshot, event) {
   const stepData = event.payload?.stepData;
   if (!stepData) return snapshot;
 
-  const reduced = cloneJson(snapshot);
   const delta = stepData.coverageDelta || {};
   const panoId = stepData.panoId || delta.panoId;
   const position = stepData.newPosition || delta.position;
-  const stepCount = Number(stepData.stepCount) || Number(event.stepCount) || Number(reduced.stepCount) || 0;
-  const currentStepCount = Number(reduced.stepCount) || 0;
-  if (stepCount <= currentStepCount) return reduced;
+  const currentStepCount = Number(snapshot?.stepCount) || 0;
+  const stepCount = Number(stepData.stepCount) || Number(event.stepCount) || currentStepCount;
+  if (stepCount <= currentStepCount) return snapshot;
+
+  const reduced = cloneJson(snapshot);
 
   reduced.schemaVersion = SNAPSHOT_SCHEMA_VERSION;
   reduced.stepCount = stepCount;
