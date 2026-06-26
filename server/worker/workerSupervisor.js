@@ -167,7 +167,7 @@ export class WorkerSupervisor {
 
   async start({ autoRestore = true, autoStart = false } = {}) {
     if (this.starting) return this.starting;
-    if (this.worker && this.workerReady) return { success: true };
+    if (this.#hasFreshWorkerHeartbeat()) return { success: true };
 
     this.desiredExploring = Boolean(autoStart);
     if (autoRestore) {
@@ -184,6 +184,9 @@ export class WorkerSupervisor {
     if (this.#hasFreshWorkerHeartbeat()) {
       return { success: true, reusedLiveWorker: true };
     }
+    if (this.worker) {
+      this.#discardCurrentWorker('Replacing stale exploration worker before boot');
+    }
 
     this.workerBooting = true;
     this.workerBootStartedAt = Date.now();
@@ -195,6 +198,11 @@ export class WorkerSupervisor {
       });
       this.#warmCurrentArchiveOverview();
       return result;
+    } catch (error) {
+      if (!this.#hasFreshWorkerHeartbeat()) {
+        this.#discardCurrentWorker(`Exploration worker boot failed without a fresh heartbeat: ${error.message}`);
+      }
+      throw error;
     } finally {
       this.workerBooting = false;
       this.workerBootStartedAt = null;
@@ -217,8 +225,11 @@ export class WorkerSupervisor {
     this.worker = worker;
     this.workerPid = worker.pid;
 
-    worker.on('message', (message) => this.#handleWorkerMessage(message));
-    worker.on('exit', (code, signal) => this.#handleWorkerExit(code, signal));
+    worker.on('message', (message) => {
+      if (worker !== this.worker) return;
+      this.#handleWorkerMessage(message);
+    });
+    worker.on('exit', (code, signal) => this.#handleWorkerExit(worker, code, signal));
     worker.on('error', (error) => {
       this.logger.error('Exploration worker process error:', error);
     });
@@ -254,6 +265,13 @@ export class WorkerSupervisor {
     }
 
     if (message.kind === 'state') {
+      if (this.#shouldPreserveKnownRunProgress(message.data || {})) {
+        this.lastState = {
+          ...this.lastState,
+          stepStatus: this.workerBooting ? 'worker-booting' : 'worker-recovering'
+        };
+        return;
+      }
       this.lastState = {
         ...this.lastState,
         ...(message.data || {})
@@ -283,24 +301,51 @@ export class WorkerSupervisor {
     if (!metrics || typeof metrics !== 'object') return;
 
     const previous = this.lastMetrics || {};
-    const previousStep = Number(previous.lastCompletedStep ?? previous.stepCount) || 0;
+    const previousRunId = previous.runId || this.lastState?.runId || null;
+    const previousStep = Math.max(
+      Number(previous.lastCompletedStep ?? previous.stepCount) || 0,
+      Number(this.lastState?.stepCount) || 0
+    );
     const nextStep = Number(metrics.lastCompletedStep ?? metrics.stepCount) || 0;
-    const lostRun = Boolean(previous.runId && !metrics.runId);
-    const regressedDuringBoot = (
+    const lostRun = Boolean(previousRunId && !metrics.runId);
+    const regressedWhileInactive = (
       previousStep > 0 &&
       nextStep < previousStep &&
       !metrics.isExploring
     );
 
-    if (this.workerBooting && this.desiredExploring && (lostRun || regressedDuringBoot)) {
+    if (this.desiredExploring && (lostRun || regressedWhileInactive)) {
       this.lastMetrics = {
         ...previous,
-        stepStatus: 'worker-booting'
+        stepStatus: this.workerBooting ? 'worker-booting' : 'worker-recovering'
       };
       return;
     }
 
     this.lastMetrics = metrics;
+  }
+
+  #shouldPreserveKnownRunProgress(nextState) {
+    if (!this.desiredExploring || !nextState || typeof nextState !== 'object') {
+      return false;
+    }
+
+    const previousRunId = this.lastState?.runId || this.lastMetrics?.runId || null;
+    if (!previousRunId) return false;
+
+    const previousStep = Math.max(
+      Number(this.lastState?.stepCount) || 0,
+      Number(this.lastMetrics?.lastCompletedStep ?? this.lastMetrics?.stepCount) || 0
+    );
+    const nextStep = Number(nextState.stepCount ?? nextState.lastCompletedStep) || 0;
+    const lostRun = !nextState.runId;
+    const regressedWhileInactive = (
+      previousStep > 0 &&
+      nextStep < previousStep &&
+      !nextState.isExploring
+    );
+
+    return lostRun || regressedWhileInactive;
   }
 
   #seedStateFromSaveSummary() {
@@ -428,11 +473,16 @@ export class WorkerSupervisor {
     }
   }
 
-  #handleWorkerExit(code, signal) {
+  #handleWorkerExit(worker, code, signal) {
+    if (worker !== this.worker) {
+      this.logger.warn?.(`Ignored exit from stale exploration worker pid=${worker?.pid}: code=${code} signal=${signal}`);
+      return;
+    }
     this.logger.error(`Exploration worker exited: code=${code} signal=${signal}`);
     this.worker = null;
     this.workerPid = null;
     this.workerReady = false;
+    this.lastHeartbeatAt = null;
     this.workerBooting = false;
     this.workerBootStartedAt = null;
     this.lastState = {
@@ -504,8 +554,57 @@ export class WorkerSupervisor {
       if (heartbeatAge <= staleThresholdMs) return;
       this.logger.error(`Exploration worker heartbeat stale (${heartbeatAge}ms); restarting worker`);
       this.onBroadcast('error', { message: 'Exploration worker heartbeat went stale; restarting.' });
-      this.worker.kill('SIGTERM');
+      this.#discardCurrentWorker('Exploration worker heartbeat went stale', {
+        signal: 'SIGKILL',
+        scheduleRestart: true
+      });
     }, Math.max(1000, Math.floor(this.heartbeatStaleMs / 2)));
+  }
+
+  #discardCurrentWorker(reason, { signal = 'SIGKILL', scheduleRestart = false } = {}) {
+    const worker = this.worker;
+    if (!worker) {
+      if (scheduleRestart && !this.shuttingDown) {
+        this.#scheduleRestart();
+      }
+      return false;
+    }
+
+    const pid = this.workerPid || worker.pid;
+    this.logger.error(`${reason}; discarding worker pid=${pid}`);
+    this.worker = null;
+    this.workerPid = null;
+    this.workerReady = false;
+    this.lastHeartbeatAt = null;
+    this.workerBooting = false;
+    this.workerBootStartedAt = null;
+    this.lastState = {
+      ...this.lastState,
+      isExploring: false,
+      stepStatus: scheduleRestart ? 'worker-restarting' : 'worker-unavailable'
+    };
+    this.lastMetrics = {
+      ...this.lastMetrics,
+      isExploring: false,
+      stepStatus: scheduleRestart ? 'worker-restarting' : 'worker-unavailable'
+    };
+
+    for (const [requestId, pending] of this.pendingRequests.entries()) {
+      clearTimeout(pending.timer);
+      pending.reject(new Error(reason));
+      this.pendingRequests.delete(requestId);
+    }
+
+    try {
+      worker.kill(signal);
+    } catch (error) {
+      this.logger.warn?.(`Failed to ${signal} stale exploration worker pid=${pid}: ${error.message}`);
+    }
+
+    if (scheduleRestart && !this.shuttingDown) {
+      this.#scheduleRestart();
+    }
+    return true;
   }
 
   async #sendCommand(command, payload = {}, { timeoutMs = this.commandTimeoutMs } = {}) {

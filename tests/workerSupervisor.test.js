@@ -7,13 +7,15 @@ import path from 'path';
 import { WorkerSupervisor } from '../server/worker/workerSupervisor.js';
 
 class FakeWorker extends EventEmitter {
-  constructor({ autoRespond = true } = {}) {
+  constructor({ autoRespond = true, exitOnKill = true } = {}) {
     super();
     this.pid = 4242;
     this.connected = true;
     this.killed = false;
+    this.killSignals = [];
     this.sent = [];
     this.autoRespond = autoRespond;
+    this.exitOnKill = exitOnKill;
     this.responses = new Map();
   }
 
@@ -35,13 +37,25 @@ class FakeWorker extends EventEmitter {
 
   kill(signal) {
     this.killed = true;
+    this.killSignals.push(signal);
     this.connected = false;
-    setImmediate(() => this.emit('exit', null, signal));
+    if (this.exitOnKill) {
+      setImmediate(() => this.emit('exit', null, signal));
+    }
   }
 }
 
 function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitFor(predicate, timeoutMs = 2000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (predicate()) return true;
+    await wait(10);
+  }
+  return false;
 }
 
 async function makeSupervisor(fakeWorker, options = {}) {
@@ -274,7 +288,7 @@ test('WorkerSupervisor does not reboot a live worker after a restart boot timeou
   await supervisor.startExploration();
   firstWorker.emit('exit', 1, null);
 
-  await wait(1100);
+  assert.equal(await waitFor(() => secondWorker.sent.length > 0), true);
   assert.equal(secondWorker.sent.length, 1);
   assert.equal(secondWorker.sent[0].command, 'boot');
 
@@ -292,6 +306,97 @@ test('WorkerSupervisor does not reboot a live worker after a restart boot timeou
   await wait(2200);
   assert.equal(secondWorker.sent.length, 1);
   assert.equal(supervisor.getMetrics().workerReady, true);
+});
+
+test('WorkerSupervisor discards a stale worker that does not exit and restarts with a new process', async (t) => {
+  const firstWorker = new FakeWorker({ exitOnKill: false });
+  const secondWorker = new FakeWorker();
+  const workers = [firstWorker, secondWorker];
+  const supervisor = await makeSupervisor(null, {
+    forkFn: () => workers.shift(),
+    heartbeatStaleMs: 20
+  });
+  t.after(() => supervisor.dispose());
+
+  await supervisor.start({ autoRestore: false, autoStart: false });
+  await supervisor.startExploration();
+  firstWorker.emit('message', {
+    kind: 'heartbeat',
+    metrics: {
+      isExploring: true,
+      runId: 'run-stale-worker',
+      stepCount: 300,
+      lastCompletedStep: 300,
+      stepStatus: 'idle'
+    }
+  });
+
+  assert.equal(await waitFor(() => firstWorker.killSignals.length > 0, 1500), true);
+  assert.equal(await waitFor(() => secondWorker.sent.length > 0, 2000), true);
+
+  assert.deepEqual(firstWorker.killSignals, ['SIGKILL']);
+  assert.equal(secondWorker.sent[0].command, 'boot');
+  assert.deepEqual(secondWorker.sent[0].payload, { autoRestore: true, autoStart: true });
+  assert.equal(supervisor.getMetrics().workerPid, secondWorker.pid);
+});
+
+test('WorkerSupervisor preserves saved progress when a recovering worker reports empty state', async (t) => {
+  const fakeWorker = new FakeWorker();
+  const supervisor = await makeSupervisor(fakeWorker);
+  t.after(() => supervisor.dispose());
+
+  await supervisor.start({ autoRestore: false, autoStart: false });
+  fakeWorker.emit('message', {
+    kind: 'state',
+    data: {
+      isExploring: true,
+      runId: 'run-preserve-progress',
+      stepCount: 400,
+      panoId: 'P400',
+      position: { lat: 10, lng: 20 }
+    }
+  });
+  fakeWorker.emit('message', {
+    kind: 'heartbeat',
+    metrics: {
+      isExploring: true,
+      runId: 'run-preserve-progress',
+      stepCount: 400,
+      lastCompletedStep: 400,
+      stepStatus: 'idle'
+    }
+  });
+  await supervisor.startExploration();
+
+  fakeWorker.emit('message', {
+    kind: 'state',
+    data: {
+      isExploring: false,
+      runId: null,
+      stepCount: 0,
+      panoId: null,
+      position: { lat: 0, lng: 0 }
+    }
+  });
+  fakeWorker.emit('message', {
+    kind: 'metrics',
+    data: {
+      isExploring: false,
+      runId: null,
+      stepCount: 0,
+      lastCompletedStep: 0,
+      stepStatus: 'idle'
+    }
+  });
+
+  const state = await supervisor.getCurrentState({ includeFullPath: false });
+  const metrics = supervisor.getMetrics();
+  assert.equal(state.runId, 'run-preserve-progress');
+  assert.equal(state.stepCount, 400);
+  assert.equal(state.panoId, 'P400');
+  assert.equal(metrics.runId, 'run-preserve-progress');
+  assert.equal(metrics.lastCompletedStep, 400);
+  assert.equal(metrics.stepStatus, 'worker-recovering');
 });
 
 test('WorkerSupervisor serves client path state without worker full-path command', async (t) => {
