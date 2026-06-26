@@ -540,9 +540,37 @@ test('WorkerSupervisor returns compact full vector path snapshots for the curren
   assert.equal(binary.sequence, 3);
   assert.equal(binary.totalPoints, 3);
   assert.equal(binary.coordinateCount, 3);
+  assert.equal(binary.coordinateStart, 0);
+  assert.equal(binary.coordinateEnd, 3);
   assert.equal(binary.body.length, 24);
   assert.equal(binary.body.readInt32LE(0), 140987654);
   assert.equal(binary.body.readInt32LE(4), 36123457);
+
+  const middleChunk = await supervisor.getFullPathVectorBinarySnapshot({
+    runId: 'run-vector-snapshot',
+    expectedSequence: 3,
+    start: 1,
+    count: 1
+  });
+  assert.equal(middleChunk.runId, 'run-vector-snapshot');
+  assert.equal(middleChunk.totalPoints, 3);
+  assert.equal(middleChunk.coordinateStart, 1);
+  assert.equal(middleChunk.coordinateEnd, 2);
+  assert.equal(middleChunk.coordinateCount, 1);
+  assert.equal(middleChunk.body.length, 8);
+  assert.equal(middleChunk.body.readInt32LE(0), 141987654);
+  assert.equal(middleChunk.body.readInt32LE(4), 37123457);
+
+  const tailChunk = await supervisor.getFullPathVectorBinarySnapshot({
+    runId: 'run-vector-snapshot',
+    expectedSequence: 3,
+    start: 2,
+    count: 10
+  });
+  assert.equal(tailChunk.coordinateStart, 2);
+  assert.equal(tailChunk.coordinateEnd, 3);
+  assert.equal(tailChunk.coordinateCount, 1);
+  assert.equal(tailChunk.body.length, 8);
 
   await assert.rejects(
     () => supervisor.getFullPathVectorSnapshot({ runId: 'other-run' }),

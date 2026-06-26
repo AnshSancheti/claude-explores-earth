@@ -16,6 +16,8 @@ test('path vector reveal starts with the requested visible tail', () => {
   assert.equal(plan.initialStartIndex, 750);
   assert.equal(plan.starts[0], 750);
   assert.equal(plan.starts.at(-1), 0);
+  assert.deepEqual(plan.ranges[0], { start: 750, end: 1000, count: 250 });
+  assert.equal(plan.ranges.at(-1).start, 0);
 });
 
 test('path vector reveal stays within bounded chunks for long paths', () => {
@@ -41,8 +43,10 @@ test('path vector reveal default completes large paths quickly', () => {
 
   assert.equal(plan.starts[0], 294000);
   assert.equal(plan.starts.at(-1), 0);
-  assert.ok(plan.starts.length <= 11);
+  assert.ok(plan.starts.length <= 19);
+  assert.ok(plan.chunkPoints >= 12000);
   assert.equal(plan.frameDelayMs, 0);
+  assert.deepEqual(plan.ranges[0], { start: 294000, end: 300000, count: 6000 });
 });
 
 test('path vector reveal renders short paths immediately', () => {
@@ -52,6 +56,7 @@ test('path vector reveal renders short paths immediately', () => {
   });
 
   assert.deepEqual(plan.starts, [0]);
+  assert.deepEqual(plan.ranges, [{ start: 0, end: 12, count: 12 }]);
   assert.equal(plan.chunkPoints, 0);
 });
 
@@ -59,5 +64,6 @@ test('path vector reveal clamps invalid totals to an empty plan', () => {
   const plan = MinimapPathReveal.makeBackwardRevealPlan('nope');
 
   assert.deepEqual(plan.starts, []);
+  assert.deepEqual(plan.ranges, []);
   assert.equal(plan.totalPoints, 0);
 });

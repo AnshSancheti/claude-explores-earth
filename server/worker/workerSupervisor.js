@@ -116,6 +116,27 @@ function roundCoordinate(value, precision = VECTOR_COORDINATE_PRECISION) {
   return Math.round(number * factor) / factor;
 }
 
+function normalizeVectorRange(totalPoints, { start = null, count = null } = {}) {
+  const total = Math.max(0, Math.floor(Number(totalPoints) || 0));
+  const startNumber = Number(start);
+  const countNumber = Number(count);
+  const hasStart = start != null && Number.isFinite(startNumber);
+  const hasCount = count != null && Number.isFinite(countNumber);
+  const rangeStart = hasStart
+    ? Math.max(0, Math.min(total, Math.floor(startNumber)))
+    : 0;
+  const rangeCount = hasCount
+    ? Math.max(0, Math.floor(countNumber))
+    : total - rangeStart;
+  const rangeEnd = Math.max(rangeStart, Math.min(total, rangeStart + rangeCount));
+  return {
+    hasRange: hasStart || hasCount,
+    start: rangeStart,
+    end: rangeEnd,
+    count: rangeEnd - rangeStart
+  };
+}
+
 export class WorkerSupervisor {
   constructor({
     workerPath = join(__dirname, 'explorationWorker.js'),
@@ -791,7 +812,9 @@ export class WorkerSupervisor {
 
   async getFullPathVectorBinarySnapshot({
     runId = null,
-    expectedSequence = 0
+    expectedSequence = 0,
+    start = null,
+    count = null
   } = {}) {
     const currentRunId = this.lastState?.runId || this.lastMetrics?.runId || null;
     const resolvedRunId = runId || currentRunId;
@@ -802,6 +825,8 @@ export class WorkerSupervisor {
         pathSequence: 0,
         stepCount: 0,
         totalPoints: 0,
+        coordinateStart: 0,
+        coordinateEnd: 0,
         coordinateCount: 0,
         coordinatePrecision: VECTOR_COORDINATE_PRECISION,
         body: Buffer.alloc(0)
@@ -818,14 +843,18 @@ export class WorkerSupervisor {
       maxStaleEvents: 0,
       clonePoints: false
     });
+    const range = normalizeVectorRange(renderPath.points.length, { start, count });
     const cacheKey = `${renderPath.runId}:${renderPath.pathSequence}:${renderPath.points.length}:${VECTOR_COORDINATE_PRECISION}`;
-    const cached = this.fullVectorBinaryCache.get(cacheKey);
-    if (cached) return cached;
+    if (!range.hasRange) {
+      const cached = this.fullVectorBinaryCache.get(cacheKey);
+      if (cached) return cached;
+    }
 
     const scale = Math.pow(10, VECTOR_COORDINATE_PRECISION);
-    const body = Buffer.allocUnsafe(renderPath.points.length * 8);
+    const body = Buffer.allocUnsafe(range.count * 8);
     let offset = 0;
-    for (const point of renderPath.points) {
+    for (let i = range.start; i < range.end; i += 1) {
+      const point = renderPath.points[i];
       const lng = Math.round(Number(point?.lng) * scale);
       const lat = Math.round(Number(point?.lat) * scale);
       if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
@@ -840,13 +869,17 @@ export class WorkerSupervisor {
       pathSequence: renderPath.pathSequence,
       stepCount: renderPath.stepCount,
       totalPoints: renderPath.points.length,
+      coordinateStart: range.start,
+      coordinateEnd: range.end,
       coordinateCount: offset / 8,
       coordinatePrecision: VECTOR_COORDINATE_PRECISION,
       body: offset === body.length ? body : body.subarray(0, offset)
     };
-    this.fullVectorBinaryCache.set(cacheKey, snapshot);
-    while (this.fullVectorBinaryCache.size > 3) {
-      this.fullVectorBinaryCache.delete(this.fullVectorBinaryCache.keys().next().value);
+    if (!range.hasRange) {
+      this.fullVectorBinaryCache.set(cacheKey, snapshot);
+      while (this.fullVectorBinaryCache.size > 3) {
+        this.fullVectorBinaryCache.delete(this.fullVectorBinaryCache.keys().next().value);
+      }
     }
     return snapshot;
   }

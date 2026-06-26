@@ -1608,9 +1608,17 @@ app.get('/api/path-vectors.bin', async (req, res) => {
   try {
     const runId = typeof req.query.runId === 'string' ? req.query.runId : null;
     const expectedSequence = Number(req.query.sequence);
+    const start = Object.prototype.hasOwnProperty.call(req.query, 'start')
+      ? Number(req.query.start)
+      : null;
+    const count = Object.prototype.hasOwnProperty.call(req.query, 'count')
+      ? Number(req.query.count)
+      : null;
     const snapshot = await globalExploration.getFullPathVectorBinarySnapshot({
       runId,
-      expectedSequence: Number.isFinite(expectedSequence) ? expectedSequence : 0
+      expectedSequence: Number.isFinite(expectedSequence) ? expectedSequence : 0,
+      start: Number.isFinite(start) ? start : null,
+      count: Number.isFinite(count) ? count : null
     });
     res
       .type('application/octet-stream')
@@ -1620,6 +1628,8 @@ app.get('/api/path-vectors.bin', async (req, res) => {
       .set('X-Path-Path-Sequence', String(snapshot.pathSequence || 0))
       .set('X-Path-Step-Count', String(snapshot.stepCount || 0))
       .set('X-Path-Total-Points', String(snapshot.totalPoints || 0))
+      .set('X-Path-Coordinate-Start', String(snapshot.coordinateStart || 0))
+      .set('X-Path-Coordinate-End', String(snapshot.coordinateEnd || 0))
       .set('X-Path-Coordinate-Count', String(snapshot.coordinateCount || 0))
       .set('X-Path-Coordinate-Precision', String(snapshot.coordinatePrecision || 6))
       .set('X-Path-Coordinate-Format', 'int32le-microdegrees-lng-lat')

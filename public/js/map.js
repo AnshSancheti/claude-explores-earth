@@ -304,7 +304,7 @@ class MapManager {
     if (this.fullVectorAbortController) {
       this.fullVectorAbortController.abort();
     }
-    this.#cancelFullVectorReveal();
+    this.#cancelFullVectorReveal({ clearLine: true });
     const controller = new AbortController();
     this.fullVectorAbortController = controller;
     this.fullVectorPathLoadingKey = key;
@@ -326,10 +326,10 @@ class MapManager {
         });
     };
 
-    if (typeof window.requestIdleCallback === 'function') {
-      window.requestIdleCallback(startFetch, { timeout: 1500 });
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(startFetch);
     } else {
-      window.setTimeout(startFetch, 500);
+      startFetch();
     }
   }
 
@@ -546,22 +546,93 @@ class MapManager {
   }
 
   async #fetchFullVectorPath({ runId, sequence, totalPoints, key, controller }) {
+    const revealHelper = window.MinimapPathReveal;
+    const fallbackPlan = {
+      starts: [0],
+      ranges: totalPoints > 0 ? [{ start: 0, end: totalPoints, count: totalPoints }] : [],
+      frameDelayMs: 0
+    };
+    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+    const plan = prefersReducedMotion
+      ? fallbackPlan
+      : revealHelper?.makeBackwardRevealPlan
+        ? revealHelper.makeBackwardRevealPlan(totalPoints, {
+            tailPoints: this.pathCoordinates.length
+          })
+        : fallbackPlan;
+    const ranges = Array.isArray(plan.ranges) && plan.ranges.length > 0
+      ? plan.ranges
+      : this.#rangesFromRevealStarts(plan.starts, totalPoints);
+    if (ranges.length === 0) return;
+
+    this.fullVectorPathKey = null;
+    this.fullVectorRevealKey = key;
+    this.fullVectorRevealPlan = plan;
+    this.fullVectorRevealFrame = 0;
+    this.fullVectorRevealCoordinates = [];
+    this.#setArchiveRasterMode(false);
+    this.#renderFullVectorPath([]);
+
+    try {
+      for (let frame = 0; frame < ranges.length; frame += 1) {
+        if (!this.#isCurrentFullVectorLoad({ runId, key, controller })) return;
+        const range = ranges[frame];
+        const chunk = await this.#fetchFullVectorPathChunk({
+          runId,
+          sequence,
+          totalPoints,
+          start: range.start,
+          count: range.count,
+          controller
+        });
+        if (!chunk || !this.#isCurrentFullVectorLoad({ runId, key, controller })) return;
+        if (chunk.totalPoints < totalPoints - 5) return;
+        const chunkStart = Number.isFinite(chunk.coordinateStart) ? chunk.coordinateStart : range.start;
+        const chunkEnd = Number.isFinite(chunk.coordinateEnd) ? chunk.coordinateEnd : chunkStart + chunk.coordinates.length;
+        if (chunkStart !== range.start || chunkEnd > range.end) return;
+
+        if (chunk.coordinates.length > 0) {
+          this.fullVectorRevealCoordinates = chunk.coordinates.concat(this.fullVectorRevealCoordinates || []);
+          this.#renderFullVectorPath(this.fullVectorRevealCoordinates);
+        }
+
+        this.fullVectorRevealFrame = frame + 1;
+        if (range.start <= 0 || frame >= ranges.length - 1) break;
+        await this.#waitForFullVectorRevealFrame(plan.frameDelayMs, controller);
+      }
+
+      if (!this.#isCurrentFullVectorLoad({ runId, key, controller })) return;
+      const coordinates = this.fullVectorRevealCoordinates || [];
+      if (coordinates.length < 2) return;
+      this.#completeFullVectorReveal(key, coordinates.length);
+    } finally {
+      if (!controller.signal.aborted && this.fullVectorRevealKey === key) {
+        this.#cancelFullVectorReveal();
+      }
+    }
+  }
+
+  async #fetchFullVectorPathChunk({ runId, sequence, totalPoints, start, count, controller }) {
     const params = new URLSearchParams({
       runId,
-      sequence: String(sequence)
+      sequence: String(sequence),
+      start: String(start),
+      count: String(count)
     });
     const response = await fetch(`/api/path-vectors.bin?${params.toString()}`, {
       signal: controller.signal,
       headers: { Accept: 'application/octet-stream' }
     });
     if (!response.ok) {
-      throw new Error(`Full path vector request failed (${response.status})`);
+      throw new Error(`Full path vector chunk request failed (${response.status})`);
     }
 
     const buffer = await response.arrayBuffer();
-    if (controller.signal.aborted) return;
-    if (response.headers.get('x-path-run-id') !== runId) return;
+    if (controller.signal.aborted) return null;
+    if (response.headers.get('x-path-run-id') !== runId) return null;
     const responseTotalPoints = Number(response.headers.get('x-path-total-points'));
+    if (responseTotalPoints < totalPoints - 5) return null;
+
     const precision = Number(response.headers.get('x-path-coordinate-precision')) || 6;
     const scale = Math.pow(10, precision);
     const view = new DataView(buffer);
@@ -574,16 +645,13 @@ class MapManager {
         view.getInt32(offset + 4, true) / scale
       ];
     }
-    if (coordinates.length < 2) return;
-    if (responseTotalPoints < totalPoints - 5) return;
 
-    if (this.pathState.runId && this.pathState.runId !== runId) return;
-    if (this.fullVectorPathLoadingKey !== key) return;
-    this.#startFullVectorReveal(coordinates, key);
-    this.fullVectorPathLoadingKey = null;
-    if (this.fullVectorAbortController === controller) {
-      this.fullVectorAbortController = null;
-    }
+    return {
+      totalPoints: Number.isFinite(responseTotalPoints) ? responseTotalPoints : totalPoints,
+      coordinateStart: Number(response.headers.get('x-path-coordinate-start')),
+      coordinateEnd: Number(response.headers.get('x-path-coordinate-end')),
+      coordinates
+    };
   }
 
   #renderFullVectorPath(coordinates) {
@@ -635,69 +703,69 @@ class MapManager {
     this.#setArchiveRasterMode(false);
   }
 
-  #startFullVectorReveal(coordinates, key) {
-    this.#cancelFullVectorReveal();
-    this.fullVectorPathKey = null;
-    this.#setArchiveRasterMode(false);
-    this.fullVectorRevealKey = key;
-    this.fullVectorRevealCoordinates = coordinates;
-    this.fullVectorRevealFrame = 0;
-
-    const revealHelper = window.MinimapPathReveal;
-    const plan = revealHelper?.makeBackwardRevealPlan
-      ? revealHelper.makeBackwardRevealPlan(coordinates.length, {
-          tailPoints: this.pathCoordinates.length
-        })
-      : { starts: [0], frameDelayMs: 0 };
-    this.fullVectorRevealPlan = plan;
-
-    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
-    if (prefersReducedMotion || plan.starts.length <= 1) {
-      this.#renderFullVectorPath(coordinates);
-      this.#completeFullVectorReveal(key, coordinates.length);
-      return;
-    }
-
-    this.#renderNextFullVectorRevealChunk();
+  #isCurrentFullVectorLoad({ runId, key, controller }) {
+    if (controller.signal.aborted) return false;
+    if (this.pathState.runId && this.pathState.runId !== runId) return false;
+    return this.fullVectorPathLoadingKey === key && this.fullVectorRevealKey === key;
   }
 
-  #renderNextFullVectorRevealChunk() {
-    const key = this.fullVectorRevealKey;
-    const coordinates = this.fullVectorRevealCoordinates;
-    const starts = this.fullVectorRevealPlan?.starts || [];
-    if (!key || !coordinates || starts.length === 0) return;
-
-    const frame = Math.min(this.fullVectorRevealFrame, starts.length - 1);
-    const startIndex = starts[frame];
-    this.#renderFullVectorPath(coordinates.slice(startIndex));
-
-    if (startIndex <= 0 || frame >= starts.length - 1) {
-      this.#completeFullVectorReveal(key, coordinates.length);
-      return;
-    }
-
-    this.fullVectorRevealFrame = frame + 1;
-    const delay = this.fullVectorRevealPlan?.frameDelayMs ?? 0;
-    const scheduleWithAnimationFrame = () => {
-      if (window.requestAnimationFrame) {
-        this.fullVectorRevealRaf = window.requestAnimationFrame(() => {
-          this.fullVectorRevealRaf = null;
-          this.#renderNextFullVectorRevealChunk();
-        });
-      } else {
-        this.#renderNextFullVectorRevealChunk();
+  #rangesFromRevealStarts(starts, totalPoints) {
+    const total = Math.max(0, Math.floor(Number(totalPoints) || 0));
+    const ranges = [];
+    let end = total;
+    for (const rawStart of starts || []) {
+      const start = Math.max(0, Math.min(end, Math.floor(Number(rawStart) || 0)));
+      if (start < end) {
+        ranges.push({ start, end, count: end - start });
       }
-    };
-
-    if (delay <= 0) {
-      scheduleWithAnimationFrame();
-      return;
+      end = start;
     }
+    return ranges;
+  }
 
-    this.fullVectorRevealTimer = window.setTimeout(() => {
-      this.fullVectorRevealTimer = null;
-      scheduleWithAnimationFrame();
-    }, delay);
+  #waitForFullVectorRevealFrame(delay, controller) {
+    const boundedDelay = Math.max(0, Math.min(500, Number(delay) || 0));
+    return new Promise(resolve => {
+      let timeoutId = null;
+      let rafId = null;
+      let settled = false;
+
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        if (timeoutId != null) {
+          window.clearTimeout(timeoutId);
+        }
+        if (rafId != null) {
+          window.cancelAnimationFrame?.(rafId);
+        }
+        controller.signal.removeEventListener?.('abort', finish);
+        resolve();
+      };
+
+      const scheduleFrame = () => {
+        timeoutId = null;
+        if (controller.signal.aborted || typeof window.requestAnimationFrame !== 'function') {
+          finish();
+          return;
+        }
+        rafId = window.requestAnimationFrame(() => {
+          rafId = null;
+          finish();
+        });
+      };
+
+      if (controller.signal.aborted) {
+        finish();
+        return;
+      }
+      controller.signal.addEventListener?.('abort', finish, { once: true });
+      if (boundedDelay > 0) {
+        timeoutId = window.setTimeout(scheduleFrame, boundedDelay);
+      } else {
+        scheduleFrame();
+      }
+    });
   }
 
   #completeFullVectorReveal(key, pointCount) {

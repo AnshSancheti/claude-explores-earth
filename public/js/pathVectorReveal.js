@@ -1,8 +1,8 @@
 (function(global) {
   const DEFAULT_REVEAL_OPTIONS = Object.freeze({
     initialPoints: 6000,
-    minChunkPoints: 15000,
-    maxFrames: 10,
+    minChunkPoints: 12000,
+    maxFrames: 18,
     frameDelayMs: 0
   });
 
@@ -13,6 +13,24 @@
 
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
+  }
+
+  function rangesFromStarts(starts, totalPoints) {
+    const total = Math.max(0, integerOr(totalPoints, 0));
+    const ranges = [];
+    let end = total;
+    for (const rawStart of starts || []) {
+      const start = clamp(integerOr(rawStart, 0), 0, end);
+      if (start < end) {
+        ranges.push({
+          start,
+          end,
+          count: end - start
+        });
+      }
+      end = start;
+    }
+    return ranges;
   }
 
   function makeBackwardRevealPlan(totalPoints, options = {}) {
@@ -29,7 +47,8 @@
         initialStartIndex: 0,
         chunkPoints: 0,
         frameDelayMs,
-        starts: total > 0 ? [0] : []
+        starts: total > 0 ? [0] : [],
+        ranges: total > 0 ? [{ start: 0, end: total, count: total }] : []
       };
     }
 
@@ -50,7 +69,8 @@
         initialStartIndex: 0,
         chunkPoints: 0,
         frameDelayMs,
-        starts: [0]
+        starts: [0],
+        ranges: [{ start: 0, end: total, count: total }]
       };
     }
 
@@ -80,12 +100,14 @@
       initialStartIndex,
       chunkPoints,
       frameDelayMs,
-      starts
+      starts,
+      ranges: rangesFromStarts(starts, total)
     };
   }
 
   global.MinimapPathReveal = {
     DEFAULT_REVEAL_OPTIONS,
+    rangesFromStarts,
     makeBackwardRevealPlan
   };
 })(typeof window !== 'undefined' ? window : globalThis);
