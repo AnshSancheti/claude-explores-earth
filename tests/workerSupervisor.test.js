@@ -65,6 +65,7 @@ async function makeSupervisor(fakeWorker, options = {}) {
     forkFn: () => fakeWorker,
     logger: { log: () => {}, warn: () => {}, error: () => {} },
     commandTimeoutMs: 50,
+    bootTimeoutMs: 50,
     heartbeatStaleMs: 10000,
     ...options
   });

@@ -24,6 +24,7 @@ const parseIntOr = (value, fallback) => {
 };
 
 const DEFAULT_COMMAND_TIMEOUT_MS = parseIntOr(process.env.WORKER_COMMAND_TIMEOUT_MS, 120000);
+const DEFAULT_BOOT_TIMEOUT_MS = parseIntOr(process.env.WORKER_BOOT_TIMEOUT_MS, DEFAULT_COMMAND_TIMEOUT_MS);
 const DEFAULT_HEARTBEAT_STALE_MS = parseIntOr(process.env.WORKER_HEARTBEAT_STALE_MS, 120000);
 const DEFAULT_RESTART_WINDOW_MS = parseIntOr(process.env.WORKER_RESTART_WINDOW_MS, 300000);
 const DEFAULT_MAX_RESTARTS = parseIntOr(process.env.WORKER_MAX_RESTARTS, 5);
@@ -123,6 +124,7 @@ export class WorkerSupervisor {
     dataDir = DATA_DIR,
     forkFn = fork,
     commandTimeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+    bootTimeoutMs = DEFAULT_BOOT_TIMEOUT_MS,
     heartbeatStaleMs = DEFAULT_HEARTBEAT_STALE_MS,
     restartWindowMs = DEFAULT_RESTART_WINDOW_MS,
     maxRestarts = DEFAULT_MAX_RESTARTS
@@ -156,6 +158,7 @@ export class WorkerSupervisor {
     this.shuttingDown = false;
     this.desiredExploring = false;
     this.commandTimeoutMs = commandTimeoutMs;
+    this.bootTimeoutMs = bootTimeoutMs;
     this.heartbeatStaleMs = heartbeatStaleMs;
     this.restartWindowMs = restartWindowMs;
     this.maxRestarts = maxRestarts;
@@ -194,7 +197,7 @@ export class WorkerSupervisor {
     this.#startHeartbeatMonitor();
     try {
       const result = await this.#sendCommand('boot', { autoRestore, autoStart }, {
-        timeoutMs: this.commandTimeoutMs
+        timeoutMs: this.bootTimeoutMs
       });
       this.#warmCurrentArchiveOverview();
       return result;
@@ -549,7 +552,7 @@ export class WorkerSupervisor {
       if (!this.worker || !this.lastHeartbeatAt || this.shuttingDown) return;
       const heartbeatAge = Date.now() - this.lastHeartbeatAt;
       const staleThresholdMs = this.workerBooting
-        ? Math.max(this.heartbeatStaleMs, this.commandTimeoutMs)
+        ? Math.max(this.heartbeatStaleMs, this.bootTimeoutMs)
         : this.heartbeatStaleMs;
       if (heartbeatAge <= staleThresholdMs) return;
       this.logger.error(`Exploration worker heartbeat stale (${heartbeatAge}ms); restarting worker`);
@@ -969,6 +972,7 @@ export class WorkerSupervisor {
       workerReady: this.workerReady,
       workerBooting: this.workerBooting,
       workerBootAgeSec,
+      workerBootTimeoutSec: Math.floor(this.bootTimeoutMs / 1000),
       workerLastHeartbeatAgeSec: lastHeartbeatAgeSec,
       workerHeartbeatStaleThresholdSec: Math.floor(this.heartbeatStaleMs / 1000),
       workerDesiredExploring: this.desiredExploring,
