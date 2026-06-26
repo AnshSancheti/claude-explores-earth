@@ -550,6 +550,7 @@ class MapManager {
     const fallbackPlan = {
       starts: [0],
       ranges: totalPoints > 0 ? [{ start: 0, end: totalPoints, count: totalPoints }] : [],
+      prefetchConcurrency: 1,
       frameDelayMs: 0
     };
     const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
@@ -574,17 +575,47 @@ class MapManager {
     this.#renderFullVectorPath([]);
 
     try {
+      const chunkPromises = new Array(ranges.length);
+      let nextRangeIndex = 0;
+      let activeFetches = 0;
+      const prefetchConcurrency = prefersReducedMotion
+        ? 1
+        : Math.max(1, Math.min(8, Math.floor(Number(plan.prefetchConcurrency) || 4), ranges.length));
+      const fillPrefetchQueue = () => {
+        while (
+          activeFetches < prefetchConcurrency &&
+          nextRangeIndex < ranges.length &&
+          this.#isCurrentFullVectorLoad({ runId, key, controller })
+        ) {
+          const index = nextRangeIndex;
+          const range = ranges[index];
+          nextRangeIndex += 1;
+          activeFetches += 1;
+          chunkPromises[index] = this.#fetchFullVectorPathChunk({
+            runId,
+            sequence,
+            totalPoints,
+            start: range.start,
+            count: range.count,
+            controller
+          })
+            .then(chunk => ({ chunk }))
+            .catch(error => ({ error }))
+            .finally(() => {
+              activeFetches -= 1;
+              fillPrefetchQueue();
+            });
+        }
+      };
+
+      fillPrefetchQueue();
       for (let frame = 0; frame < ranges.length; frame += 1) {
         if (!this.#isCurrentFullVectorLoad({ runId, key, controller })) return;
         const range = ranges[frame];
-        const chunk = await this.#fetchFullVectorPathChunk({
-          runId,
-          sequence,
-          totalPoints,
-          start: range.start,
-          count: range.count,
-          controller
-        });
+        fillPrefetchQueue();
+        const result = await chunkPromises[frame];
+        if (result?.error) throw result.error;
+        const chunk = result?.chunk;
         if (!chunk || !this.#isCurrentFullVectorLoad({ runId, key, controller })) return;
         if (chunk.totalPoints < totalPoints - 5) return;
         const chunkStart = Number.isFinite(chunk.coordinateStart) ? chunk.coordinateStart : range.start;
@@ -607,6 +638,7 @@ class MapManager {
       this.#completeFullVectorReveal(key, coordinates.length);
     } finally {
       if (!controller.signal.aborted && this.fullVectorRevealKey === key) {
+        controller.abort();
         this.#cancelFullVectorReveal();
       }
     }

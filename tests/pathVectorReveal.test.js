@@ -45,6 +45,7 @@ test('path vector reveal default completes large paths quickly', () => {
   assert.equal(plan.starts.at(-1), 0);
   assert.ok(plan.starts.length <= 19);
   assert.ok(plan.chunkPoints >= 12000);
+  assert.equal(plan.prefetchConcurrency, 4);
   assert.equal(plan.frameDelayMs, 0);
   assert.deepEqual(plan.ranges[0], { start: 294000, end: 300000, count: 6000 });
 });

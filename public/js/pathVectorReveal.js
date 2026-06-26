@@ -3,6 +3,7 @@
     initialPoints: 6000,
     minChunkPoints: 12000,
     maxFrames: 18,
+    prefetchConcurrency: 4,
     frameDelayMs: 0
   });
 
@@ -40,12 +41,18 @@
       0,
       500
     );
+    const prefetchConcurrency = clamp(
+      integerOr(options.prefetchConcurrency, DEFAULT_REVEAL_OPTIONS.prefetchConcurrency),
+      1,
+      8
+    );
 
     if (total < 2) {
       return {
         totalPoints: total,
         initialStartIndex: 0,
         chunkPoints: 0,
+        prefetchConcurrency,
         frameDelayMs,
         starts: total > 0 ? [0] : [],
         ranges: total > 0 ? [{ start: 0, end: total, count: total }] : []
@@ -68,6 +75,7 @@
         totalPoints: total,
         initialStartIndex: 0,
         chunkPoints: 0,
+        prefetchConcurrency,
         frameDelayMs,
         starts: [0],
         ranges: [{ start: 0, end: total, count: total }]
@@ -99,6 +107,7 @@
       totalPoints: total,
       initialStartIndex,
       chunkPoints,
+      prefetchConcurrency,
       frameDelayMs,
       starts,
       ranges: rangesFromStarts(starts, total)
