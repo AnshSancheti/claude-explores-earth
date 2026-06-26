@@ -22,6 +22,12 @@ class MapManager {
     this.fullVectorPathKey = null;
     this.fullVectorPathLoadingKey = null;
     this.fullVectorAbortController = null;
+    this.fullVectorRevealKey = null;
+    this.fullVectorRevealPlan = null;
+    this.fullVectorRevealFrame = 0;
+    this.fullVectorRevealTimer = null;
+    this.fullVectorRevealRaf = null;
+    this.fullVectorRevealCoordinates = null;
     this.hasInitialPathFit = false;
     this.initializeMinimapSize(); // Initialize saved size preferences
   }
@@ -287,11 +293,18 @@ class MapManager {
     if (!Number.isFinite(totalPoints) || totalPoints <= this.pathCoordinates.length) return;
 
     const key = `${runId}:${sequence}:${totalPoints}`;
-    if (this.fullVectorPathKey === key || this.fullVectorPathLoadingKey === key) return;
+    if (
+      this.fullVectorPathKey === key ||
+      this.fullVectorPathLoadingKey === key ||
+      this.fullVectorRevealKey === key
+    ) {
+      return;
+    }
 
     if (this.fullVectorAbortController) {
       this.fullVectorAbortController.abort();
     }
+    this.#cancelFullVectorReveal();
     const controller = new AbortController();
     this.fullVectorAbortController = controller;
     this.fullVectorPathLoadingKey = key;
@@ -566,14 +579,11 @@ class MapManager {
 
     if (this.pathState.runId && this.pathState.runId !== runId) return;
     if (this.fullVectorPathLoadingKey !== key) return;
-    this.#renderFullVectorPath(coordinates);
-    this.fullVectorPathKey = key;
+    this.#startFullVectorReveal(coordinates, key);
     this.fullVectorPathLoadingKey = null;
     if (this.fullVectorAbortController === controller) {
       this.fullVectorAbortController = null;
     }
-    this.#setArchiveRasterMode(true);
-    console.log(`Hydrated ${coordinates.length} full vector path points`);
   }
 
   #renderFullVectorPath(coordinates) {
@@ -618,11 +628,113 @@ class MapManager {
     if (this.fullVectorAbortController) {
       this.fullVectorAbortController.abort();
     }
+    this.#cancelFullVectorReveal({ clearLine: true });
     this.fullVectorAbortController = null;
     this.fullVectorPathLoadingKey = null;
     this.fullVectorPathKey = null;
-    this.#renderFullVectorPath([]);
     this.#setArchiveRasterMode(false);
+  }
+
+  #startFullVectorReveal(coordinates, key) {
+    this.#cancelFullVectorReveal();
+    this.fullVectorPathKey = null;
+    this.#setArchiveRasterMode(false);
+    this.fullVectorRevealKey = key;
+    this.fullVectorRevealCoordinates = coordinates;
+    this.fullVectorRevealFrame = 0;
+
+    const revealHelper = window.MinimapPathReveal;
+    const plan = revealHelper?.makeBackwardRevealPlan
+      ? revealHelper.makeBackwardRevealPlan(coordinates.length, {
+          tailPoints: this.pathCoordinates.length
+        })
+      : { starts: [0], frameDelayMs: 0 };
+    this.fullVectorRevealPlan = plan;
+
+    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches === true;
+    if (prefersReducedMotion || plan.starts.length <= 1) {
+      this.#renderFullVectorPath(coordinates);
+      this.#completeFullVectorReveal(key, coordinates.length);
+      return;
+    }
+
+    this.#renderNextFullVectorRevealChunk();
+  }
+
+  #renderNextFullVectorRevealChunk() {
+    const key = this.fullVectorRevealKey;
+    const coordinates = this.fullVectorRevealCoordinates;
+    const starts = this.fullVectorRevealPlan?.starts || [];
+    if (!key || !coordinates || starts.length === 0) return;
+
+    const frame = Math.min(this.fullVectorRevealFrame, starts.length - 1);
+    const startIndex = starts[frame];
+    this.#renderFullVectorPath(coordinates.slice(startIndex));
+
+    if (startIndex <= 0 || frame >= starts.length - 1) {
+      this.#completeFullVectorReveal(key, coordinates.length);
+      return;
+    }
+
+    this.fullVectorRevealFrame = frame + 1;
+    const delay = this.fullVectorRevealPlan?.frameDelayMs ?? 0;
+    const scheduleWithAnimationFrame = () => {
+      if (window.requestAnimationFrame) {
+        this.fullVectorRevealRaf = window.requestAnimationFrame(() => {
+          this.fullVectorRevealRaf = null;
+          this.#renderNextFullVectorRevealChunk();
+        });
+      } else {
+        this.#renderNextFullVectorRevealChunk();
+      }
+    };
+
+    if (delay <= 0) {
+      scheduleWithAnimationFrame();
+      return;
+    }
+
+    this.fullVectorRevealTimer = window.setTimeout(() => {
+      this.fullVectorRevealTimer = null;
+      scheduleWithAnimationFrame();
+    }, delay);
+  }
+
+  #completeFullVectorReveal(key, pointCount) {
+    if (this.fullVectorRevealKey && this.fullVectorRevealKey !== key) return;
+    this.fullVectorPathKey = key;
+    this.fullVectorRevealKey = null;
+    this.fullVectorRevealPlan = null;
+    this.fullVectorRevealFrame = 0;
+    this.fullVectorRevealCoordinates = null;
+    if (this.fullVectorRevealTimer) {
+      window.clearTimeout(this.fullVectorRevealTimer);
+      this.fullVectorRevealTimer = null;
+    }
+    if (this.fullVectorRevealRaf) {
+      window.cancelAnimationFrame?.(this.fullVectorRevealRaf);
+      this.fullVectorRevealRaf = null;
+    }
+    this.#setArchiveRasterMode(true);
+    console.log(`Hydrated ${pointCount} full vector path points`);
+  }
+
+  #cancelFullVectorReveal({ clearLine = false } = {}) {
+    if (this.fullVectorRevealTimer) {
+      window.clearTimeout(this.fullVectorRevealTimer);
+    }
+    if (this.fullVectorRevealRaf) {
+      window.cancelAnimationFrame?.(this.fullVectorRevealRaf);
+    }
+    this.fullVectorRevealKey = null;
+    this.fullVectorRevealPlan = null;
+    this.fullVectorRevealFrame = 0;
+    this.fullVectorRevealTimer = null;
+    this.fullVectorRevealRaf = null;
+    this.fullVectorRevealCoordinates = null;
+    if (clearLine) {
+      this.#renderFullVectorPath([]);
+    }
   }
 
   #fitRecentPath(position = null) {
