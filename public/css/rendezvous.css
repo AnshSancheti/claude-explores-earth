@@ -739,13 +739,16 @@ button:disabled {
   }
 
   .rv-agent-note {
+    height: 38px;
     min-height: 0;
-    max-height: 88px;
+    max-height: 38px;
+    display: block;
     padding: 9px 10px;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
+    overflow: hidden;
     font-size: 12px;
     line-height: 1.36;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     background: rgba(8, 11, 15, 0.88);
   }
 
