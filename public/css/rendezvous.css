@@ -663,7 +663,8 @@ button {
     min-height: 0;
     max-height: 78px;
     padding: 8px 10px;
-    overflow: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     font-size: 12px;
     line-height: 1.32;
   }
