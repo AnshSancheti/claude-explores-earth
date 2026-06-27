@@ -8,7 +8,7 @@
   <link href="https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.css" rel="stylesheet">
   <link rel="stylesheet" href="css/rendezvous.css">
 </head>
-<body>
+<body data-mobile-view="ada">
   <div class="rv-shell">
     <header class="rv-header">
       <div class="rv-brand">
@@ -80,6 +80,14 @@
           <p id="theoLastNote" class="rv-agent-note">Waiting for the first street view.</p>
         </article>
       </section>
+
+      <nav class="rv-mobile-tabs" aria-label="Rendezvous views">
+        <button type="button" class="rv-mobile-tab active" data-mobile-view="ada">Ada</button>
+        <button type="button" class="rv-mobile-tab" data-mobile-view="theo">Theo</button>
+        <button type="button" class="rv-mobile-tab" data-mobile-view="map">Map</button>
+        <button type="button" class="rv-mobile-tab" data-mobile-view="wires">Wires</button>
+        <button type="button" class="rv-mobile-tab" data-mobile-view="log">Notes</button>
+      </nav>
 
       <aside class="rv-side">
         <section class="rv-map-section">

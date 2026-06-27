@@ -48,6 +48,7 @@
       this.targetMarker = null;
       this.googleReady = false;
       this.pendingStreetState = null;
+      this.mobileView = 'ada';
     }
 
     initialize() {
@@ -109,6 +110,57 @@
         }
       });
       document.getElementById('rvFitBtn')?.addEventListener('click', () => this.fitMap());
+      this.setupMobileTabs();
+    }
+
+    setupMobileTabs() {
+      const buttons = Array.from(document.querySelectorAll('[data-mobile-view]'));
+      if (!buttons.length) return;
+
+      const setView = (view) => this.setMobileView(view);
+      for (const button of buttons) {
+        button.setAttribute('aria-pressed', button.dataset.mobileView === this.mobileView ? 'true' : 'false');
+        button.addEventListener('click', () => setView(button.dataset.mobileView || 'ada'));
+      }
+
+      this.mobileMedia = window.matchMedia('(max-width: 900px)');
+      const syncMobileView = () => {
+        if (this.mobileMedia.matches) {
+          document.body.dataset.mobileView = this.mobileView;
+        } else {
+          document.body.removeAttribute('data-mobile-view');
+        }
+        if (this.mobileMedia.matches && this.mobileView === 'map') {
+          this.resizeMapPane();
+        }
+      };
+      if (typeof this.mobileMedia.addEventListener === 'function') {
+        this.mobileMedia.addEventListener('change', syncMobileView);
+      } else {
+        this.mobileMedia.addListener?.(syncMobileView);
+      }
+      syncMobileView();
+    }
+
+    setMobileView(view) {
+      const allowed = new Set(['ada', 'theo', 'map', 'wires', 'log']);
+      this.mobileView = allowed.has(view) ? view : 'ada';
+      document.body.dataset.mobileView = this.mobileMedia?.matches === false ? '' : this.mobileView;
+      for (const button of document.querySelectorAll('[data-mobile-view]')) {
+        const active = button.dataset.mobileView === this.mobileView;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      }
+      if (this.mobileView === 'map') {
+        this.resizeMapPane();
+      }
+    }
+
+    resizeMapPane() {
+      window.setTimeout(() => {
+        this.map?.resize();
+        this.fitMap();
+      }, 80);
     }
 
     getAuthToken() {
@@ -282,6 +334,9 @@
       if (!this.hasFitOnce) {
         this.hasFitOnce = true;
         this.fitMap();
+      }
+      if (this.mobileView === 'map') {
+        this.resizeMapPane();
       }
     }
 
