@@ -49,6 +49,7 @@
       this.googleReady = false;
       this.pendingStreetState = null;
       this.mobileView = 'ada';
+      this.mobileAgent = 'ada';
     }
 
     initialize() {
@@ -79,6 +80,7 @@
 
       this.socket.on('rendezvous-step', (step) => {
         this.flashAgent(step.agentId);
+        this.pulseDock(step.agentId);
       });
 
       this.socket.on('rendezvous-telegram', () => {
@@ -114,7 +116,7 @@
     }
 
     setupMobileTabs() {
-      const buttons = Array.from(document.querySelectorAll('[data-mobile-view]'));
+      const buttons = Array.from(document.querySelectorAll('button[data-mobile-view]'));
       if (!buttons.length) return;
 
       const setView = (view) => this.setMobileView(view);
@@ -122,13 +124,20 @@
         button.setAttribute('aria-pressed', button.dataset.mobileView === this.mobileView ? 'true' : 'false');
         button.addEventListener('click', () => setView(button.dataset.mobileView || 'ada'));
       }
+      for (const button of document.querySelectorAll('[data-mobile-close]')) {
+        button.addEventListener('click', () => this.setMobileView(this.mobileAgent));
+      }
 
       this.mobileMedia = window.matchMedia('(max-width: 900px)');
       const syncMobileView = () => {
         if (this.mobileMedia.matches) {
           document.body.dataset.mobileView = this.mobileView;
+          document.body.dataset.mobileAgent = this.mobileAgent;
+          this.syncMobileSheet();
         } else {
           document.body.removeAttribute('data-mobile-view');
+          document.body.removeAttribute('data-mobile-agent');
+          document.body.removeAttribute('data-mobile-sheet');
         }
         if (this.mobileMedia.matches && this.mobileView === 'map') {
           this.resizeMapPane();
@@ -145,14 +154,33 @@
     setMobileView(view) {
       const allowed = new Set(['ada', 'theo', 'map', 'wires', 'log']);
       this.mobileView = allowed.has(view) ? view : 'ada';
-      document.body.dataset.mobileView = this.mobileMedia?.matches === false ? '' : this.mobileView;
-      for (const button of document.querySelectorAll('[data-mobile-view]')) {
+      if (this.mobileView === 'ada' || this.mobileView === 'theo') {
+        this.mobileAgent = this.mobileView;
+      }
+      if (this.mobileMedia?.matches === false) {
+        document.body.removeAttribute('data-mobile-view');
+        document.body.removeAttribute('data-mobile-agent');
+        document.body.removeAttribute('data-mobile-sheet');
+      } else {
+        document.body.dataset.mobileView = this.mobileView;
+        document.body.dataset.mobileAgent = this.mobileAgent;
+        this.syncMobileSheet();
+      }
+      for (const button of document.querySelectorAll('button[data-mobile-view]')) {
         const active = button.dataset.mobileView === this.mobileView;
         button.classList.toggle('active', active);
         button.setAttribute('aria-pressed', active ? 'true' : 'false');
       }
       if (this.mobileView === 'map') {
         this.resizeMapPane();
+      }
+    }
+
+    syncMobileSheet() {
+      if (['map', 'wires', 'log'].includes(this.mobileView)) {
+        document.body.dataset.mobileSheet = this.mobileView;
+      } else {
+        document.body.removeAttribute('data-mobile-sheet');
       }
     }
 
@@ -236,6 +264,7 @@
       this.renderTelegrams();
       this.renderLog();
       this.renderMap();
+      this.renderLiveContext();
       if (this.googleReady) {
         this.renderStreetViews(state);
       } else {
@@ -264,7 +293,19 @@
         document.getElementById(`${agentId}Step`).textContent = `${Number(agent.stepCount || 0).toLocaleString()} steps`;
         document.getElementById(`${agentId}State`).textContent = formatStatus(agent.status);
         document.getElementById(`${agentId}LastNote`).textContent = latestNote(agent);
+        const dockStep = document.getElementById(`${agentId}DockStep`);
+        if (dockStep) dockStep.textContent = Number(agent.stepCount || 0).toLocaleString();
       }
+    }
+
+    renderLiveContext() {
+      const state = this.state || {};
+      const dockDistance = document.getElementById('rvDockDistance');
+      const dockWires = document.getElementById('rvDockWires');
+      const dockTurn = document.getElementById('rvDockTurn');
+      if (dockDistance) dockDistance.textContent = formatDistance(state.meeting?.distanceMeters);
+      if (dockWires) dockWires.textContent = Number(state.telegrams?.length || 0).toLocaleString();
+      if (dockTurn) dockTurn.textContent = Number(state.turn || 0).toLocaleString();
     }
 
     renderStreetViews(state) {
@@ -472,6 +513,7 @@
     flashAgent(agentId) {
       const panel = document.querySelector(`.rv-agent-panel.${agentId}`);
       if (!panel) return;
+      panel.classList.add('is-stepping');
       panel.animate([
         { boxShadow: '0 0 0 rgba(255,255,255,0)' },
         { boxShadow: `0 0 0 3px ${AGENT_COLORS[agentId]}66` },
@@ -480,6 +522,16 @@
         duration: 650,
         easing: 'ease-out'
       });
+      window.setTimeout(() => panel.classList.remove('is-stepping'), 700);
+    }
+
+    pulseDock(agentId) {
+      const button = document.querySelector(`.rv-mobile-tab[data-mobile-view="${agentId}"]`);
+      if (!button) return;
+      button.classList.remove('attention');
+      void button.offsetWidth;
+      button.classList.add('attention');
+      window.setTimeout(() => button.classList.remove('attention'), 900);
     }
 
     showFound(payload) {

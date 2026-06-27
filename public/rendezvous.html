@@ -8,7 +8,7 @@
   <link href="https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.css" rel="stylesheet">
   <link rel="stylesheet" href="css/rendezvous.css">
 </head>
-<body data-mobile-view="ada">
+<body data-mobile-view="ada" data-mobile-agent="ada">
   <div class="rv-shell">
     <header class="rv-header">
       <div class="rv-brand">
@@ -81,12 +81,27 @@
         </article>
       </section>
 
-      <nav class="rv-mobile-tabs" aria-label="Rendezvous views">
-        <button type="button" class="rv-mobile-tab active" data-mobile-view="ada">Ada</button>
-        <button type="button" class="rv-mobile-tab" data-mobile-view="theo">Theo</button>
-        <button type="button" class="rv-mobile-tab" data-mobile-view="map">Map</button>
-        <button type="button" class="rv-mobile-tab" data-mobile-view="wires">Wires</button>
-        <button type="button" class="rv-mobile-tab" data-mobile-view="log">Notes</button>
+      <nav class="rv-mobile-tabs" aria-label="Rendezvous watch controls">
+        <button type="button" class="rv-mobile-tab rv-agent-switch active" data-mobile-view="ada">
+          <span>Ada</span>
+          <small id="adaDockStep">0</small>
+        </button>
+        <button type="button" class="rv-mobile-tab rv-agent-switch" data-mobile-view="theo">
+          <span>Theo</span>
+          <small id="theoDockStep">0</small>
+        </button>
+        <button type="button" class="rv-mobile-tab rv-context-switch" data-mobile-view="map">
+          <span>Map</span>
+          <small id="rvDockDistance">--</small>
+        </button>
+        <button type="button" class="rv-mobile-tab rv-context-switch" data-mobile-view="wires">
+          <span>Wires</span>
+          <small id="rvDockWires">0</small>
+        </button>
+        <button type="button" class="rv-mobile-tab rv-context-switch" data-mobile-view="log">
+          <span>Notes</span>
+          <small id="rvDockTurn">0</small>
+        </button>
       </nav>
 
       <aside class="rv-side">
@@ -96,7 +111,10 @@
               <span class="rv-kicker">viewer map</span>
               <h2>Two trails</h2>
             </div>
-            <button id="rvFitBtn" class="rv-small-button">Fit</button>
+            <div class="rv-section-actions">
+              <button id="rvFitBtn" class="rv-small-button">Fit</button>
+              <button type="button" class="rv-small-button rv-sheet-close" data-mobile-close>Done</button>
+            </div>
           </div>
           <div id="rvMap" class="rv-map"></div>
         </section>
@@ -107,7 +125,10 @@
               <span class="rv-kicker">telegraph office</span>
               <h2>Wires</h2>
             </div>
-            <span id="rvTelegramCount" class="rv-count">0</span>
+            <div class="rv-section-actions">
+              <span id="rvTelegramCount" class="rv-count">0</span>
+              <button type="button" class="rv-small-button rv-sheet-close" data-mobile-close>Done</button>
+            </div>
           </div>
           <div id="rvTelegrams" class="rv-telegram-list"></div>
         </section>
@@ -118,6 +139,7 @@
               <span class="rv-kicker">field notes</span>
               <h2>Decisions</h2>
             </div>
+            <button type="button" class="rv-small-button rv-sheet-close" data-mobile-close>Done</button>
           </div>
           <div id="rvLog" class="rv-log"></div>
         </section>

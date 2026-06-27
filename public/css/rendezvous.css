@@ -36,6 +36,17 @@ body {
 
 button {
   font: inherit;
+  touch-action: manipulation;
+}
+
+button:focus-visible {
+  outline: 2px solid rgba(110, 231, 167, 0.72);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 
 .rv-shell {
@@ -321,6 +332,16 @@ button {
   border-bottom: 1px solid var(--line);
 }
 
+.rv-section-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rv-sheet-close {
+  display: none;
+}
+
 .rv-section-head h2 {
   font-size: 15px;
 }
@@ -339,6 +360,11 @@ button {
   flex: 1;
   min-height: 0;
   background: #111;
+}
+
+.rv-map-marker,
+.rv-map-target {
+  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .rv-telegram-list,
@@ -383,6 +409,32 @@ button {
   }
   100% {
     background: transparent;
+  }
+}
+
+@keyframes rvStepWash {
+  0% {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0);
+  }
+  35% {
+    background: rgba(255, 255, 255, 0.045);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  }
+  100% {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0);
+  }
+}
+
+@keyframes rvDockPulse {
+  from {
+    opacity: 0.9;
+    transform: scaleX(0.2);
+  }
+  to {
+    opacity: 0;
+    transform: scaleX(1);
   }
 }
 
@@ -559,7 +611,8 @@ button {
     min-height: 0;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
-    padding: 8px 10px;
+    padding: 8px 10px 7px;
+    background: rgba(4, 6, 9, 0.9);
   }
 
   .rv-brand {
@@ -582,12 +635,26 @@ button {
   .rv-status-strip {
     grid-column: 1 / -1;
     order: 3;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 5px;
+    display: flex;
+    gap: 0;
+    min-width: 0;
+    padding: 3px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.035);
   }
 
   .rv-status-strip > div {
-    padding: 5px 6px;
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 3px 7px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .rv-status-strip > div + div {
+    border-left: 1px solid var(--line);
   }
 
   .rv-kicker {
@@ -597,7 +664,7 @@ button {
   }
 
   .rv-status-strip strong {
-    font-size: 12px;
+    font-size: 13px;
   }
 
   .rv-controls {
@@ -616,34 +683,46 @@ button {
   }
 
   .rv-watch {
+    position: relative;
     min-height: 0;
     display: block;
   }
 
   .rv-agent-panel {
+    position: relative;
     height: 100%;
     min-height: 0;
     display: none;
     grid-template-rows: auto minmax(0, 1fr) auto;
+    transition: border-color 0.22s ease, transform 0.22s ease;
   }
 
-  body[data-mobile-view="ada"] .rv-agent-panel.ada,
-  body[data-mobile-view="theo"] .rv-agent-panel.theo {
+  body[data-mobile-agent="ada"] .rv-agent-panel.ada,
+  body[data-mobile-agent="theo"] .rv-agent-panel.theo {
     display: grid;
   }
 
-  body[data-mobile-view="map"] .rv-agent-panel.ada,
-  body[data-mobile-view="wires"] .rv-agent-panel.ada,
-  body[data-mobile-view="log"] .rv-agent-panel.ada {
-    display: none;
+  .rv-agent-panel.is-stepping {
+    transform: scale(0.998);
+  }
+
+  .rv-agent-panel.is-stepping::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    border-radius: inherit;
+    pointer-events: none;
+    animation: rvStepWash 0.7s ease-out;
   }
 
   .rv-agent-topline {
-    padding: 8px 10px;
+    padding: 8px 10px 7px;
+    background: rgba(10, 13, 18, 0.92);
   }
 
   .rv-agent-topline h2 {
-    font-size: 18px;
+    font-size: 19px;
   }
 
   .rv-agent-meta {
@@ -661,28 +740,33 @@ button {
 
   .rv-agent-note {
     min-height: 0;
-    max-height: 78px;
-    padding: 8px 10px;
+    max-height: 88px;
+    padding: 9px 10px;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     font-size: 12px;
-    line-height: 1.32;
+    line-height: 1.36;
+    background: rgba(8, 11, 15, 0.88);
   }
 
   .rv-side {
     position: absolute;
     inset: 8px 8px 54px;
     z-index: 25;
-    display: none;
+    display: block;
     min-height: 0;
+    opacity: 0;
     pointer-events: none;
+    transform: translateY(12px) scale(0.985);
+    transition: opacity 0.2s ease, transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1), visibility 0.2s ease;
+    visibility: hidden;
   }
 
-  body[data-mobile-view="map"] .rv-side,
-  body[data-mobile-view="wires"] .rv-side,
-  body[data-mobile-view="log"] .rv-side {
-    display: block;
+  body[data-mobile-sheet] .rv-side {
+    opacity: 1;
     pointer-events: auto;
+    transform: translateY(0) scale(1);
+    visibility: visible;
   }
 
   .rv-map-section,
@@ -691,12 +775,13 @@ button {
     height: 100%;
     min-height: 0;
     display: none;
+    background: #0f1218;
     box-shadow: var(--shadow);
   }
 
-  body[data-mobile-view="map"] .rv-map-section,
-  body[data-mobile-view="wires"] .rv-telegraph,
-  body[data-mobile-view="log"] .rv-log-section {
+  body[data-mobile-sheet="map"] .rv-map-section,
+  body[data-mobile-sheet="wires"] .rv-telegraph,
+  body[data-mobile-sheet="log"] .rv-log-section {
     display: flex;
   }
 
@@ -711,6 +796,12 @@ button {
 
   .rv-section-head {
     padding: 9px 10px;
+    background: #0f1218;
+  }
+
+  .rv-sheet-close {
+    display: inline-flex;
+    align-items: center;
   }
 
   .rv-map {
@@ -732,9 +823,15 @@ button {
   }
 
   .rv-mobile-tab {
+    position: relative;
     min-width: 0;
-    min-height: 38px;
-    padding: 0 4px;
+    min-height: 46px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 4px;
     border: 1px solid var(--line);
     border-radius: 8px;
     background: rgba(255, 255, 255, 0.055);
@@ -742,6 +839,25 @@ button {
     font-size: 12px;
     font-weight: 650;
     cursor: pointer;
+    overflow: hidden;
+    transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease, transform 0.16s ease;
+  }
+
+  .rv-mobile-tab:active {
+    transform: scale(0.98);
+  }
+
+  .rv-mobile-tab small {
+    display: block;
+    max-width: 100%;
+    overflow: hidden;
+    color: var(--faint);
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
 
   .rv-mobile-tab.active {
@@ -749,11 +865,32 @@ button {
     background: rgba(110, 231, 167, 0.13);
     color: var(--text);
   }
+
+  body[data-mobile-agent="ada"] .rv-mobile-tab[data-mobile-view="ada"] {
+    border-color: rgba(255, 204, 77, 0.48);
+  }
+
+  body[data-mobile-agent="theo"] .rv-mobile-tab[data-mobile-view="theo"] {
+    border-color: rgba(85, 214, 255, 0.48);
+  }
+
+  .rv-mobile-tab.active small {
+    color: rgba(244, 245, 247, 0.76);
+  }
+
+  .rv-mobile-tab.attention::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: rgba(255, 255, 255, 0.16);
+    animation: rvDockPulse 0.85s ease-out;
+  }
 }
 
 @media (max-width: 520px) {
   .rv-status-strip {
-    gap: 6px;
+    gap: 0;
   }
 
   .rv-status-strip strong {
@@ -784,5 +921,16 @@ button {
 
   .rv-agent-meta {
     justify-content: flex-end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
   }
 }
