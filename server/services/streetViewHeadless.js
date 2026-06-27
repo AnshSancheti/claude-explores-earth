@@ -131,7 +131,11 @@ export class StreetViewHeadless {
             return new Promise((resolve) => {
               const request = typeof position === 'string'
                 ? { pano: position }
-                : { location: position, radius: 50 };
+                : {
+                    location: position,
+                    radius: 50,
+                    source: google.maps.StreetViewSource?.OUTDOOR || 'outdoor'
+                  };
 
               service.getPanorama(request, (data, status) => {
                 if (status === 'OK') {

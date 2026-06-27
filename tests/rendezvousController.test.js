@@ -101,6 +101,32 @@ class FakeStreetView {
   }
 }
 
+class IndoorAdaStartStreetView extends FakeStreetView {
+  constructor() {
+    super();
+    this.indoorPano = {
+      panoId: 'ada-indoor-store',
+      position: { lat: 40.759011, lng: -73.984472 },
+      links: []
+    };
+    this.nodes.set(this.indoorPano.panoId, this.indoorPano);
+  }
+
+  async getPanorama(positionOrPanoId) {
+    if (positionOrPanoId === this.indoorPano.panoId) {
+      return structuredClone(this.indoorPano);
+    }
+    if (
+      typeof positionOrPanoId !== 'string' &&
+      Math.abs(Number(positionOrPanoId?.lat) - this.indoorPano.position.lat) < 0.0000001 &&
+      Math.abs(Number(positionOrPanoId?.lng) - this.indoorPano.position.lng) < 0.0000001
+    ) {
+      return structuredClone(this.indoorPano);
+    }
+    return super.getPanorama(positionOrPanoId);
+  }
+}
+
 test('RendezvousController delivers useful telegrams and can reach a found state', async () => {
   const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
   process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
@@ -137,6 +163,53 @@ test('RendezvousController delivers useful telegrams and can reach a found state
     assert.equal(publicState.telegrams.some(telegram => Object.hasOwn(telegram, 'roughPosition')), false);
     assert.match(publicState.telegrams[0].text, /Bryant Park/);
     assert.doesNotMatch(publicState.telegrams[0].text, /-?\d+\.\d{3,}/);
+  } finally {
+    if (previousPairIndex === undefined) {
+      delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    } else {
+      process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    }
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('RendezvousController avoids indoor start panos and recovers blocked agents', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-test-'));
+  const events = [];
+
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new IndoorAdaStartStreetView(),
+      emit: (event, data) => events.push({ event, data }),
+      logger: { warn() {}, error() {} }
+    });
+
+    await controller.createRun();
+    assert.equal(controller.state.agents.ada.panoId, 'ada-start');
+    assert.equal(controller.state.agents.ada.path[0].panoId, 'ada-start');
+
+    controller.state.agents.ada.panoId = 'ada-indoor-store';
+    controller.state.agents.ada.position = { lat: 40.759011, lng: -73.984472 };
+    controller.state.agents.ada.path = [{
+      ...controller.state.agents.ada.position,
+      panoId: 'ada-indoor-store',
+      timestamp: new Date().toISOString()
+    }];
+    controller.state.agents.ada.visitedPanos = ['ada-indoor-store'];
+    controller.state.status = 'running';
+    controller.running = true;
+    controller.state.turn = 0;
+
+    await controller.tick();
+
+    assert.equal(controller.state.agents.ada.panoId, 'ada-start');
+    assert.equal(controller.state.agents.ada.path.length, 2);
+    assert.equal(controller.state.agents.ada.lastDecision.mode, 'recovering');
+    assert.ok(events.some(entry => entry.event === 'rendezvous-step' && entry.data?.mode === 'recovering'));
+    assert.ok(controller.state.eventLog.some(entry => entry.type === 'street_recovery'));
   } finally {
     if (previousPairIndex === undefined) {
       delete process.env.RENDEZVOUS_START_PAIR_INDEX;

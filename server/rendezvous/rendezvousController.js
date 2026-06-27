@@ -78,6 +78,9 @@ const START_PAIRS = Object.freeze([
   }
 ]);
 
+const STREET_SEARCH_RADII_METERS = Object.freeze([18, 36, 72]);
+const STREET_SEARCH_BEARINGS = Object.freeze([0, 45, 90, 135, 180, 225, 270, 315]);
+
 function parseIntOr(value, fallback) {
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -110,6 +113,22 @@ function blendPositions(primary, secondary, secondaryWeight) {
   return {
     lat: Number(primary.lat) * (1 - weight) + Number(secondary.lat) * weight,
     lng: Number(primary.lng) * (1 - weight) + Number(secondary.lng) * weight
+  };
+}
+
+function offsetPosition(position, meters, bearingDegrees) {
+  const lat = Number(position?.lat);
+  const lng = Number(position?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+
+  const bearing = Number(bearingDegrees) * Math.PI / 180;
+  const latMeters = 111320;
+  const lngMeters = latMeters * Math.cos(lat * Math.PI / 180);
+  if (!Number.isFinite(lngMeters) || Math.abs(lngMeters) < 1) return null;
+
+  return {
+    lat: lat + Math.cos(bearing) * meters / latMeters,
+    lng: lng + Math.sin(bearing) * meters / lngMeters
   };
 }
 
@@ -160,6 +179,10 @@ function publicPoint(point) {
     panoId: point.panoId || null,
     timestamp: point.timestamp || null
   };
+}
+
+function hasStreetLinks(panorama) {
+  return Array.isArray(panorama?.links) && panorama.links.some(link => link?.pano);
 }
 
 function stripTelegramInternal(telegram) {
@@ -354,7 +377,7 @@ export class RendezvousController {
     const agents = {};
     for (const agentId of AGENT_ORDER) {
       const start = pair[agentId];
-      const pano = await this.#getPanorama(start);
+      const pano = await this.#resolveStartPanorama(start, target, agentId);
       agents[agentId] = this.#createAgent(agentId, pano, start.label);
     }
 
@@ -473,8 +496,18 @@ export class RendezvousController {
       const candidates = await this.#candidatePanoramas(current.links || []);
       selected = this.#chooseCandidate(agent, target, candidates);
       if (!selected) {
-        mode = 'waiting';
-        decisionReason = `${agent.name} cannot find a useful public turn here, so they hold position and scan for better signs.`;
+        const recovered = await this.#recoverFromBlockedPano(agent, target, current);
+        if (recovered) {
+          mode = 'recovering';
+          selected = {
+            panoId: recovered.panoId,
+            label: 'nearby outdoor Street View'
+          };
+          decisionReason = `${agent.name} was stranded in a Street View pano without public turns, so they step back to a nearby outdoor corner and keep the meeting plan alive.`;
+        } else {
+          mode = 'waiting';
+          decisionReason = `${agent.name} cannot find a useful public turn here, so they hold position and scan for better signs.`;
+        }
       } else {
         const previousPosition = { ...agent.position };
         const pano = await this.#navigateAndGetPanorama(selected.panoId);
@@ -520,6 +553,27 @@ export class RendezvousController {
     this.emit('rendezvous-step', step);
   }
 
+  async #resolveStartPanorama(start, target, agentId) {
+    const preferred = await this.#getPanorama(start);
+    if (hasStreetLinks(preferred)) return preferred;
+
+    this.logger.warn?.(
+      `Rendezvous ${AGENTS[agentId]?.name || agentId} start resolved to pano ` +
+        `${preferred.panoId} without street links; searching nearby outdoor panos.`
+    );
+
+    const nearby = await this.#findNearbyStreetPanorama({
+      origin: start,
+      target,
+      avoidPanoIds: new Set([preferred.panoId])
+    });
+    if (nearby) return nearby;
+
+    throw new Error(
+      `Could not find a usable outdoor Street View pano near ${start.label || `${start.lat},${start.lng}`}`
+    );
+  }
+
   async #candidatePanoramas(links = []) {
     const candidates = [];
     for (const link of links.slice(0, 6)) {
@@ -537,6 +591,75 @@ export class RendezvousController {
       }
     }
     return candidates;
+  }
+
+  async #recoverFromBlockedPano(agent, target, current) {
+    if (hasStreetLinks(current)) return null;
+
+    const recovered = await this.#findNearbyStreetPanorama({
+      origin: agent.position,
+      target,
+      avoidPanoIds: new Set(agent.visitedPanos || [])
+    });
+    if (!recovered) return null;
+
+    const previousPosition = { ...agent.position };
+    agent.panoId = recovered.panoId;
+    agent.position = { lat: recovered.position.lat, lng: recovered.position.lng };
+    agent.heading = calculateBearing(previousPosition, agent.position);
+    agent.status = 'searching';
+    agent.path.push({
+      ...agent.position,
+      panoId: agent.panoId,
+      timestamp: new Date().toISOString()
+    });
+    agent.visitedPanos.push(agent.panoId);
+    if (agent.visitedPanos.length > 120) agent.visitedPanos.shift();
+    this.#recordEvent('street_recovery', {
+      agentId: agent.id,
+      agentName: agent.name,
+      fromPanoId: current.panoId,
+      toPanoId: recovered.panoId,
+      distanceMeters: Math.round(calculateDistance(previousPosition, recovered.position))
+    });
+    return recovered;
+  }
+
+  async #findNearbyStreetPanorama({ origin, target, avoidPanoIds = new Set() }) {
+    const points = [origin];
+    for (const radius of STREET_SEARCH_RADII_METERS) {
+      for (const bearing of STREET_SEARCH_BEARINGS) {
+        const point = offsetPosition(origin, radius, bearing);
+        if (point) points.push(point);
+      }
+    }
+
+    const seen = new Set();
+    const candidates = [];
+    for (const point of points) {
+      const key = `${Number(point.lat).toFixed(6)},${Number(point.lng).toFixed(6)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      try {
+        const pano = await this.#getPanorama(point);
+        if (!hasStreetLinks(pano) || avoidPanoIds.has(pano.panoId)) continue;
+        candidates.push({
+          ...pano,
+          recoveryDistanceMeters: calculateDistance(origin, pano.position),
+          targetDistanceMeters: calculateDistance(pano.position, target.position)
+        });
+      } catch (error) {
+        this.logger.warn?.(`Nearby street pano lookup failed: ${error.message}`);
+      }
+    }
+
+    return candidates
+      .filter(candidate => Number.isFinite(candidate.recoveryDistanceMeters))
+      .sort((a, b) => {
+        const aScore = a.recoveryDistanceMeters + a.targetDistanceMeters * 0.08 - (a.links?.length || 0) * 8;
+        const bScore = b.recoveryDistanceMeters + b.targetDistanceMeters * 0.08 - (b.links?.length || 0) * 8;
+        return aScore - bScore;
+      })[0] || null;
   }
 
   #chooseCandidate(agent, target, candidates) {
