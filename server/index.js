@@ -17,6 +17,7 @@ import { promisify } from 'util';
 import { verifySignature } from './utils/urlSigner.js';
 import { RunStore } from './services/runStore.js';
 import { WorkerSupervisor } from './worker/workerSupervisor.js';
+import { RendezvousController } from './rendezvous/rendezvousController.js';
 import {
   TILE_RENDERER_REVISION,
   archivedPointCount,
@@ -40,6 +41,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ROOT_DIR = join(__dirname, '..');
 const DATA_DIR = process.env.NODE_ENV === 'production' ? '/data' : join(ROOT_DIR, 'runs');
+const RENDEZVOUS_PRIMARY = process.env.RENDEZVOUS_PRIMARY !== 'false';
+const RENDEZVOUS_AUTO_START = process.env.RENDEZVOUS_AUTO_START !== 'false';
 
 const app = express();
 
@@ -92,6 +95,12 @@ const io = new Server(server, {
 
 app.use(cors());
 app.use(express.json());
+
+if (!IS_WORKER_PROCESS && RENDEZVOUS_PRIMARY) {
+  app.get('/', (req, res) => {
+    res.sendFile(join(ROOT_DIR, 'public', 'rendezvous.html'));
+  });
+}
 
 // Serve static files
 app.use(express.static(join(ROOT_DIR, 'public')));
@@ -1487,6 +1496,12 @@ const globalExploration = IS_WORKER_PROCESS
   : new WorkerSupervisor({
       onBroadcast: (event, data) => io.emit(event, data)
     });
+const rendezvous = IS_WORKER_PROCESS
+  ? null
+  : new RendezvousController({
+      emit: (event, data) => io.emit(event, data),
+      dataDir: DATA_DIR
+    });
 
 // Tile rendering helpers
 function getArchivedCount(agent) {
@@ -1651,6 +1666,61 @@ app.get('/metrics', (req, res) => {
   res.json(globalExploration.getMetrics());
 });
 
+app.get('/api/rendezvous/state', async (req, res) => {
+  try {
+    if (!rendezvous) return res.status(404).json({ error: 'rendezvous_unavailable' });
+    if (!rendezvous.state?.runId) {
+      await rendezvous.loadState();
+    }
+    res.json(rendezvous.getPublicState());
+  } catch (error) {
+    console.warn(`Failed to read rendezvous state: ${error.message}`);
+    res.status(500).json({ error: 'rendezvous_state_failed', message: error.message });
+  }
+});
+
+app.post('/api/rendezvous/start', async (req, res) => {
+  try {
+    if (!rendezvous) return res.status(404).json({ error: 'rendezvous_unavailable' });
+    if (!verifyRendezvousControl(req.body?.token || req.query?.token)) {
+      return res.status(401).json({ error: 'admin_auth_required' });
+    }
+    const state = await rendezvous.start({ reset: req.body?.reset === true || req.query?.reset === '1' });
+    res.json({ success: true, state });
+  } catch (error) {
+    console.warn(`Failed to start rendezvous: ${error.message}`);
+    res.status(500).json({ error: 'rendezvous_start_failed', message: error.message });
+  }
+});
+
+app.post('/api/rendezvous/stop', async (req, res) => {
+  try {
+    if (!rendezvous) return res.status(404).json({ error: 'rendezvous_unavailable' });
+    if (!verifyRendezvousControl(req.body?.token || req.query?.token)) {
+      return res.status(401).json({ error: 'admin_auth_required' });
+    }
+    const state = await rendezvous.stop();
+    res.json({ success: true, state });
+  } catch (error) {
+    console.warn(`Failed to stop rendezvous: ${error.message}`);
+    res.status(500).json({ error: 'rendezvous_stop_failed', message: error.message });
+  }
+});
+
+app.post('/api/rendezvous/reset', async (req, res) => {
+  try {
+    if (!rendezvous) return res.status(404).json({ error: 'rendezvous_unavailable' });
+    if (!verifyRendezvousControl(req.body?.token || req.query?.token)) {
+      return res.status(401).json({ error: 'admin_auth_required' });
+    }
+    const state = await rendezvous.reset();
+    res.json({ success: true, state });
+  } catch (error) {
+    console.warn(`Failed to reset rendezvous: ${error.message}`);
+    res.status(500).json({ error: 'rendezvous_reset_failed', message: error.message });
+  }
+});
+
 const ADMIN_TOKEN_TTL_MS = 60 * 60 * 1000;
 
 function signAdminTokenBody(body) {
@@ -1696,6 +1766,13 @@ function verifyAdminToken(token) {
   } catch {
     return false;
   }
+}
+
+function verifyRendezvousControl(token) {
+  if (!process.env.CONTROL_PASSWORD && process.env.NODE_ENV !== 'production') {
+    return true;
+  }
+  return verifyAdminToken(token);
 }
 
 function sendWorkerMessage(message) {
@@ -2062,6 +2139,69 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('join-rendezvous', async () => {
+    if (!rendezvous) {
+      socket.emit('rendezvous-error', { message: 'Rendezvous mode is not available' });
+      return;
+    }
+    try {
+      if (!rendezvous.state?.runId) {
+        await rendezvous.loadState();
+      }
+      socket.emit('rendezvous-state', rendezvous.getPublicState());
+    } catch (error) {
+      socket.emit('rendezvous-error', { message: error.message });
+    }
+  });
+
+  socket.on('start-rendezvous', async (data = {}) => {
+    if (!rendezvous) {
+      socket.emit('rendezvous-error', { message: 'Rendezvous mode is not available' });
+      return;
+    }
+    if (!verifyRendezvousControl(data?.token)) {
+      socket.emit('rendezvous-error', { message: 'Admin authentication required' });
+      return;
+    }
+    try {
+      await rendezvous.start({ reset: data?.reset === true });
+    } catch (error) {
+      socket.emit('rendezvous-error', { message: error.message });
+    }
+  });
+
+  socket.on('stop-rendezvous', async (data = {}) => {
+    if (!rendezvous) {
+      socket.emit('rendezvous-error', { message: 'Rendezvous mode is not available' });
+      return;
+    }
+    if (!verifyRendezvousControl(data?.token)) {
+      socket.emit('rendezvous-error', { message: 'Admin authentication required' });
+      return;
+    }
+    try {
+      await rendezvous.stop();
+    } catch (error) {
+      socket.emit('rendezvous-error', { message: error.message });
+    }
+  });
+
+  socket.on('reset-rendezvous', async (data = {}) => {
+    if (!rendezvous) {
+      socket.emit('rendezvous-error', { message: 'Rendezvous mode is not available' });
+      return;
+    }
+    if (!verifyRendezvousControl(data?.token)) {
+      socket.emit('rendezvous-error', { message: 'Admin authentication required' });
+      return;
+    }
+    try {
+      await rendezvous.reset();
+    } catch (error) {
+      socket.emit('rendezvous-error', { message: error.message });
+    }
+  });
+
   socket.on('disconnect', () => {
     globalExploration.removeClient(socket.id);
   });
@@ -2088,24 +2228,39 @@ server.listen(PORT, HOST, async () => {
   console.log(`🔑 Admin Password: ${process.env.CONTROL_PASSWORD ? 'Configured' : 'NOT CONFIGURED'}`);
   console.log(`💾 Data directory: ${DATA_DIR}`);
 
-  try {
-    const autoSavePath = globalExploration.getSavePath();
-    const hasSave = fs.existsSync(autoSavePath);
-    const shouldAutoStart = process.env.NODE_ENV === 'production' && hasSave;
-    console.log(`👷 Starting exploration worker (autoStart=${shouldAutoStart})`);
-    const workerBoot = await globalExploration.start({
-      autoRestore: true,
-      autoStart: shouldAutoStart
-    });
-    if (workerBoot?.error) {
-      console.error('❌ Worker boot failed:', workerBoot.error);
-    } else if (shouldAutoStart) {
-      console.log('▶️  Exploration worker auto-started from saved state');
-    } else if (!hasSave) {
-      console.log('📄 No save file found at', autoSavePath, '— waiting for manual start');
+  if (RENDEZVOUS_PRIMARY && rendezvous) {
+    try {
+      console.log('✉️  Rendezvous mode is primary for this branch');
+      await rendezvous.loadState();
+      if (RENDEZVOUS_AUTO_START && rendezvous.state.status !== 'found') {
+        await rendezvous.start();
+        console.log('▶️  Rendezvous run auto-started');
+      } else if (rendezvous.state.status === 'found') {
+        console.log('✅ Rendezvous run already has a found state; preserving it');
+      }
+    } catch (error) {
+      console.error('❌ Rendezvous startup error:', error);
     }
-  } catch (error) {
-    console.error('❌ Worker startup error:', error);
+  } else {
+    try {
+      const autoSavePath = globalExploration.getSavePath();
+      const hasSave = fs.existsSync(autoSavePath);
+      const shouldAutoStart = process.env.NODE_ENV === 'production' && hasSave;
+      console.log(`👷 Starting exploration worker (autoStart=${shouldAutoStart})`);
+      const workerBoot = await globalExploration.start({
+        autoRestore: true,
+        autoStart: shouldAutoStart
+      });
+      if (workerBoot?.error) {
+        console.error('❌ Worker boot failed:', workerBoot.error);
+      } else if (shouldAutoStart) {
+        console.log('▶️  Exploration worker auto-started from saved state');
+      } else if (!hasSave) {
+        console.log('📄 No save file found at', autoSavePath, '— waiting for manual start');
+      }
+    } catch (error) {
+      console.error('❌ Worker startup error:', error);
+    }
   }
 });
 
@@ -2119,6 +2274,11 @@ async function gracefulShutdown(signal) {
   shutdownInProgress = true;
 
   console.log(`${signal} received, saving state and shutting down...`);
+  if (rendezvous) {
+    await rendezvous.shutdown().catch(error => {
+      console.error('Rendezvous shutdown failed:', error);
+    });
+  }
   const stopResult = await globalExploration.shutdown();
   process.exit(stopResult?.error ? 1 : 0);
 }

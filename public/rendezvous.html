@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rendezvous - Two Friends, One City</title>
+  <link rel="icon" type="image/png" href="/resources/orb.png">
+  <link href="https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.css" rel="stylesheet">
+  <link rel="stylesheet" href="css/rendezvous.css">
+</head>
+<body>
+  <div class="rv-shell">
+    <header class="rv-header">
+      <div class="rv-brand">
+        <video class="rv-brand-icon" autoplay loop muted playsinline>
+          <source src="/resources/orb.webm" type="video/webm">
+        </video>
+        <div>
+          <h1>Rendezvous</h1>
+          <p>Two friends lost in Manhattan, finding each other by telegram.</p>
+        </div>
+      </div>
+      <div class="rv-status-strip">
+        <div>
+          <span class="rv-kicker">status</span>
+          <strong id="rvStatus">loading</strong>
+        </div>
+        <div>
+          <span class="rv-kicker">distance</span>
+          <strong id="rvDistance">--</strong>
+        </div>
+        <div>
+          <span class="rv-kicker">meeting</span>
+          <strong id="rvTarget">--</strong>
+        </div>
+        <div>
+          <span class="rv-kicker">turn</span>
+          <strong id="rvTurn">0</strong>
+        </div>
+      </div>
+      <div class="rv-controls">
+        <button id="compassOverlay" class="rv-unlock" title="Unlock controls">Key</button>
+        <div id="controlButtons" class="rv-control-buttons hidden">
+          <button id="rvStartBtn" class="rv-button primary">Start</button>
+          <button id="rvStopBtn" class="rv-button">Stop</button>
+          <button id="rvResetBtn" class="rv-button danger">New run</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="rv-main">
+      <section class="rv-watch">
+        <article class="rv-agent-panel ada" data-agent="ada">
+          <div class="rv-agent-topline">
+            <div>
+              <span class="rv-kicker">agent</span>
+              <h2 id="adaName">Ada</h2>
+            </div>
+            <div class="rv-agent-meta">
+              <span id="adaStep">0 steps</span>
+              <span id="adaState">searching</span>
+            </div>
+          </div>
+          <div id="streetAda" class="rv-street"></div>
+          <p id="adaLastNote" class="rv-agent-note">Waiting for the first street view.</p>
+        </article>
+
+        <article class="rv-agent-panel theo" data-agent="theo">
+          <div class="rv-agent-topline">
+            <div>
+              <span class="rv-kicker">agent</span>
+              <h2 id="theoName">Theo</h2>
+            </div>
+            <div class="rv-agent-meta">
+              <span id="theoStep">0 steps</span>
+              <span id="theoState">searching</span>
+            </div>
+          </div>
+          <div id="streetTheo" class="rv-street"></div>
+          <p id="theoLastNote" class="rv-agent-note">Waiting for the first street view.</p>
+        </article>
+      </section>
+
+      <aside class="rv-side">
+        <section class="rv-map-section">
+          <div class="rv-section-head">
+            <div>
+              <span class="rv-kicker">viewer map</span>
+              <h2>Two trails</h2>
+            </div>
+            <button id="rvFitBtn" class="rv-small-button">Fit</button>
+          </div>
+          <div id="rvMap" class="rv-map"></div>
+        </section>
+
+        <section class="rv-telegraph">
+          <div class="rv-section-head">
+            <div>
+              <span class="rv-kicker">telegraph office</span>
+              <h2>Wires</h2>
+            </div>
+            <span id="rvTelegramCount" class="rv-count">0</span>
+          </div>
+          <div id="rvTelegrams" class="rv-telegram-list"></div>
+        </section>
+
+        <section class="rv-log-section">
+          <div class="rv-section-head">
+            <div>
+              <span class="rv-kicker">field notes</span>
+              <h2>Decisions</h2>
+            </div>
+          </div>
+          <div id="rvLog" class="rv-log"></div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <div id="passwordModal" class="modal hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>Admin Authentication</h3>
+        <button class="modal-close" onclick="AdminAuth.closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Enter admin password to control the rendezvous run.</p>
+        <input type="password" id="passwordInput" placeholder="Password" autocomplete="off">
+        <div id="authError" class="auth-error hidden"></div>
+      </div>
+      <div class="modal-footer">
+        <button onclick="AdminAuth.closeModal()" class="btn-cancel">Cancel</button>
+        <button onclick="AdminAuth.authenticate()" class="btn-submit">Unlock</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.js"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="js/adminAuth.js"></script>
+  <script src="js/rendezvous.js"></script>
+  <script src="/api/maps-loader"></script>
+</body>
+</html>
