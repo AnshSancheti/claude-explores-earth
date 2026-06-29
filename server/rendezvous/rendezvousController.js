@@ -81,6 +81,7 @@ const START_PAIRS = Object.freeze([
 const STREET_SEARCH_RADII_METERS = Object.freeze([18, 36, 72]);
 const STREET_SEARCH_BEARINGS = Object.freeze([0, 45, 90, 135, 180, 225, 270, 315]);
 const NOTEBOOK_REVISION_LIMIT = 18;
+const LEGACY_RENDEZVOUS_HINT_PATTERN = /rough wire|last telegram|telegrams said|telegram puts|somewhere around|nearest guidebook|wire before/i;
 const QUESTION_CARDS = Object.freeze([
   {
     id: 'warmer-colder',
@@ -242,6 +243,57 @@ function stripTelegramInternal(telegram) {
   return publicTelegram;
 }
 
+function publicNotebookReason(agent, target) {
+  const agentName = agent?.name || 'The agent';
+  const targetName = target?.name || 'the agreed public landmark';
+  if (agent?.status === 'found') {
+    return `${agentName} reached the rendezvous using the shared notebook and low-resolution clues.`;
+  }
+  if (agent?.status === 'waiting') {
+    return `${agentName} is waiting at ${targetName}, holding the shared plan instead of chasing exact clues.`;
+  }
+  return `${agentName} is following the shared notebook toward ${targetName}, keeping clues low-resolution.`;
+}
+
+function sanitizeLegacyNotebookText(text, fallback) {
+  if (typeof text !== 'string') return text;
+  return LEGACY_RENDEZVOUS_HINT_PATTERN.test(text) ? fallback : text;
+}
+
+function sanitizePublicAgent(agent, target) {
+  const fallback = publicNotebookReason(agent, target);
+  return {
+    ...agent,
+    lastDecision: agent.lastDecision
+      ? {
+          ...agent.lastDecision,
+          reasoning: sanitizeLegacyNotebookText(agent.lastDecision.reasoning, fallback)
+        }
+      : agent.lastDecision,
+    recentNotes: Array.isArray(agent.recentNotes)
+      ? agent.recentNotes.map(note => sanitizeLegacyNotebookText(note, fallback))
+      : agent.recentNotes
+  };
+}
+
+function sanitizePublicEvent(event, target) {
+  if (!event || typeof event !== 'object') return event;
+  const payload = event.payload || event.data;
+  if (!payload || typeof payload !== 'object') return event;
+  const agentName = payload.agentName || payload.name || payload.agentId;
+  const fallback = publicNotebookReason({ name: agentName || 'The agent', status: payload.status }, target);
+  const sanitizedPayload = {
+    ...payload,
+    reasoning: sanitizeLegacyNotebookText(payload.reasoning, fallback),
+    reason: sanitizeLegacyNotebookText(payload.reason, fallback)
+  };
+  return {
+    ...event,
+    payload: event.payload ? sanitizedPayload : event.payload,
+    data: event.data ? sanitizedPayload : event.data
+  };
+}
+
 export class RendezvousController {
   constructor({
     emit = () => {},
@@ -399,18 +451,20 @@ export class RendezvousController {
   }
 
   getPublicState() {
+    const target = this.state.meeting?.target || GUIDEBOOK_LANDMARKS[0];
     const agents = {};
     for (const [agentId, agent] of Object.entries(this.state.agents || {})) {
+      const publicAgent = sanitizePublicAgent(agent, target);
       agents[agentId] = {
-        ...agent,
-        path: (agent.path || []).map(publicPoint),
-        inbox: (agent.inbox || []).map(stripTelegramInternal),
-        outbox: (agent.outbox || []).map(stripTelegramInternal),
-        friendEstimate: agent.friendEstimate
+        ...publicAgent,
+        path: (publicAgent.path || []).map(publicPoint),
+        inbox: (publicAgent.inbox || []).map(stripTelegramInternal),
+        outbox: (publicAgent.outbox || []).map(stripTelegramInternal),
+        friendEstimate: publicAgent.friendEstimate
           ? {
-              label: agent.friendEstimate.label,
-              uncertaintyMeters: agent.friendEstimate.uncertaintyMeters,
-              receivedTurn: agent.friendEstimate.receivedTurn
+              label: publicAgent.friendEstimate.label,
+              uncertaintyMeters: publicAgent.friendEstimate.uncertaintyMeters,
+              receivedTurn: publicAgent.friendEstimate.receivedTurn
             }
           : null
       };
@@ -419,6 +473,7 @@ export class RendezvousController {
     return {
       ...this.state,
       agents,
+      eventLog: (this.state.eventLog || []).map(event => sanitizePublicEvent(event, target)),
       telegrams: (this.state.telegrams || []).map(stripTelegramInternal)
     };
   }

@@ -201,6 +201,28 @@ test('RendezvousController updates the shared notebook and can reach a found sta
     assert.equal(Object.hasOwn(migratedWire, 'roughPosition'), false);
     assert.equal(migratedInboxWire.text, migratedWire.text);
     assert.equal(Object.hasOwn(migratedInboxWire, 'roughPosition'), false);
+
+    controller.state.agents.ada.lastDecision = {
+      reasoning: 'Ada turns south using Union Square as the nearest guidebook anchor. The last telegram puts their friend somewhere around NoHo, so the route bends toward that rough wire.'
+    };
+    controller.state.agents.ada.recentNotes = [
+      'The last telegram puts Theo somewhere around NoHo before the wire before Union Square.'
+    ];
+    controller.state.eventLog.push({
+      type: 'agent_step',
+      turn: controller.state.turn,
+      payload: {
+        agentName: 'Ada',
+        reasoning: 'The last telegram puts Theo somewhere around NoHo, so Ada follows the rough wire.'
+      }
+    });
+
+    const sanitizedPublicState = controller.getPublicState();
+    assert.doesNotMatch(sanitizedPublicState.agents.ada.lastDecision.reasoning, /telegram|rough wire|nearest guidebook|somewhere around/i);
+    assert.match(sanitizedPublicState.agents.ada.lastDecision.reasoning, /shared notebook|low-resolution/);
+    assert.doesNotMatch(sanitizedPublicState.agents.ada.recentNotes[0], /telegram|wire before|somewhere around/i);
+    assert.doesNotMatch(sanitizedPublicState.eventLog.at(-1).payload.reasoning, /telegram|rough wire|somewhere around/i);
+    assert.match(sanitizedPublicState.eventLog.at(-1).payload.reasoning, /shared notebook|low-resolution/);
   } finally {
     if (previousPairIndex === undefined) {
       delete process.env.RENDEZVOUS_START_PAIR_INDEX;
