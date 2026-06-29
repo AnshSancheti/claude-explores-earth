@@ -276,7 +276,10 @@
       const state = this.state || {};
       document.getElementById('rvStatus').textContent = formatStatus(state.status);
       document.getElementById('rvDistance').textContent = formatDistance(state.meeting?.distanceMeters);
-      document.getElementById('rvTarget').textContent = state.meeting?.target?.name || '--';
+      document.getElementById('rvTarget').textContent = state.notebook?.search?.shortName ||
+        state.notebook?.search?.name ||
+        state.notebook?.proposedMeeting?.name ||
+        'Each other';
       document.getElementById('rvTurn').textContent = Number(state.turn || 0).toLocaleString();
 
       const startBtn = document.getElementById('rvStartBtn');
@@ -370,6 +373,9 @@
       const target = this.state.meeting?.target;
       if (target?.position) {
         this.updateTargetMarker(target);
+      } else if (this.targetMarker) {
+        this.targetMarker.remove?.();
+        this.targetMarker = null;
       }
 
       if (!this.hasFitOnce) {
@@ -418,7 +424,7 @@
         ].join(';');
         this.targetMarker = new maplibregl.Marker({ element: el })
           .setLngLat(lngLat)
-          .setPopup(new maplibregl.Popup({ offset: 18 }).setText(`Meet at ${target.name}`))
+          .setPopup(new maplibregl.Popup({ offset: 18 }).setText(`Search near ${target.name}`))
           .addTo(this.map);
       } else {
         this.targetMarker.setLngLat(lngLat);
@@ -476,10 +482,10 @@
       list.innerHTML = `
         <article class="rv-notebook-card">
           <div class="rv-notebook-row">
-            <span>Meeting</span>
-            <strong>${escapeHtml(meeting.name || this.state?.meeting?.target?.name || '--')}</strong>
+            <span>Goal</span>
+            <strong>${escapeHtml(notebook.search?.name || meeting.name || 'Find each other')}</strong>
           </div>
-          <p class="rv-notebook-rationale">${escapeHtml(meeting.rationale || 'Meet at the same public landmark; do not trade exact locations.')}</p>
+          <p class="rv-notebook-rationale">${escapeHtml(notebook.search?.rationale || meeting.rationale || 'No meeting spot. Follow the other trail through coarse, stale clues.')}</p>
           <div class="rv-notebook-grid">
             <div>
               <span>Last durable clue</span>
@@ -496,8 +502,8 @@
             <p>${escapeHtml(next.prompt || 'Ask for one coarse clue.')}</p>
           </div>
           <div class="rv-notebook-plans">
-            <p><strong>Ada</strong> ${escapeHtml(plans.ada || 'Move toward the agreed public landmark.')}</p>
-            <p><strong>Theo</strong> ${escapeHtml(plans.theo || 'Move toward the agreed public landmark.')}</p>
+            <p><strong>Ada</strong> ${escapeHtml(plans.ada || "Search through Theo's coarse trail clues.")}</p>
+            <p><strong>Theo</strong> ${escapeHtml(plans.theo || "Search through Ada's coarse trail clues.")}</p>
           </div>
         </article>
         <div class="rv-notebook-revisions">
