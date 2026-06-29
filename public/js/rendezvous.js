@@ -304,7 +304,7 @@
       const dockWires = document.getElementById('rvDockWires');
       const dockTurn = document.getElementById('rvDockTurn');
       if (dockDistance) dockDistance.textContent = formatDistance(state.meeting?.distanceMeters);
-      if (dockWires) dockWires.textContent = Number(state.telegrams?.length || 0).toLocaleString();
+      if (dockWires) dockWires.textContent = Number(state.notebook?.revisions?.length || 0).toLocaleString();
       if (dockTurn) dockTurn.textContent = Number(state.turn || 0).toLocaleString();
     }
 
@@ -449,36 +449,61 @@
     }
 
     renderTelegrams() {
-      const telegrams = [...(this.state?.telegrams || [])].slice(-18).reverse();
       const list = document.getElementById('rvTelegrams');
-      document.getElementById('rvTelegramCount').textContent = String(this.state?.telegrams?.length || 0);
+      const notebook = this.state?.notebook;
+      const revisions = Array.isArray(notebook?.revisions) ? notebook.revisions : [];
+      document.getElementById('rvTelegramCount').textContent = String(revisions.length || 0);
       if (!list) return;
-      if (telegrams.length === 0) {
-        list.innerHTML = '<div class="rv-log-entry"><p class="rv-log-text">No wires yet. The friends are still finding words for the city.</p></div>';
+      if (!notebook) {
+        list.innerHTML = '<div class="rv-log-entry"><p class="rv-log-text">The shared notebook has not been opened yet.</p></div>';
         return;
       }
-      list.innerHTML = telegrams.map(telegram => {
-        const status = telegram.status === 'delivered' ? 'delivered' : 'in transit';
-        const statusClass = String(telegram.status || '').replace(/_/g, '-');
-        const clues = telegram.clues || {};
-        const clueBits = [
-          clues.neighborhood,
-          clues.nearestLandmark,
-          clues.intention
-        ].filter(Boolean);
-        return `
-          <article class="rv-telegram ${escapeHtml(statusClass)} ${escapeHtml(telegram.from)}">
+      const plans = notebook.plans || {};
+      const meeting = notebook.proposedMeeting || {};
+      const next = notebook.nextQuestion || {};
+      const revisionHtml = revisions.length
+        ? revisions.slice(0, 8).map(revision => `
+          <article class="rv-notebook-revision ${escapeHtml(revision.agentId || '')}">
             <div class="rv-wire-head">
-              <span>${escapeHtml(telegram.fromName)} to ${escapeHtml(telegram.toName)}</span>
-              <span>${escapeHtml(status)}</span>
+              <span>${escapeHtml(revision.by || 'Notebook')}</span>
+              <span>turn ${Number(revision.turn || 0).toLocaleString()}</span>
             </div>
-            <p class="rv-wire-text">${escapeHtml(telegram.text)}</p>
-            <div class="rv-wire-clues">
-              ${clueBits.map(bit => `<span>${escapeHtml(bit)}</span>`).join('')}
-            </div>
+            <p class="rv-wire-text"><strong>${escapeHtml(revision.card || 'Question')}</strong>: ${escapeHtml(revision.answer || 'No answer yet.')}</p>
           </article>
-        `;
-      }).join('');
+        `).join('')
+        : '<article class="rv-notebook-revision"><p class="rv-wire-text">Waiting for the first constrained clue.</p></article>';
+
+      list.innerHTML = `
+        <article class="rv-notebook-card">
+          <div class="rv-notebook-row">
+            <span>Meeting</span>
+            <strong>${escapeHtml(meeting.name || this.state?.meeting?.target?.name || '--')}</strong>
+          </div>
+          <p class="rv-notebook-rationale">${escapeHtml(meeting.rationale || 'Meet at the same public landmark; do not trade exact locations.')}</p>
+          <div class="rv-notebook-grid">
+            <div>
+              <span>Last durable clue</span>
+              <p>${escapeHtml(notebook.lastReliableClue || 'No durable clue yet.')}</p>
+            </div>
+            <div>
+              <span>Uncertainty</span>
+              <p>${escapeHtml(notebook.uncertainty || 'unknown')}</p>
+            </div>
+          </div>
+          <div class="rv-notebook-question">
+            <span>Next question</span>
+            <strong>${escapeHtml(next.card || 'Question card')}</strong>
+            <p>${escapeHtml(next.prompt || 'Ask for one coarse clue.')}</p>
+          </div>
+          <div class="rv-notebook-plans">
+            <p><strong>Ada</strong> ${escapeHtml(plans.ada || 'Move toward the agreed public landmark.')}</p>
+            <p><strong>Theo</strong> ${escapeHtml(plans.theo || 'Move toward the agreed public landmark.')}</p>
+          </div>
+        </article>
+        <div class="rv-notebook-revisions">
+          ${revisionHtml}
+        </div>
+      `;
     }
 
     renderLog() {

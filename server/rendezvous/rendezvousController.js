@@ -80,14 +80,57 @@ const START_PAIRS = Object.freeze([
 
 const STREET_SEARCH_RADII_METERS = Object.freeze([18, 36, 72]);
 const STREET_SEARCH_BEARINGS = Object.freeze([0, 45, 90, 135, 180, 225, 270, 315]);
+const NOTEBOOK_REVISION_LIMIT = 18;
+const QUESTION_CARDS = Object.freeze([
+  {
+    id: 'warmer-colder',
+    label: 'Warmer / colder',
+    prompt: 'Did that move make the meeting place feel closer?',
+    answer: ({ agent, target }) => {
+      const distance = calculateDistance(agent.position, target.position);
+      if (distance < 180) return 'warmer: the streets feel close enough to slow down and verify';
+      if (distance < 650) return 'warmer: the route still feels pointed at the agreement';
+      return 'uncertain: the city has not resolved into the meeting place yet';
+    }
+  },
+  {
+    id: 'street-texture',
+    label: 'Street texture',
+    prompt: 'What kind of city edge are you reading?',
+    answer: ({ agent }) => {
+      const lat = Number(agent.position?.lat);
+      if (lat >= 40.765) return 'park-edge streets and broad crossings';
+      if (lat >= 40.755) return 'bright midtown blocks with busy sidewalks';
+      if (lat >= 40.738) return 'mixed avenues and narrower commercial streets';
+      return 'lower blocks with tighter corners and slower turns';
+    }
+  },
+  {
+    id: 'landmark-class',
+    label: 'Landmark class',
+    prompt: 'What kind of anchor should we trust next?',
+    answer: ({ target }) => {
+      if (/park|square|circle/i.test(target.name)) return 'open public space, not a private storefront';
+      if (/terminal/i.test(target.name)) return 'major transit landmark with obvious approaches';
+      return 'large civic landmark visible from more than one block';
+    }
+  },
+  {
+    id: 'confidence-check',
+    label: 'Confidence check',
+    prompt: 'How strongly should the shared plan hold?',
+    answer: ({ agent, target }) => {
+      const distance = calculateDistance(agent.position, target.position);
+      if (distance < 250) return 'hold the plan; verify at the edges';
+      if (distance < 900) return 'hold the plan, but keep one doubt open';
+      return 'keep the plan provisional until another clue agrees';
+    }
+  }
+]);
 
 function parseIntOr(value, fallback) {
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
 }
 
 function calculateDistance(pos1, pos2) {
@@ -106,14 +149,6 @@ function calculateDistance(pos1, pos2) {
   const a = Math.sin(deltaPhi / 2) ** 2 +
     Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) ** 2;
   return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-function blendPositions(primary, secondary, secondaryWeight) {
-  const weight = clamp(Number(secondaryWeight), 0, 1);
-  return {
-    lat: Number(primary.lat) * (1 - weight) + Number(secondary.lat) * weight,
-    lng: Number(primary.lng) * (1 - weight) + Number(secondary.lng) * weight
-  };
 }
 
 function offsetPosition(position, meters, bearingDegrees) {
@@ -139,15 +174,6 @@ function bearingWord(bearing) {
   return labels[index];
 }
 
-function roughDistanceLabel(meters) {
-  if (!Number.isFinite(meters)) return 'unknown distance';
-  if (meters < 120) return 'a few blocks';
-  if (meters < 450) return 'several blocks';
-  if (meters < 900) return 'about half a mile';
-  if (meters < 1700) return 'about a mile';
-  return `${Math.round(meters / 1000)} km or more`;
-}
-
 function neighborhoodFor(position) {
   const lat = Number(position?.lat);
   const lng = Number(position?.lng);
@@ -162,13 +188,28 @@ function neighborhoodFor(position) {
   return 'Lower Manhattan';
 }
 
-function nearestLandmark(position) {
-  return GUIDEBOOK_LANDMARKS
-    .map(landmark => ({
-      ...landmark,
-      distanceMeters: calculateDistance(position, landmark.position)
-    }))
-    .sort((a, b) => a.distanceMeters - b.distanceMeters)[0];
+function streetTextureFor(position) {
+  const lat = Number(position?.lat);
+  if (!Number.isFinite(lat)) return 'ordinary Manhattan blocks';
+  if (lat >= 40.765) return 'park-edge streets';
+  if (lat >= 40.755) return 'busy midtown blocks';
+  if (lat >= 40.738) return 'mixed avenue blocks';
+  return 'tighter downtown blocks';
+}
+
+function uncertaintyLabel(distanceToTarget) {
+  if (!Number.isFinite(distanceToTarget)) return 'unknown';
+  if (distanceToTarget < 180) return 'low';
+  if (distanceToTarget < 650) return 'medium';
+  return 'high';
+}
+
+function notebookPlanFor(agent, target) {
+  const distance = calculateDistance(agent?.position, target?.position);
+  const targetName = target?.name || 'the public meeting place';
+  if (distance < 180) return `Verify the edges of ${targetName}; avoid overshooting.`;
+  if (distance < 650) return `Keep moving toward ${targetName}; ask only for coarse confirmation.`;
+  return `Treat ${targetName} as the anchor; do not chase exact clues.`;
 }
 
 function publicPoint(point) {
@@ -188,6 +229,16 @@ function hasStreetLinks(panorama) {
 function stripTelegramInternal(telegram) {
   if (!telegram) return telegram;
   const { roughPosition, ...publicTelegram } = telegram;
+  if (publicTelegram.clues && typeof publicTelegram.clues === 'object') {
+    const publicClues = { ...publicTelegram.clues };
+    for (const key of ['neighborhood', 'nearestLandmark', 'landmarkDistance', 'intention', 'target']) {
+      delete publicClues[key];
+    }
+    publicTelegram.clues = publicClues;
+  }
+  if (publicTelegram.kind !== 'notebook_update') {
+    publicTelegram.text = 'Legacy wire archived; use the shared notebook for durable clues.';
+  }
   return publicTelegram;
 }
 
@@ -216,7 +267,6 @@ export class RendezvousController {
     this.foundRadiusMeters = parseIntOr(process.env.RENDEZVOUS_FOUND_RADIUS_M, 125);
     this.meetTargetRadiusMeters = parseIntOr(process.env.RENDEZVOUS_TARGET_RADIUS_M, 85);
     this.waitRadiusMeters = parseIntOr(process.env.RENDEZVOUS_WAIT_RADIUS_M, 55);
-    this.friendEstimateUncertaintyMeters = parseIntOr(process.env.RENDEZVOUS_FRIEND_ESTIMATE_M, 220);
   }
 
   #emptyState() {
@@ -237,6 +287,7 @@ export class RendezvousController {
         adaDistanceToTarget: null,
         theoDistanceToTarget: null
       },
+      notebook: null,
       agents: {},
       telegrams: [],
       eventLog: []
@@ -275,6 +326,7 @@ export class RendezvousController {
       ...this.#emptyState(),
       ...raw,
       agents: raw.agents || {},
+      notebook: this.#normalizeNotebook(raw.notebook, raw.meeting?.target),
       telegrams: Array.isArray(raw.telegrams) ? raw.telegrams : [],
       eventLog: Array.isArray(raw.eventLog) ? raw.eventLog.slice(-80) : []
     };
@@ -287,11 +339,63 @@ export class RendezvousController {
         inbox: Array.isArray(state.agents[agentId].inbox) ? state.agents[agentId].inbox : [],
         outbox: Array.isArray(state.agents[agentId].outbox) ? state.agents[agentId].outbox : [],
         recentNotes: Array.isArray(state.agents[agentId].recentNotes) ? state.agents[agentId].recentNotes : [],
-        visitedPanos: Array.isArray(state.agents[agentId].visitedPanos) ? state.agents[agentId].visitedPanos : []
+        visitedPanos: Array.isArray(state.agents[agentId].visitedPanos) ? state.agents[agentId].visitedPanos : [],
+        friendEstimate: null
       };
     }
     this.running = state.status === 'running';
     return state;
+  }
+
+  #createNotebook(target) {
+    const targetName = target?.name || 'the agreed public landmark';
+    return {
+      version: 1,
+      proposedMeeting: {
+        name: targetName,
+        status: 'agreed',
+        rationale: 'A public landmark is easier to converge on than chasing each other.'
+      },
+      lastReliableClue: 'Only durable, low-resolution clues belong here.',
+      uncertainty: 'high',
+      nextQuestion: {
+        from: 'Ada',
+        to: 'Theo',
+        card: 'Warmer / colder',
+        prompt: 'Did that move make the meeting place feel closer?'
+      },
+      plans: {
+        ada: `Move toward ${targetName}; do not infer Theo's exact block.`,
+        theo: `Move toward ${targetName}; do not infer Ada's exact block.`
+      },
+      revisions: [],
+      updatedTurn: this.state.turn || 0,
+      updatedBy: null
+    };
+  }
+
+  #normalizeNotebook(notebook, target) {
+    const base = this.#createNotebook(target);
+    if (!notebook || typeof notebook !== 'object') return base;
+    return {
+      ...base,
+      ...notebook,
+      proposedMeeting: {
+        ...base.proposedMeeting,
+        ...(notebook.proposedMeeting || {})
+      },
+      nextQuestion: {
+        ...base.nextQuestion,
+        ...(notebook.nextQuestion || {})
+      },
+      plans: {
+        ...base.plans,
+        ...(notebook.plans || {})
+      },
+      revisions: Array.isArray(notebook.revisions)
+        ? notebook.revisions.slice(0, NOTEBOOK_REVISION_LIMIT)
+        : []
+    };
   }
 
   getPublicState() {
@@ -393,6 +497,7 @@ export class RendezvousController {
         adaDistanceToTarget: calculateDistance(agents.ada.position, target.position),
         theoDistanceToTarget: calculateDistance(agents.theo.position, target.position)
       },
+      notebook: this.#createNotebook(target),
       agents,
       telegrams: [],
       eventLog: []
@@ -491,7 +596,7 @@ export class RendezvousController {
     if (distanceToTarget <= this.waitRadiusMeters) {
       mode = 'waiting';
       agent.status = 'waiting';
-      decisionReason = `${agent.name} has reached ${target.name} and is waiting where the telegrams said a friend would look.`;
+      decisionReason = `${agent.name} has reached ${target.name} and waits at the agreed public landmark instead of chasing exact clues.`;
     } else {
       const candidates = await this.#candidatePanoramas(current.links || []);
       selected = this.#chooseCandidate(agent, target, candidates);
@@ -665,7 +770,6 @@ export class RendezvousController {
   #chooseCandidate(agent, target, candidates) {
     if (!candidates.length) return null;
     const recent = new Set((agent.visitedPanos || []).slice(-8));
-    const estimate = agent.friendEstimate?.position || null;
 
     return candidates
       .map(candidate => {
@@ -673,12 +777,10 @@ export class RendezvousController {
         const currentTargetDistance = calculateDistance(agent.position, target.position);
         const progress = currentTargetDistance - targetDistance;
         const revisitPenalty = recent.has(candidate.panoId) ? 180 : 0;
-        const estimateDistance = estimate ? calculateDistance(candidate.position, estimate) : 0;
-        const estimatePull = estimate ? Math.min(estimateDistance, 700) * 0.16 : 0;
         const noveltyBonus = recent.has(candidate.panoId) ? 0 : 35;
         return {
           ...candidate,
-          score: targetDistance + estimatePull + revisitPenalty - progress * 0.35 - noveltyBonus
+          score: targetDistance + revisitPenalty - progress * 0.35 - noveltyBonus
         };
       })
       .sort((a, b) => a.score - b.score)[0];
@@ -686,20 +788,6 @@ export class RendezvousController {
 
   #targetForAgent(agent) {
     const target = this.state.meeting.target || GUIDEBOOK_LANDMARKS[0];
-    const estimate = agent.friendEstimate?.position;
-    if (estimate) {
-      const age = Math.max(0, this.state.turn - Number(agent.friendEstimate.receivedTurn || this.state.turn));
-      const freshness = clamp(1 - age / 12, 0.2, 1);
-      const estimateWeight = 0.18 + freshness * 0.18;
-      return {
-        ...target,
-        id: `${target.id}-wire-intercept`,
-        name: `${target.name} via ${agent.friendEstimate.label}`,
-        source: 'telegram_intercept',
-        baseTargetName: target.name,
-        position: blendPositions(target.position, estimate, estimateWeight)
-      };
-    }
     return {
       ...target,
       source: 'guidebook',
@@ -710,13 +798,10 @@ export class RendezvousController {
 
   #decisionReason(agent, selected, target) {
     const bearing = calculateBearing(agent.position, target.position);
-    const landmark = nearestLandmark(agent.position);
     const direction = bearingWord(bearing);
-    const label = selected?.label ? ` The Street View label reads "${selected.label}".` : '';
-    const friendLine = agent.friendEstimate
-      ? ` The last telegram puts their friend somewhere around ${agent.friendEstimate.label}, so the route bends toward that rough wire before ${target.baseTargetName || target.name}.`
-      : ' The old agreement says a public landmark beats wandering.';
-    return `${agent.name} turns ${direction} toward ${target.name}, using ${landmark.name} as the nearest guidebook anchor.${friendLine}${label}`;
+    const texture = streetTextureFor(agent.position);
+    const linkLine = selected?.label ? ' A public turn is available, so the plan can keep moving.' : '';
+    return `${agent.name} moves ${direction} toward ${target.baseTargetName || target.name}. Notebook rule: keep the shared plan, share one low-resolution clue, and avoid chasing an exact block. The street reads as ${texture}.${linkLine}`;
   }
 
   async #sendTelegram(agentId, { opening = false } = {}) {
@@ -726,21 +811,27 @@ export class RendezvousController {
     if (!agent || !partner) return null;
 
     const target = this.state.meeting.target || GUIDEBOOK_LANDMARKS[0];
-    const landmark = nearestLandmark(agent.position);
-    const bearingToTarget = calculateBearing(agent.position, target.position);
-    const neighborhood = neighborhoodFor(agent.position);
+    const card = this.#selectQuestionCard(agentId, opening);
+    const answer = card.answer({ agent, partner, target });
+    const notebookRevision = this.#applyNotebookUpdate({
+      agentId,
+      partnerId,
+      card,
+      answer,
+      opening
+    });
     const message = this.#telegramText({
       agent,
       partner,
-      target,
-      landmark,
-      neighborhood,
+      card,
+      answer,
       opening,
-      bearingToTarget
+      notebookRevision
     });
 
     const telegram = {
       id: randomUUID(),
+      kind: 'notebook_update',
       from: agentId,
       fromName: agent.name,
       to: partnerId,
@@ -750,17 +841,12 @@ export class RendezvousController {
       status: 'in_transit',
       text: message,
       clues: {
-        neighborhood,
-        nearestLandmark: landmark.name,
-        landmarkDistance: roughDistanceLabel(landmark.distanceMeters),
-        intention: `moving ${bearingWord(bearingToTarget)} toward ${target.name}`,
-        target: target.name
+        card: card.label,
+        answer,
+        uncertainty: notebookRevision.uncertainty,
+        expiresTurn: notebookRevision.expiresTurn
       },
-      roughPosition: {
-        position: this.#roughPosition(agent.position),
-        label: neighborhood,
-        uncertaintyMeters: this.friendEstimateUncertaintyMeters
-      },
+      notebookRevision,
       createdAt: new Date().toISOString()
     };
 
@@ -772,27 +858,66 @@ export class RendezvousController {
     return telegram;
   }
 
-  #telegramText({ agent, partner, target, landmark, neighborhood, opening, bearingToTarget }) {
-    const distanceLabel = roughDistanceLabel(landmark.distanceMeters);
-    const targetDirection = bearingWord(bearingToTarget);
-    const recent = agent.recentNotes?.at(-1) || `${agent.name} is taking stock of the street signs.`;
-    const opener = opening
-      ? `FIRST WIRE TO ${partner.name.toUpperCase()}:`
-      : `WIRE TO ${partner.name.toUpperCase()}:`;
-    return `${opener} I am in ${neighborhood}, ${distanceLabel} from ${landmark.name}. ` +
-      `I will make ${targetDirection} for ${target.name}. ` +
-      `${recent.replace(/\s+/g, ' ').slice(0, 120)}`;
+  #selectQuestionCard(agentId, opening) {
+    const agentOffset = agentId === 'ada' ? 0 : 1;
+    const openingOffset = opening ? 0 : 2;
+    const index = (this.state.turn + agentOffset + openingOffset) % QUESTION_CARDS.length;
+    return QUESTION_CARDS[index];
   }
 
-  #roughPosition(position) {
-    const meters = this.friendEstimateUncertaintyMeters;
-    const latMeters = 111320;
-    const lngMeters = latMeters * Math.cos(Number(position.lat) * Math.PI / 180);
-    const turnOffset = ((this.state.turn % 5) - 2) * (meters / 9);
-    return {
-      lat: Number(position.lat) + turnOffset / latMeters,
-      lng: Number(position.lng) - turnOffset / lngMeters
+  #applyNotebookUpdate({ agentId, partnerId, card, answer, opening }) {
+    const agent = this.state.agents[agentId];
+    const partner = this.state.agents[partnerId];
+    const target = this.state.meeting.target || GUIDEBOOK_LANDMARKS[0];
+    const notebook = this.#normalizeNotebook(this.state.notebook, target);
+    const nextCard = QUESTION_CARDS[(QUESTION_CARDS.findIndex(entry => entry.id === card.id) + 1) % QUESTION_CARDS.length];
+    const distanceToTarget = calculateDistance(agent.position, target.position);
+    const uncertainty = uncertaintyLabel(distanceToTarget);
+    const revision = {
+      id: randomUUID(),
+      turn: this.state.turn,
+      by: agent.name,
+      agentId,
+      card: card.label,
+      prompt: card.prompt,
+      answer,
+      uncertainty,
+      expiresTurn: this.state.turn + 12,
+      createdAt: new Date().toISOString()
     };
+
+    notebook.proposedMeeting = {
+      ...notebook.proposedMeeting,
+      name: target.name,
+      status: opening ? 'proposed' : 'agreed',
+      rationale: 'Meet at the same public landmark; do not trade exact locations.'
+    };
+    notebook.lastReliableClue = `${agent.name}: ${answer}`;
+    notebook.uncertainty = uncertainty;
+    notebook.nextQuestion = {
+      from: partner.name,
+      to: agent.name,
+      card: nextCard.label,
+      prompt: nextCard.prompt
+    };
+    notebook.plans = {
+      ...notebook.plans,
+      [agentId]: notebookPlanFor(agent, target),
+      [partnerId]: notebook.plans?.[partnerId] || notebookPlanFor(partner, target)
+    };
+    notebook.updatedTurn = this.state.turn;
+    notebook.updatedBy = agent.name;
+    notebook.revisions = [revision, ...(notebook.revisions || [])].slice(0, NOTEBOOK_REVISION_LIMIT);
+    this.state.notebook = notebook;
+    this.#recordEvent('notebook_updated', revision);
+    return revision;
+  }
+
+  #telegramText({ agent, partner, card, answer, opening }) {
+    const opener = opening
+      ? `FIRST NOTEBOOK PASS TO ${partner.name.toUpperCase()}:`
+      : `NOTEBOOK PASS TO ${partner.name.toUpperCase()}:`;
+    return `${opener} ${card.label}. ${answer}. One clue only; keep the meeting card intact.`;
   }
 
   #deliverTelegrams() {
@@ -804,12 +929,7 @@ export class RendezvousController {
       telegram.deliveredAt = new Date().toISOString();
       recipient.inbox.push(telegram);
       recipient.inbox = recipient.inbox.slice(-10);
-      recipient.friendEstimate = {
-        label: telegram.roughPosition?.label || telegram.clues?.neighborhood || 'their last telegram district',
-        position: telegram.roughPosition?.position || null,
-        uncertaintyMeters: telegram.roughPosition?.uncertaintyMeters || this.friendEstimateUncertaintyMeters,
-        receivedTurn: this.state.turn
-      };
+      recipient.friendEstimate = null;
       this.#recordEvent('telegram_delivered', stripTelegramInternal(telegram));
       this.emit('rendezvous-telegram', stripTelegramInternal(telegram));
     }

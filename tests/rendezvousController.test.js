@@ -127,7 +127,7 @@ class IndoorAdaStartStreetView extends FakeStreetView {
   }
 }
 
-test('RendezvousController delivers useful telegrams and can reach a found state', async () => {
+test('RendezvousController updates the shared notebook and can reach a found state', async () => {
   const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
   process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-test-'));
@@ -154,15 +154,53 @@ test('RendezvousController delivers useful telegrams and can reach a found state
     assert.ok(controller.state.telegrams.some(telegram => telegram.status === 'delivered'));
     assert.ok(events.some(entry =>
       entry.event === 'rendezvous-step' &&
-        /rough wire/.test(entry.data?.reasoning || '')
+        /Notebook rule/.test(entry.data?.reasoning || '')
     ));
+    assert.ok(controller.state.notebook);
+    assert.ok(controller.state.notebook.revisions.length > 0);
+    assert.ok(events.some(entry => entry.event === 'rendezvous-telegram' && entry.data?.kind === 'notebook_update'));
+    assert.ok(controller.state.eventLog.some(entry => entry.type === 'notebook_updated'));
 
     const publicState = controller.getPublicState();
     assert.equal(publicState.mode, 'rendezvous');
     assert.equal(publicState.agents.ada.friendEstimate?.position, undefined);
     assert.equal(publicState.telegrams.some(telegram => Object.hasOwn(telegram, 'roughPosition')), false);
-    assert.match(publicState.telegrams[0].text, /Bryant Park/);
+    assert.equal(publicState.telegrams.some(telegram => Object.hasOwn(telegram.clues || {}, 'neighborhood')), false);
+    assert.equal(publicState.telegrams.some(telegram => Object.hasOwn(telegram.clues || {}, 'nearestLandmark')), false);
+    assert.equal(publicState.telegrams.some(telegram => Object.hasOwn(telegram.clues || {}, 'intention')), false);
+    assert.match(publicState.telegrams[0].text, /NOTEBOOK PASS|FIRST NOTEBOOK PASS/);
+    assert.doesNotMatch(publicState.telegrams[0].text, /Bryant Park/);
     assert.doesNotMatch(publicState.telegrams[0].text, /-?\d+\.\d{3,}/);
+    assert.equal(publicState.notebook.proposedMeeting.name, 'Bryant Park');
+    assert.match(publicState.notebook.lastReliableClue, /Ada|Theo/);
+
+    const legacyTelegram = {
+      id: 'legacy-wire',
+      from: 'ada',
+      to: 'theo',
+      status: 'delivered',
+      text: 'I am in Midtown near Bryant Park.',
+      clues: {
+        neighborhood: 'Midtown',
+        nearestLandmark: 'Bryant Park',
+        landmarkDistance: 'a few blocks',
+        intention: 'moving west',
+        target: 'Bryant Park',
+        answer: 'hold the plan'
+      },
+      roughPosition: { position: { lat: 40.75, lng: -73.98 } }
+    };
+    controller.state.telegrams.push(legacyTelegram);
+    controller.state.agents.theo.inbox.push(legacyTelegram);
+
+    const migratedPublicState = controller.getPublicState();
+    const migratedWire = migratedPublicState.telegrams.find(telegram => telegram.id === 'legacy-wire');
+    const migratedInboxWire = migratedPublicState.agents.theo.inbox.find(telegram => telegram.id === 'legacy-wire');
+    assert.equal(migratedWire.text, 'Legacy wire archived; use the shared notebook for durable clues.');
+    assert.deepEqual(migratedWire.clues, { answer: 'hold the plan' });
+    assert.equal(Object.hasOwn(migratedWire, 'roughPosition'), false);
+    assert.equal(migratedInboxWire.text, migratedWire.text);
+    assert.equal(Object.hasOwn(migratedInboxWire, 'roughPosition'), false);
   } finally {
     if (previousPairIndex === undefined) {
       delete process.env.RENDEZVOUS_START_PAIR_INDEX;

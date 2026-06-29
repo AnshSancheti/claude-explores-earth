@@ -305,7 +305,7 @@ button:disabled {
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-rows: 310px minmax(175px, 0.86fr) minmax(160px, 0.72fr);
+  grid-template-rows: minmax(220px, 0.9fr) minmax(260px, 1.2fr) minmax(140px, 0.55fr);
   gap: 12px;
 }
 
@@ -380,7 +380,9 @@ button:disabled {
 }
 
 .rv-telegram,
-.rv-log-entry {
+.rv-log-entry,
+.rv-notebook-card,
+.rv-notebook-revision {
   margin-bottom: 8px;
   padding: 10px;
   border: 1px solid var(--line);
@@ -484,6 +486,90 @@ button:disabled {
   background: rgba(255, 255, 255, 0.06);
   color: var(--muted);
   font-size: 11px;
+}
+
+.rv-notebook-card {
+  border-color: rgba(110, 231, 167, 0.28);
+  background: rgba(14, 22, 20, 0.66);
+}
+
+.rv-notebook-row,
+.rv-notebook-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.rv-notebook-row {
+  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr);
+  align-items: baseline;
+}
+
+.rv-notebook-row span,
+.rv-notebook-grid span,
+.rv-notebook-question span {
+  color: var(--faint);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.rv-notebook-row strong,
+.rv-notebook-question strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rv-notebook-rationale,
+.rv-notebook-grid p,
+.rv-notebook-question p,
+.rv-notebook-plans p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.36;
+}
+
+.rv-notebook-grid {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.rv-notebook-question {
+  margin-top: 10px;
+  padding: 9px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.rv-notebook-plans {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.rv-notebook-plans strong {
+  color: var(--text);
+}
+
+.rv-notebook-revisions {
+  margin-top: 10px;
+}
+
+.rv-notebook-revision.ada {
+  border-left: 3px solid var(--ada);
+}
+
+.rv-notebook-revision.theo {
+  border-left: 3px solid var(--theo);
 }
 
 .modal {
@@ -814,6 +900,10 @@ button:disabled {
   .rv-telegram-list,
   .rv-log {
     -webkit-overflow-scrolling: touch;
+  }
+
+  .rv-notebook-plans {
+    grid-template-columns: 1fr;
   }
 
   .rv-mobile-tabs {
