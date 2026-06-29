@@ -77,7 +77,7 @@ const START_PAIRS = Object.freeze([
 const STREET_SEARCH_RADII_METERS = Object.freeze([18, 36, 72]);
 const STREET_SEARCH_BEARINGS = Object.freeze([0, 45, 90, 135, 180, 225, 270, 315]);
 const NOTEBOOK_REVISION_LIMIT = 18;
-const LEGACY_RENDEZVOUS_HINT_PATTERN = /rough wire|last telegram|telegrams said|telegram puts|somewhere around|nearest guidebook|wire before/i;
+const LEGACY_RENDEZVOUS_HINT_PATTERN = /rough wire|last telegram|telegrams said|telegram puts|somewhere around|nearest guidebook|wire before|meeting place|Bryant Park|Grand Central|Union Square|Washington Square|Columbus Circle/i;
 const QUESTION_CARDS = Object.freeze([
   {
     id: 'warmer-colder',
@@ -275,14 +275,19 @@ function sanitizeLegacyNotebookText(text, fallback) {
 
 function sanitizePublicAgent(agent, target) {
   const fallback = publicNotebookReason(agent, target);
+  const lastDecision = agent.lastDecision
+    ? {
+        ...agent.lastDecision,
+        reasoning: sanitizeLegacyNotebookText(agent.lastDecision.reasoning, fallback)
+      }
+    : agent.lastDecision;
+  if (lastDecision) {
+    delete lastDecision.targetName;
+    delete lastDecision.distanceToTarget;
+  }
   return {
     ...agent,
-    lastDecision: agent.lastDecision
-      ? {
-          ...agent.lastDecision,
-          reasoning: sanitizeLegacyNotebookText(agent.lastDecision.reasoning, fallback)
-        }
-      : agent.lastDecision,
+    lastDecision,
     recentNotes: Array.isArray(agent.recentNotes)
       ? agent.recentNotes.map(note => sanitizeLegacyNotebookText(note, fallback))
       : agent.recentNotes
@@ -293,6 +298,14 @@ function sanitizePublicEvent(event, target) {
   if (!event || typeof event !== 'object') return event;
   const payload = event.payload || event.data;
   if (!payload || typeof payload !== 'object') return event;
+  if (event.type === 'telegram_sent' || event.type === 'telegram_delivered') {
+    const sanitizedTelegram = stripTelegramInternal(payload);
+    return {
+      ...event,
+      payload: event.payload ? sanitizedTelegram : event.payload,
+      data: event.data ? sanitizedTelegram : event.data
+    };
+  }
   const agentName = payload.agentName || payload.name || payload.agentId;
   const fallback = publicNotebookReason({ name: agentName || 'The agent', status: payload.status }, target);
   const sanitizedPayload = {
@@ -303,6 +316,8 @@ function sanitizePublicEvent(event, target) {
       ? undefined
       : payload.target
   };
+  delete sanitizedPayload.targetName;
+  delete sanitizedPayload.distanceToTarget;
   return {
     ...event,
     payload: event.payload ? sanitizedPayload : event.payload,
@@ -481,11 +496,13 @@ export class RendezvousController {
       },
       nextQuestion: {
         ...base.nextQuestion,
-        ...(notebook.nextQuestion || {})
+        ...(notebook.nextQuestion || {}),
+        prompt: sanitizeLegacyNotebookText(notebook.nextQuestion?.prompt, base.nextQuestion.prompt) ||
+          base.nextQuestion.prompt
       },
       plans: {
-        ...base.plans,
-        ...(notebook.plans || {})
+        ada: sanitizeLegacyNotebookText(notebook.plans?.ada, base.plans.ada) || base.plans.ada,
+        theo: sanitizeLegacyNotebookText(notebook.plans?.theo, base.plans.theo) || base.plans.theo
       },
       revisions: Array.isArray(notebook.revisions)
         ? notebook.revisions.slice(0, NOTEBOOK_REVISION_LIMIT)
@@ -515,6 +532,7 @@ export class RendezvousController {
 
     return {
       ...this.state,
+      notebook: this.#normalizeNotebook(this.state.notebook),
       agents,
       eventLog: (this.state.eventLog || []).map(event => sanitizePublicEvent(event, target)),
       telegrams: (this.state.telegrams || []).map(stripTelegramInternal)

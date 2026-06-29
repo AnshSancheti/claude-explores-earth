@@ -226,13 +226,36 @@ test('RendezvousController uses a shared trail notebook and can find the other a
         reasoning: 'The last telegram puts Theo somewhere around NoHo, so Ada follows the rough wire.'
       }
     });
+    controller.state.eventLog.push({
+      type: 'telegram_sent',
+      turn: controller.state.turn,
+      payload: legacyTelegram
+    });
+    controller.state.notebook.plans = {
+      ada: 'Move toward Union Square; do not infer Theo exact block.',
+      theo: 'Move toward Union Square; do not infer Ada exact block.'
+    };
+    controller.state.notebook.nextQuestion = {
+      card: 'Warmer / colder',
+      prompt: 'Did that move make the meeting place feel closer?'
+    };
 
     const sanitizedPublicState = controller.getPublicState();
     assert.doesNotMatch(sanitizedPublicState.agents.ada.lastDecision.reasoning, /telegram|rough wire|nearest guidebook|somewhere around/i);
+    assert.equal(Object.hasOwn(sanitizedPublicState.agents.ada.lastDecision, 'targetName'), false);
+    assert.equal(Object.hasOwn(sanitizedPublicState.agents.ada.lastDecision, 'distanceToTarget'), false);
     assert.match(sanitizedPublicState.agents.ada.lastDecision.reasoning, /shared notebook|low-resolution/);
     assert.doesNotMatch(sanitizedPublicState.agents.ada.recentNotes[0], /telegram|wire before|somewhere around/i);
-    assert.doesNotMatch(sanitizedPublicState.eventLog.at(-1).payload.reasoning, /telegram|rough wire|somewhere around/i);
-    assert.match(sanitizedPublicState.eventLog.at(-1).payload.reasoning, /shared notebook|low-resolution/);
+    const sanitizedAgentEvent = sanitizedPublicState.eventLog.filter(entry => entry.type === 'agent_step').at(-1);
+    assert.doesNotMatch(sanitizedAgentEvent.payload.reasoning, /telegram|rough wire|somewhere around/i);
+    assert.match(sanitizedAgentEvent.payload.reasoning, /shared notebook|low-resolution/);
+    const sanitizedTelegramEvent = sanitizedPublicState.eventLog.find(entry =>
+      entry.type === 'telegram_sent' && entry.payload?.id === 'legacy-wire'
+    );
+    assert.equal(sanitizedTelegramEvent.payload.text, 'Legacy wire archived; use the shared notebook for durable clues.');
+    assert.deepEqual(sanitizedTelegramEvent.payload.clues, { answer: 'hold the plan' });
+    assert.doesNotMatch(sanitizedPublicState.notebook.plans.ada, /Union Square|Bryant Park/i);
+    assert.doesNotMatch(sanitizedPublicState.notebook.nextQuestion.prompt, /meeting place/i);
   } finally {
     if (previousPairIndex === undefined) {
       delete process.env.RENDEZVOUS_START_PAIR_INDEX;
