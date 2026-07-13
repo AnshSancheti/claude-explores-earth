@@ -636,6 +636,13 @@ export class RendezvousController {
         )
         .slice(-6)
         .map(operation => operation.text || operation.label);
+      const ownPadText = visiblePadOperations
+        .filter(operation =>
+          operation.author === agent.id &&
+          (operation.type === 'text' || (operation.type === 'landmark' && operation.label))
+        )
+        .slice(-6)
+        .map(operation => operation.text || operation.label);
       const [screenshots, scratchpadBuffer] = await Promise.all([
         this.#captureCandidateScreenshots(candidates),
         renderScratchpad(scratchpad, { throughSequence })
@@ -663,6 +670,7 @@ export class RendezvousController {
         scratchpadBuffer,
         canEditPad,
         forcePass,
+        ownPadText,
         partnerPadText,
         padStatus: this.#padStatusFor(agentId)
       });

@@ -242,6 +242,63 @@ test('convergence policy returns null when no available connector matches the ne
   assert.equal(policy, null);
 });
 
+test('convergence policy uses own rendered W12 text to send Theo north toward partner W14 on 7th Ave', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      currentRouteLabel: '7th Ave',
+      recentMovement: 'You most recently moved northeast into this panorama.'
+    },
+    ownPadText: ['W12TH ST'],
+    partnerPadText: ['W14th'],
+    options: [
+      { panoId: 'south-option', heading: 208.51862, label: '7th Ave' },
+      { panoId: 'north-option', heading: 28.549927, label: '7th Ave' }
+    ]
+  });
+
+  assert.equal(policy.selectedIndex, 1);
+  assert.equal(policy.desiredDirection, 'north');
+  assert.equal(policy.local, '12TH ST');
+  assert.equal(policy.target, '14TH ST');
+});
+
+test('convergence policy rejects same-corridor W14 labels as connectors toward partner W12', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      id: 'ada',
+      name: 'Ada',
+      currentRouteLabel: 'W 14th St',
+      recentMovement: 'You most recently moved southeast into this panorama.'
+    },
+    ownPadText: ['W14th'],
+    partnerPadText: ['W12TH ST'],
+    options: [
+      { panoId: 'east-option', heading: 118.32929, label: 'W 14th St' },
+      { panoId: 'west-option', heading: 299.1351, label: 'W 14th St' }
+    ]
+  });
+
+  assert.equal(policy, null);
+});
+
+test('convergence policy still allows unlabeled and avenue connectors toward another corridor', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      currentRouteLabel: 'W 14th St'
+    },
+    partnerPadText: ['W12TH ST'],
+    options: [
+      { panoId: 'street-option', heading: 118, label: 'W 14th St' },
+      { panoId: 'avenue-option', heading: 182, label: '7th Ave' },
+      { panoId: 'unlabeled-option', heading: 190, label: '' }
+    ]
+  });
+
+  assert.equal(policy.selectedIndex, 1);
+});
+
 test('convergence policy makes a geometrically better visited connector lose to a valid unvisited one', () => {
   const policy = selectConvergencePolicyOption({
     agent: {
@@ -317,6 +374,7 @@ test('model decision applies corridor convergence over generic exploration while
     scratchpadBuffer: Buffer.from('pad'),
     canEditPad: false,
     padStatus: 'held by Theo',
+    ownPadText: ['W 14th St'],
     partnerPadText: ['W HOUSTON ST']
   });
 
@@ -325,6 +383,7 @@ test('model decision applies corridor convergence over generic exploration while
   const serializedRequest = JSON.stringify(requests[0]);
   assert.doesNotMatch(serializedRequest, /north-option|south-option|west-option/);
   assert.match(serializedRequest, /Your own last selected visible route label/);
+  assert.match(serializedRequest, /current place text visibly written in your own ink/);
   assert.match(serializedRequest, /W 14th St/);
   assert.doesNotMatch(serializedRequest, /distanceToFriend|partnerPath|roughPosition|hidden-partner-pano|latitude|longitude|-?\d+\.\d{3,}/);
 });

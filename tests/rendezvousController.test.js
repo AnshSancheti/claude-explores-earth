@@ -126,6 +126,7 @@ class FakeRendezvousModel {
       canEditPad: input.canEditPad,
       forcePass: input.forcePass,
       padStatus: input.padStatus,
+      ownPadText: input.ownPadText,
       partnerPadText: input.partnerPadText
     }));
     return {
@@ -224,6 +225,12 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
       assert.doesNotMatch(call.agent.recentMovement, /-?\d+\.\d{3,}|partner|friend|distance/i);
       assert.equal(call.options.some(option => Object.hasOwn(option, 'distanceToFriend')), false);
       assert.equal(call.options.some(option => Object.hasOwn(option, 'position')), false);
+      assert.ok(Array.isArray(call.ownPadText));
+      assert.ok(Array.isArray(call.partnerPadText));
+      assert.equal(call.ownPadText.some(text => /-?\d+\.\d{3,}|distance|partner|friend/i.test(text)), false);
+      assert.equal(call.partnerPadText.some(text => /-?\d+\.\d{3,}|distance/i.test(text)), false);
+      assert.equal(call.ownPadText.some(text => !String(text).startsWith(call.agent.name)), false);
+      assert.equal(call.partnerPadText.some(text => String(text).startsWith(call.agent.name)), false);
     }
     assert.ok(model.calls.some(call =>
       call.options.some(option => call.agent.visitedPanos.includes(option.panoId)) &&
