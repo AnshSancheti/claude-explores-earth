@@ -9,6 +9,22 @@ export const SCRATCHPAD_MAX_CURRENT_OPS_PER_AUTHOR = 9;
 export const SCRATCHPAD_MAX_CURRENT_TEXT_OPS_PER_AUTHOR = 3;
 export const SCRATCHPAD_LABEL_MAX_CHARS = 28;
 
+const SCRATCHPAD_VERSION = 4;
+const SKETCH_SCENES = new Set(['intersection', 'storefront', 'park', 'station', 'landmark']);
+const SKETCH_DETAILS = new Set([
+  'awning',
+  'brick',
+  'church',
+  'clock',
+  'scaffolding',
+  'stairs',
+  'storefront',
+  'tower',
+  'trafficLight',
+  'tree'
+]);
+const SKETCH_MOVEMENTS = new Set(['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest']);
+
 const AGENT_INK = Object.freeze({
   ada: '#24211d',
   theo: '#087fa8'
@@ -72,6 +88,40 @@ export function sanitizeScratchpadOperation(raw, agentId, { strictText = true, m
       author,
       color: base.color,
       scope: 'mine'
+    };
+  }
+
+  if (type === 'replacesheet') {
+    return {
+      type: 'replaceSheet',
+      author,
+      color: base.color,
+      scope: 'sheet'
+    };
+  }
+
+  if (type === 'sketch') {
+    const label = strictText
+      ? textValue(raw.label || '')
+      : persistedTextValue(raw.label || '').slice(0, SCRATCHPAD_LABEL_MAX_CHARS);
+    const secondaryLabel = strictText
+      ? textValue(raw.secondaryLabel || '')
+      : persistedTextValue(raw.secondaryLabel || '').slice(0, SCRATCHPAD_LABEL_MAX_CHARS);
+    const scene = SKETCH_SCENES.has(raw.scene) ? raw.scene : 'intersection';
+    const details = Array.isArray(raw.details)
+      ? [...new Set(raw.details.filter(detail => SKETCH_DETAILS.has(detail)))].slice(0, 4)
+      : [];
+    const movement = SKETCH_MOVEMENTS.has(raw.movement) ? raw.movement : null;
+    return {
+      type: 'sketch',
+      author,
+      color: base.color,
+      scene,
+      details,
+      label,
+      secondaryLabel,
+      movement,
+      migratedFromVersion
     };
   }
 
@@ -146,7 +196,7 @@ export function sanitizeScratchpadOperation(raw, agentId, { strictText = true, m
 
 export function createScratchpad({ owner = 'ada', turn = 0 } = {}) {
   return {
-    version: 3,
+    version: SCRATCHPAD_VERSION,
     width: SCRATCHPAD_WIDTH,
     height: SCRATCHPAD_HEIGHT,
     owner,
@@ -163,7 +213,7 @@ export function createScratchpad({ owner = 'ada', turn = 0 } = {}) {
 }
 
 function renderableOperation(operation) {
-  return operation && !['replaceMine'].includes(operation.type);
+  return operation && !['replaceMine', 'replaceSheet'].includes(operation.type);
 }
 
 function distance(a, b) {
@@ -242,6 +292,17 @@ function applyCurrentViewRules(operations) {
   );
 
   for (const operation of result) {
+    if (operation.type === 'replaceSheet') {
+      for (const previous of result.filter(candidate =>
+        renderableOperation(candidate) &&
+        !candidate.supersededAtSequence &&
+        candidate.sequence < operation.sequence
+      )) {
+        supersede(previous, operation, 'replaced_by_message');
+      }
+      continue;
+    }
+
     if (operation.type === 'replaceMine') {
       for (const previous of visibleNow(operation.author, () => true, operation.sequence)) {
         if (previous.sequence < operation.sequence) supersede(previous, operation, 'replaced_by_author');
@@ -282,6 +343,89 @@ function applyCurrentViewRules(operations) {
   }
 
   return result;
+}
+
+function oppositeAgent(agentId) {
+  return agentId === 'theo' ? 'ada' : 'theo';
+}
+
+function directionFromLegacyOperation(operation) {
+  const ends = endpoints(operation || {});
+  if (!ends.from || !ends.to) return null;
+  const dx = Number(ends.to.x) - Number(ends.from.x);
+  const dy = Number(ends.to.y) - Number(ends.from.y);
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || Math.hypot(dx, dy) < 0.04) return null;
+  const horizontal = Math.abs(dx) > Math.abs(dy) * 1.8;
+  const vertical = Math.abs(dy) > Math.abs(dx) * 1.8;
+  if (horizontal) return dx > 0 ? 'east' : 'west';
+  if (vertical) return dy > 0 ? 'south' : 'north';
+  if (dx > 0) return dy > 0 ? 'southeast' : 'northeast';
+  return dy > 0 ? 'southwest' : 'northwest';
+}
+
+function migrateLegacyCurrentMessage(operations, sequence, turn) {
+  const ruled = applyCurrentViewRules(operations);
+  const current = currentScratchpadOperations({ operations: ruled });
+  if (current.length === 0) return { operations: ruled, sequence };
+
+  const latest = [...current].sort((a, b) => b.sequence - a.sequence)[0];
+  const author = latest.author === 'theo' ? 'theo' : 'ada';
+  const authorOperations = current.filter(operation => operation.author === author);
+  const labels = authorOperations
+    .map(operation => operation.type === 'text' ? operation.text : operation.label)
+    .map(value => persistedTextValue(value).trim().slice(0, SCRATCHPAD_LABEL_MAX_CHARS))
+    .filter(Boolean)
+    .slice(-2);
+  const movement = [...authorOperations]
+    .reverse()
+    .map(directionFromLegacyOperation)
+    .find(Boolean) || null;
+  const landmark = [...authorOperations].reverse().find(operation => operation.type === 'landmark');
+  const scene = landmark?.symbol === 'park'
+    ? 'park'
+    : landmark?.symbol === 'station'
+      ? 'station'
+      : 'intersection';
+  const details = scene === 'park'
+    ? ['tree', 'trafficLight']
+    : scene === 'station'
+      ? ['stairs', 'storefront', 'trafficLight']
+      : ['brick', 'awning', 'trafficLight', 'tree'];
+  const replacementSequence = sequence + 1;
+  const sketchSequence = sequence + 2;
+  const createdAt = latest.createdAt || new Date().toISOString();
+  const migrated = [
+    ...ruled,
+    {
+      type: 'replaceSheet',
+      author,
+      color: AGENT_INK[author],
+      scope: 'sheet',
+      id: `v4-message-${replacementSequence}`,
+      sequence: replacementSequence,
+      turn,
+      createdAt
+    },
+    {
+      type: 'sketch',
+      author,
+      color: AGENT_INK[author],
+      scene,
+      details,
+      label: labels.at(-1) || '',
+      secondaryLabel: labels.at(-2) || '',
+      movement,
+      migratedFromVersion: 3,
+      id: `v4-sketch-${sketchSequence}`,
+      sequence: sketchSequence,
+      turn,
+      createdAt
+    }
+  ];
+  return {
+    operations: applyCurrentViewRules(migrated),
+    sequence: sketchSequence
+  };
 }
 
 function retainScratchpadAudit(operations, raw = {}) {
@@ -352,7 +496,14 @@ export function normalizeScratchpad(raw, { turn = 0 } = {}) {
         })
         .filter(Boolean)
     : [];
-  const retainedAudit = retainScratchpadAudit(applyCurrentViewRules(rawOperations), raw);
+  const rawSequence = Math.max(
+    Math.floor(Number(raw.sequence) || 0),
+    rawOperations.reduce((max, operation) => Math.max(max, operation.sequence), 0)
+  );
+  const migrated = migratedFromVersion < SCRATCHPAD_VERSION
+    ? migrateLegacyCurrentMessage(rawOperations, rawSequence, turn)
+    : { operations: applyCurrentViewRules(rawOperations), sequence: rawSequence };
+  const retainedAudit = retainScratchpadAudit(migrated.operations, raw);
   const operations = retainedAudit.operations;
 
   const owner = raw.owner === 'ada' || raw.owner === 'theo' ? raw.owner : null;
@@ -369,27 +520,60 @@ export function normalizeScratchpad(raw, { turn = 0 } = {}) {
     ...base,
     owner: inTransit ? null : owner || 'ada',
     inTransit,
-    sequence: Math.max(
-      Math.floor(Number(raw.sequence) || 0),
-      operations.reduce((max, operation) => Math.max(max, operation.sequence), 0)
-    ),
+    sequence: Math.max(migrated.sequence, operations.reduce((max, operation) => Math.max(max, operation.sequence), 0)),
     heldSinceTurn: Math.max(0, Math.floor(Number(raw.heldSinceTurn) || turn)),
     operations,
     archivedOperationCount: retainedAudit.archivedOperationCount,
     archivedThroughSequence: retainedAudit.archivedThroughSequence,
     earliestRetainedSequence: retainedAudit.earliestRetainedSequence,
     currentOperations: currentScratchpadOperations({ operations }),
+    messageFrom: currentScratchpadOperations({ operations }).at(-1)?.author || null,
+    messageTo: currentScratchpadOperations({ operations }).at(-1)?.author
+      ? oppositeAgent(currentScratchpadOperations({ operations }).at(-1).author)
+      : null,
     updatedAt: raw.updatedAt || base.updatedAt
   };
+}
+
+function sketchFromIncomingOperations(incoming, agentId) {
+  const sanitized = incoming
+    .slice(0, SCRATCHPAD_MAX_OPS_PER_TURN)
+    .map(operation => sanitizeScratchpadOperation(operation, agentId))
+    .filter(Boolean);
+  const explicitSketch = [...sanitized].reverse().find(operation => operation.type === 'sketch');
+  if (explicitSketch) return explicitSketch;
+
+  const renderable = sanitized.filter(renderableOperation);
+  if (renderable.length === 0) return null;
+  const labels = renderable
+    .map(operation => operation.type === 'text' ? operation.text : operation.label)
+    .filter(Boolean)
+    .slice(-2);
+  const landmark = [...renderable].reverse().find(operation => operation.type === 'landmark');
+  const movement = [...renderable].reverse().map(directionFromLegacyOperation).find(Boolean) || null;
+  const scene = landmark?.symbol === 'park' ? 'park' : landmark?.symbol === 'station' ? 'station' : 'intersection';
+  return sanitizeScratchpadOperation({
+    type: 'sketch',
+    scene,
+    label: labels.at(-1) || '',
+    secondaryLabel: labels.at(-2) || '',
+    movement,
+    details: scene === 'park'
+      ? ['tree', 'trafficLight']
+      : scene === 'station'
+        ? ['stairs', 'storefront', 'trafficLight']
+        : ['brick', 'awning', 'trafficLight', 'tree']
+  }, agentId);
 }
 
 export function appendScratchpadOperations(scratchpad, rawOperations, { agentId, turn }) {
   const normalized = normalizeScratchpad(scratchpad, { turn });
   const incoming = Array.isArray(rawOperations) ? rawOperations : [];
-  const accepted = incoming
-    .slice(0, SCRATCHPAD_MAX_OPS_PER_TURN)
-    .map(operation => sanitizeScratchpadOperation(operation, agentId))
-    .filter(Boolean)
+  const sketch = sketchFromIncomingOperations(incoming, agentId);
+  let accepted = sketch
+    ? [sanitizeScratchpadOperation({ type: 'replaceSheet' }, agentId), sketch]
+    : [];
+  accepted = accepted
     .map(operation => ({
       ...operation,
       id: randomUUID(),
@@ -404,6 +588,8 @@ export function appendScratchpadOperations(scratchpad, rawOperations, { agentId,
   normalized.archivedThroughSequence = retainedAudit.archivedThroughSequence;
   normalized.earliestRetainedSequence = retainedAudit.earliestRetainedSequence;
   normalized.currentOperations = currentScratchpadOperations(normalized);
+  normalized.messageFrom = normalized.currentOperations.at(-1)?.author || null;
+  normalized.messageTo = normalized.messageFrom ? oppositeAgent(normalized.messageFrom) : null;
   normalized.updatedAt = new Date().toISOString();
   return { scratchpad: normalized, accepted };
 }
@@ -467,9 +653,82 @@ export function landmarkSymbolSvg(operation, { className = '', pathLength = fals
   return `<path${classAttr}${pathLengthAttr} d="M ${diamond} Z" fill="none" ${strokeAttrs} stroke-linejoin="round" />`;
 }
 
+function sketchLabel(value, fallback = '') {
+  return escapeXml(String(value || fallback).slice(0, SCRATCHPAD_LABEL_MAX_CHARS));
+}
+
+export function sketchOperationSvg(operation, { className = '' } = {}) {
+  const color = escapeXml(operation.color || AGENT_INK[operation.author] || AGENT_INK.ada);
+  const classAttr = className ? ` class="${escapeXml(className)}"` : '';
+  const details = new Set(Array.isArray(operation.details) ? operation.details : []);
+  const label = sketchLabel(operation.label, operation.scene === 'park' ? 'THE PARK' : 'STREET');
+  const secondary = sketchLabel(operation.secondaryLabel);
+  const buildingFill = operation.author === 'theo' ? '#cbdde0' : '#d8d0bf';
+  const wash = operation.author === 'theo' ? '#8fbcc7' : '#a89c87';
+  const windows = Array.from({ length: 15 }, (_, index) => {
+    const side = index < 8 ? 'left' : 'right';
+    const local = side === 'left' ? index : index - 8;
+    const col = local % 2;
+    const row = Math.floor(local / 2);
+    const x = side === 'left' ? 92 + col * 74 + row * 10 : 592 + col * 68 - row * 10;
+    const y = 112 + row * 58;
+    return `<rect x="${x}" y="${y}" width="42" height="28" rx="2" fill="none" stroke="${color}" stroke-width="3" opacity="0.72" />`;
+  }).join('');
+  const tree = details.has('tree') || operation.scene === 'park'
+    ? `<g transform="translate(${operation.scene === 'park' ? 250 : 535} 236)">
+        <path d="M 0 58 C 4 28 2 2 8 -30" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" />
+        <path d="M 8 -24 C -34 -34 -49 -77 -16 -95 C 2 -130 48 -113 48 -80 C 78 -62 55 -24 8 -24 Z" fill="${wash}" fill-opacity="0.3" stroke="${color}" stroke-width="5" />
+      </g>`
+    : '';
+  const trafficLight = details.has('trafficLight')
+    ? `<g transform="translate(493 111)">
+        <path d="M 0 0 L 0 184 M 0 18 L 64 18" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round" />
+        <rect x="52" y="4" width="36" height="83" rx="6" fill="${buildingFill}" stroke="${color}" stroke-width="4" />
+        <circle cx="70" cy="23" r="8" fill="#b45a4c" /><circle cx="70" cy="45" r="8" fill="#cfad50" /><circle cx="70" cy="67" r="8" fill="#69936f" />
+      </g>`
+    : '';
+  const awning = details.has('awning') || details.has('storefront') || operation.scene === 'storefront'
+    ? `<g><path d="M 70 314 L 258 314 L 238 350 L 88 350 Z" fill="${wash}" fill-opacity="0.38" stroke="${color}" stroke-width="4" />
+       <path d="M 99 315 L 99 348 M 132 315 L 132 348 M 165 315 L 165 348 M 198 315 L 198 348 M 231 315 L 231 348" stroke="${color}" stroke-width="3" opacity="0.7" />
+       <rect x="105" y="350" width="116" height="80" fill="none" stroke="${color}" stroke-width="4" /></g>`
+    : '';
+  const station = operation.scene === 'station' || details.has('stairs')
+    ? `<g transform="translate(465 340)"><path d="M 0 0 L 145 0 L 117 94 L 25 94 Z" fill="${buildingFill}" fill-opacity="0.72" stroke="${color}" stroke-width="5" />
+       <path d="M 22 18 L 126 18 M 30 36 L 121 36 M 36 54 L 115 54 M 42 72 L 109 72" stroke="${color}" stroke-width="3" />
+       <circle cx="13" cy="-24" r="24" fill="${wash}" fill-opacity="0.28" stroke="${color}" stroke-width="5" /><text x="13" y="-13" text-anchor="middle" fill="${color}" font-family="serif" font-size="31">M</text></g>`
+    : '';
+  const landmark = details.has('tower') || details.has('church') || details.has('clock') || operation.scene === 'landmark'
+    ? `<g transform="translate(324 80)"><path d="M 0 184 L 20 58 L 45 20 L 70 58 L 91 184 Z" fill="${buildingFill}" fill-opacity="0.74" stroke="${color}" stroke-width="5" />
+       <path d="M 45 20 L 45 -18" stroke="${color}" stroke-width="5" /><circle cx="45" cy="82" r="18" fill="none" stroke="${color}" stroke-width="4" /></g>`
+    : '';
+  const park = operation.scene === 'park'
+    ? `<path d="M 52 352 C 154 305 266 316 356 371 C 446 425 562 414 716 346 L 716 486 L 52 486 Z" fill="#aabf9c" fill-opacity="0.28" stroke="${color}" stroke-width="5" />`
+    : '';
+  const movementRotation = {
+    north: -90, northeast: -45, east: 0, southeast: 45,
+    south: 90, southwest: 135, west: 180, northwest: 225
+  }[operation.movement];
+  const movement = Number.isFinite(movementRotation)
+    ? `<g transform="translate(384 453) rotate(${movementRotation})"><path d="M -54 0 C -18 -15 18 -15 54 0 M 38 -16 L 56 0 L 38 16" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" /></g>`
+    : '';
+
+  return `<g${classAttr} filter="url(#rv-pencil)">
+    <path d="M 42 90 L 278 58 L 300 358 L 48 424 Z" fill="${buildingFill}" fill-opacity="0.62" stroke="${color}" stroke-width="5" />
+    <path d="M 726 86 L 490 58 L 468 358 L 720 424 Z" fill="${buildingFill}" fill-opacity="0.62" stroke="${color}" stroke-width="5" />
+    ${windows}${awning}${park}${tree}${trafficLight}${station}${landmark}
+    <path d="M 301 358 L 467 358 L 632 512 L 136 512 Z" fill="${wash}" fill-opacity="0.16" stroke="${color}" stroke-width="5" />
+    <path d="M 384 358 L 384 512" stroke="${color}" stroke-width="4" stroke-dasharray="22 18" opacity="0.58" />
+    <g transform="translate(278 44) rotate(-2)"><path d="M 0 0 L 214 0 L 205 56 L 8 56 Z" fill="#eee4cc" stroke="${color}" stroke-width="5" />
+      <text x="107" y="37" text-anchor="middle" fill="${color}" font-family="serif" font-size="27">${label}</text></g>
+    ${secondary ? `<g transform="translate(405 96) rotate(3)"><path d="M 0 0 L 185 0 L 178 46 L 8 46 Z" fill="#eee4cc" stroke="${color}" stroke-width="4" /><text x="92" y="31" text-anchor="middle" fill="${color}" font-family="serif" font-size="21">${secondary}</text></g>` : ''}
+    ${movement}
+  </g>`;
+}
+
 function operationSvg(operation) {
   const color = escapeXml(operation.color || AGENT_INK[operation.author] || AGENT_INK.ada);
   const width = Number(operation.width) || 4;
+  if (operation.type === 'sketch') return sketchOperationSvg(operation);
   if (operation.type === 'text') {
     const at = svgPoint(operation.at);
     return `<text x="${at.x}" y="${at.y}" fill="${color}" font-family="sans-serif" font-size="${operation.size}" transform="rotate(${operation.rotation} ${at.x} ${at.y})">${escapeXml(operation.text)}</text>`;
@@ -518,11 +777,10 @@ export async function renderScratchpad(scratchpad, { throughSequence = Infinity 
     .map(operationSvg)
     .join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${SCRATCHPAD_WIDTH}" height="${SCRATCHPAD_HEIGHT}" viewBox="0 0 ${SCRATCHPAD_WIDTH} ${SCRATCHPAD_HEIGHT}">
+    <defs><filter id="rv-pencil" x="-4%" y="-4%" width="108%" height="108%"><feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="7" result="noise"/><feDisplacementMap in="SourceGraphic" in2="noise" scale="1.35" xChannelSelector="R" yChannelSelector="G"/></filter></defs>
     <rect width="100%" height="100%" fill="#f2ecdd" />
     ${rules}
     <line x1="58" y1="18" x2="58" y2="494" stroke="#b44d43" stroke-opacity="0.16" stroke-width="1" />
-    <text x="638" y="28" fill="#24211d" fill-opacity="0.62" font-family="sans-serif" font-size="13">Ada</text>
-    <text x="686" y="28" fill="#087fa8" fill-opacity="0.78" font-family="sans-serif" font-size="13">Theo</text>
     ${operations}
   </svg>`;
   return sharp(Buffer.from(svg)).png().toBuffer();

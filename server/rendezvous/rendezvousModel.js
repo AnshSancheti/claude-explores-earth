@@ -293,12 +293,13 @@ function operationTextValue(operation) {
   const type = String(operation.type || '').toLowerCase();
   if (type === 'text') return operation.text || '';
   if (type === 'landmark') return operation.label || operation.text || '';
+  if (type === 'sketch') return operation.label || operation.secondaryLabel || '';
   return '';
 }
 
 function isRenderedReplacementOperation(operation) {
   if (!operation || typeof operation !== 'object') return false;
-  return String(operation.type || '').toLowerCase() !== 'replacemine';
+  return !['replacemine', 'replacesheet'].includes(String(operation.type || '').toLowerCase());
 }
 
 function filterPartnerEchoPadOperations(padOperations, { agent = {}, options = [], partnerPadText = [] } = {}) {
@@ -363,7 +364,7 @@ function decisionHasPlaceText(decision, label) {
 
 function decisionReplacesOwnInk(decision) {
   return (decision?.padOperations || [])
-    .some(operation => String(operation?.type || '').toLowerCase() === 'replacemine');
+    .some(operation => ['replacemine', 'replacesheet', 'sketch'].includes(String(operation?.type || '').toLowerCase()));
 }
 
 function withPolicyLocalInk(decision, policy, { canEditPad = false, ownPadText = [] } = {}) {
@@ -375,19 +376,27 @@ function withPolicyLocalInk(decision, policy, { canEditPad = false, ownPadText =
   ) {
     return decision;
   }
-  if ((decision.padOperations || []).length >= SCRATCHPAD_MAX_OPS_PER_TURN) return decision;
+  const operations = [...(decision.padOperations || [])];
+  const sketchIndex = operations.findLastIndex(operation => String(operation?.type || '').toLowerCase() === 'sketch');
+  if (sketchIndex >= 0) {
+    const sketch = operations[sketchIndex];
+    operations[sketchIndex] = {
+      ...sketch,
+      label: sketch.label || policy.local,
+      secondaryLabel: sketch.label && !sketch.secondaryLabel ? policy.local : sketch.secondaryLabel
+    };
+    return { ...decision, padOperations: operations, passPad: true };
+  }
   return {
     ...decision,
-    padOperations: [
-      ...(decision.padOperations || []),
-      {
-        type: 'text',
-        text: policy.local,
-        at: { x: 0.12, y: 0.86 },
-        size: 20,
-        rotation: 0
-      }
-    ],
+    padOperations: [{
+      type: 'sketch',
+      scene: 'intersection',
+      label: policy.local,
+      secondaryLabel: '',
+      details: ['brick', 'awning', 'trafficLight', 'tree'],
+      movement: null
+    }],
     passPad: true
   };
 }
@@ -463,7 +472,7 @@ export class RendezvousModelService {
       ? String(agent.currentRouteLabel).slice(0, 120)
       : 'No previous visible route label yet.';
     const padInstruction = canEditPad
-      ? `You have the physical scratchpad. You may add up to ${SCRATCHPAD_MAX_OPS_PER_TURN} operations. If your older visible ink is stale, start with {"type":"replaceMine"}; it removes only your visible marks from the current sheet and preserves ${partnerName}'s ink. ${forcePass ? `You have held it long enough and must pass it to ${partnerName} this turn.` : `Set passPad=true when the marks are useful enough to send to ${partnerName}.`}`
+      ? `You have the physical scratchpad. If you have a useful firsthand clue, create one complete new sketch for ${partnerName}. A new sketch replaces the entire previous note, so only one sender's message is ever visible. Return exactly one sketch operation, or no operations if you have nothing useful to add. ${forcePass ? `You have held it long enough and must pass it to ${partnerName} this turn.` : `Set passPad=true when the sketch is useful enough to send to ${partnerName}.`}`
       : `You do not have the physical scratchpad right now (${padStatus}). You may remember the last version you saw, but padOperations must be empty and passPad must be false.`;
     const inkInstruction = agent.id === 'theo'
       ? `Your ink is blue. ${partnerName}'s ink is charcoal black.`
@@ -479,26 +488,20 @@ export class RendezvousModelService {
 
 This is a real cooperative search, not a riddle-writing exercise. The scratchpad is the only information that ever crosses between you. You are never given ${partnerName}'s coordinates, path, distance, neighborhood, plans, or hidden state. Do not invent access to them. Street names and landmarks you can genuinely read or recognize are fair to write down.
 
-${inkInstruction} Treat only ${partnerName}'s ink as a clue to their location or movement. Your own older marks are memory, not evidence about where ${partnerName} is. When both colors name places, pursue the place written in ${partnerName}'s color.
+${inkInstruction} The sheet contains only its latest one-way note. Treat a sketch authored by ${partnerName} as a clue to their location or movement. A sketch authored by you is memory, not evidence about where ${partnerName} is.
 
 Choose one visible public route. Avoid indoor shops, private interiors, dead ends, and immediate loops. Use your own observations, your private memory, and the last scratchpad you personally saw.
 
-Treat this as a practical search between friends sharing one real piece of paper. Make the sheet read like a compact map or symbol composition, not a transcript. Your marks should communicate your own currently observed intersection, street, or landmark, plus your own recent movement into this view. Do not use the sheet to tell ${partnerName} where to go, restate a shared target, copy ${partnerName}'s ink as your own claim, or write route advice. A concrete place your friend marked outranks generic exploration when choosing where you walk, but your new ink should remain self-evidence grounded in your personal Street View observations. Do not merely repeat a strategy such as "unfamiliar route." Prefer a stable street name, intersection, landmark symbol, or recent-movement sketch that helps the two of you infer each other's trails.
+Treat this as a practical search between friends sharing one real piece of paper. Describe a recognizable street-corner sketch, not a diagram or transcript. Your sketch should show your own currently observed scene: buildings, a storefront or awning, a traffic light, trees, subway stairs, or one distinctive landmark, with at most two labels you can personally read. Do not use the sheet to tell ${partnerName} where to go, restate a shared target, copy ${partnerName}'s note as your own claim, or write route advice. A concrete place your friend sketched outranks generic exploration when choosing where you walk, but your new sketch must remain self-evidence grounded in your personal Street View observations.
 
 Google headings are compass bearings measured clockwise: 0° is north, 90° east, 180° south, and 270° west. Each option includes the computed compass word; trust it. Never describe or select a bearing as though it points in a different direction. Before choosing, identify the newest useful place your friend marked, infer its direction from your own visible street using Manhattan geography, then choose the route whose compass label best matches that direction. Your friend's ink is evidence of their own observed place or movement, never a route command for you to copy. If ${partnerName}'s ink names a different Manhattan corridor, stop generic exploration and take an available connecting avenue or cross-street whose compass direction moves toward that named corridor. Numbered Manhattan streets increase as you go north; W/E 14th St is north of Houston St, and Houston / Carmine / Bleecker / Prince / Greenwich Village corridors are south of 14th St. So from W 14th toward a friend's W Houston mark, choose a southbound connection; from W Houston or Carmine toward a friend's W 14th mark, choose a northbound connection. Walking back one block is valid when it is necessary to pursue your friend's clue. Only prioritize novelty when the sheet contains no actionable friend location.
 
 ${padInstruction}
 
-Drawing operation grammar uses normalized 0-1 canvas coordinates:
-- {"type":"replaceMine"} removes only your currently visible stale ink before your new marks.
-- {"type":"text","text":"BROADWAY","at":{"x":0.12,"y":0.18},"size":30,"rotation":-3}
-- {"type":"arrow","from":{"x":0.2,"y":0.5},"to":{"x":0.7,"y":0.5},"width":4}
-- {"type":"line","from":...,"to":...,"width":4}
-- {"type":"circle","center":{"x":0.5,"y":0.5},"radiusX":0.12,"radiusY":0.08,"width":4}
-- {"type":"landmark","center":{"x":0.5,"y":0.5},"symbol":"station","label":"GRAND CENTRAL","width":4}
-- {"type":"stroke","points":[{"x":0.1,"y":0.2},{"x":0.2,"y":0.3}],"width":4}
+Sketch grammar:
+{"type":"sketch","scene":"intersection","label":"W 13TH ST","secondaryLabel":"6TH AVE","details":["brick","awning","trafficLight","tree"],"movement":"south"}
 
-The sheet is finite. Use a few intentional primitives: street/intersection strokes, one landmark symbol, one directional arrow for where you just came from or how you just moved, and at most a couple of very short proper-noun labels that you can personally see. Text is annotation, not the main message. Do not write "go", "follow", "toward", "to", "meet", target names, or instructions. Avoid repeated parallel lines and repeated labels; revise your own stale ink with replaceMine instead of stacking more marks.
+scene must be one of intersection, storefront, park, station, landmark. details may include awning, brick, church, clock, scaffolding, stairs, storefront, tower, trafficLight, tree. movement is the direction you just moved into the scene, or null. Choose concrete objects actually visible in the route images. The app turns this scene description into a full hand-drawn composition. Never return line, arrow, stroke, circle, text, landmark, replaceMine, or replaceSheet operations. Do not write "go", "follow", "toward", "to", "meet", target names, or instructions in labels.
 
 Return only JSON:
 {

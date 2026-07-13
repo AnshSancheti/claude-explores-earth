@@ -630,19 +630,19 @@ export class RendezvousController {
       const throughSequence = Math.min(agent.padSeenSequence || 0, scratchpad.sequence);
       const visiblePadOperations = currentScratchpadOperations(scratchpad, { throughSequence });
       const partnerPadText = visiblePadOperations
-        .filter(operation =>
-          operation.author === partner.id &&
-          (operation.type === 'text' || (operation.type === 'landmark' && operation.label))
-        )
-        .slice(-6)
-        .map(operation => operation.text || operation.label);
+        .filter(operation => operation.author === partner.id)
+        .flatMap(operation => operation.type === 'sketch'
+          ? [operation.label, operation.secondaryLabel]
+          : [operation.text || operation.label])
+        .filter(Boolean)
+        .slice(-6);
       const ownPadText = visiblePadOperations
-        .filter(operation =>
-          operation.author === agent.id &&
-          (operation.type === 'text' || (operation.type === 'landmark' && operation.label))
-        )
-        .slice(-6)
-        .map(operation => operation.text || operation.label);
+        .filter(operation => operation.author === agent.id)
+        .flatMap(operation => operation.type === 'sketch'
+          ? [operation.label, operation.secondaryLabel]
+          : [operation.text || operation.label])
+        .filter(Boolean)
+        .slice(-6);
       const [screenshots, scratchpadBuffer] = await Promise.all([
         this.#captureCandidateScreenshots(candidates),
         renderScratchpad(scratchpad, { throughSequence })

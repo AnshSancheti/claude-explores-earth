@@ -64,13 +64,12 @@ test('rendezvous model prompt is scoped to personal memory, visible options, and
   assert.match(serializedRequest, /heading 180 degrees/);
   assert.match(serializedRequest, /heading 180 degrees \(south\)/);
   assert.match(serializedRequest, /0° is north, 90° east, 180° south, and 270° west/);
-  assert.match(serializedRequest, /concrete place your friend marked outranks generic exploration/);
+  assert.match(serializedRequest, /concrete place your friend sketched outranks generic exploration/);
   assert.match(serializedRequest, /sharing one real piece of paper/);
-  assert.match(serializedRequest, /replaceMine/);
-  assert.match(serializedRequest, /removes only your visible marks/);
-  assert.match(serializedRequest, /landmark/);
-  assert.match(serializedRequest, /Text is annotation, not the main message/);
-  assert.match(serializedRequest, /currently observed intersection, street, or landmark/);
+  assert.match(serializedRequest, /only one sender's message is ever visible/);
+  assert.match(serializedRequest, /recognizable street-corner sketch/);
+  assert.match(serializedRequest, /trafficLight/);
+  assert.match(serializedRequest, /currently observed scene/);
   assert.match(serializedRequest, /recent movement into this view/);
   assert.match(serializedRequest, /You most recently moved south into this panorama/);
   assert.match(serializedRequest, /Do not use the sheet to tell Theo where to go/);
@@ -81,7 +80,7 @@ test('rendezvous model prompt is scoped to personal memory, visible options, and
   assert.match(serializedRequest, /from W Houston or Carmine toward a friend's W 14th mark, choose a northbound connection/);
   assert.doesNotMatch(serializedRequest, /clearly mark where you are headed so they can intercept you/);
   assert.match(serializedRequest, /Your ink is charcoal black\. Theo's ink is blue/);
-  assert.match(serializedRequest, /Treat only Theo's ink as a clue/);
+  assert.match(serializedRequest, /Treat a sketch authored by Theo as a clue/);
   assert.match(serializedRequest, /exact text visibly written in Theo's ink/);
   assert.match(serializedRequest, /PRINCE ST|toward W BROADWAY/);
   assert.doesNotMatch(serializedRequest, /pano-a|pano-b/);
@@ -911,15 +910,9 @@ test('model decision adds own local corridor text when convergence policy overri
 
   assert.equal(result.selectedIndex, 0);
   assert.equal(result.passPad, true);
-  assert.equal(result.padOperations.length, 2);
-  assert.equal(result.padOperations[0].type, 'line');
-  assert.deepEqual(result.padOperations[1], {
-    type: 'text',
-    text: '17TH ST',
-    at: { x: 0.12, y: 0.86 },
-    size: 20,
-    rotation: 0
-  });
+  assert.equal(result.padOperations.length, 1);
+  assert.equal(result.padOperations[0].type, 'sketch');
+  assert.equal(result.padOperations[0].label, '17TH ST');
 });
 
 test('model decision does not duplicate own local text when current own ink already has it', async () => {
@@ -1008,8 +1001,8 @@ test('model decision appends policy local text after replaceMine because old own
 
   assert.equal(result.selectedIndex, 0);
   assert.equal(result.passPad, true);
-  assert.deepEqual(result.padOperations.map(operation => operation.type), ['replaceMine', 'arrow', 'text']);
-  assert.equal(result.padOperations[2].text, '18TH ST');
+  assert.deepEqual(result.padOperations.map(operation => operation.type), ['sketch']);
+  assert.equal(result.padOperations[0].label, '18TH ST');
 });
 
 test('model decision does not duplicate policy local text when outgoing replacement already contains canonical label', async () => {

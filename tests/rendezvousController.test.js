@@ -245,7 +245,7 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
     assert.equal(publicState.meeting.adaDistanceToTarget, null);
     assert.equal(publicState.meeting.theoDistanceToTarget, null);
     assert.equal(publicState.notebook, null);
-    assert.equal(publicState.scratchpad.version, 3);
+    assert.equal(publicState.scratchpad.version, 4);
     assert.ok(Array.isArray(publicState.scratchpad.operations));
     assert.ok(Array.isArray(publicState.scratchpad.currentOperations));
     assert.ok(publicState.scratchpad.currentOperations.length <= publicState.scratchpad.operations.length);
@@ -410,13 +410,13 @@ test('legacy rendezvous stays read-only until an explicit start archives it', as
 
     assert.equal(controller.state.runId, legacyRunId);
     assert.equal(controller.state.scratchpad, null);
-    assert.equal(controller.getPublicState().scratchpad.version, 3);
+    assert.equal(controller.getPublicState().scratchpad.version, 4);
 
     await controller.start();
     await controller.stop();
 
     assert.notEqual(controller.state.runId, legacyRunId);
-    assert.equal(controller.state.scratchpad.version, 3);
+    assert.equal(controller.state.scratchpad.version, 4);
     const archived = JSON.parse(await fsp.readFile(
       path.join(tempDir, 'rendezvous-runs', `${legacyRunId}.json`),
       'utf8'

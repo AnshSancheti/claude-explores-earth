@@ -83,10 +83,53 @@
     return `<path class="rv-scratch-stroke${className}" pathLength="1" d="M ${points} Z" stroke="${escapeHtml(color)}" stroke-width="${width}" />`;
   }
 
+  function scratchpadSketchSvg(operation, isNew) {
+    const className = isNew ? ' is-new' : '';
+    const color = operation.author === 'theo' ? '#087fa8' : '#24211d';
+    const fill = operation.author === 'theo' ? '#cbdde0' : '#d8d0bf';
+    const wash = operation.author === 'theo' ? '#8fbcc7' : '#a89c87';
+    const details = new Set(Array.isArray(operation.details) ? operation.details : []);
+    const label = escapeHtml(operation.label || (operation.scene === 'park' ? 'THE PARK' : 'STREET'));
+    const secondary = escapeHtml(operation.secondaryLabel || '');
+    const windows = Array.from({ length: 15 }, (_, index) => {
+      const left = index < 8;
+      const local = left ? index : index - 8;
+      const col = local % 2;
+      const row = Math.floor(local / 2);
+      const x = left ? 92 + col * 74 + row * 10 : 592 + col * 68 - row * 10;
+      const y = 112 + row * 58;
+      return `<rect x="${x}" y="${y}" width="42" height="28" rx="2" fill="none" stroke="${color}" stroke-width="3" opacity="0.72" />`;
+    }).join('');
+    const tree = details.has('tree') || operation.scene === 'park'
+      ? `<g transform="translate(${operation.scene === 'park' ? 250 : 535} 236)"><path d="M 0 58 C 4 28 2 2 8 -30" fill="none" stroke="${color}" stroke-width="7" stroke-linecap="round" /><path d="M 8 -24 C -34 -34 -49 -77 -16 -95 C 2 -130 48 -113 48 -80 C 78 -62 55 -24 8 -24 Z" fill="${wash}" fill-opacity="0.3" stroke="${color}" stroke-width="5" /></g>`
+      : '';
+    const trafficLight = details.has('trafficLight')
+      ? `<g transform="translate(493 111)"><path d="M 0 0 L 0 184 M 0 18 L 64 18" fill="none" stroke="${color}" stroke-width="6" stroke-linecap="round" /><rect x="52" y="4" width="36" height="83" rx="6" fill="${fill}" stroke="${color}" stroke-width="4" /><circle cx="70" cy="23" r="8" fill="#b45a4c" /><circle cx="70" cy="45" r="8" fill="#cfad50" /><circle cx="70" cy="67" r="8" fill="#69936f" /></g>`
+      : '';
+    const awning = details.has('awning') || details.has('storefront') || operation.scene === 'storefront'
+      ? `<g><path d="M 70 314 L 258 314 L 238 350 L 88 350 Z" fill="${wash}" fill-opacity="0.38" stroke="${color}" stroke-width="4" /><path d="M 99 315 L 99 348 M 132 315 L 132 348 M 165 315 L 165 348 M 198 315 L 198 348 M 231 315 L 231 348" stroke="${color}" stroke-width="3" opacity="0.7" /><rect x="105" y="350" width="116" height="80" fill="none" stroke="${color}" stroke-width="4" /></g>`
+      : '';
+    const station = operation.scene === 'station' || details.has('stairs')
+      ? `<g transform="translate(465 340)"><path d="M 0 0 L 145 0 L 117 94 L 25 94 Z" fill="${fill}" fill-opacity="0.72" stroke="${color}" stroke-width="5" /><path d="M 22 18 L 126 18 M 30 36 L 121 36 M 36 54 L 115 54 M 42 72 L 109 72" stroke="${color}" stroke-width="3" /><circle cx="13" cy="-24" r="24" fill="${wash}" fill-opacity="0.28" stroke="${color}" stroke-width="5" /><text x="13" y="-13" text-anchor="middle" fill="${color}" font-family="serif" font-size="31">M</text></g>`
+      : '';
+    const landmark = details.has('tower') || details.has('church') || details.has('clock') || operation.scene === 'landmark'
+      ? `<g transform="translate(324 80)"><path d="M 0 184 L 20 58 L 45 20 L 70 58 L 91 184 Z" fill="${fill}" fill-opacity="0.74" stroke="${color}" stroke-width="5" /><path d="M 45 20 L 45 -18" stroke="${color}" stroke-width="5" /><circle cx="45" cy="82" r="18" fill="none" stroke="${color}" stroke-width="4" /></g>`
+      : '';
+    const park = operation.scene === 'park'
+      ? `<path d="M 52 352 C 154 305 266 316 356 371 C 446 425 562 414 716 346 L 716 486 L 52 486 Z" fill="#aabf9c" fill-opacity="0.28" stroke="${color}" stroke-width="5" />`
+      : '';
+    const rotation = { north: -90, northeast: -45, east: 0, southeast: 45, south: 90, southwest: 135, west: 180, northwest: 225 }[operation.movement];
+    const movement = Number.isFinite(rotation)
+      ? `<g transform="translate(384 453) rotate(${rotation})"><path d="M -54 0 C -18 -15 18 -15 54 0 M 38 -16 L 56 0 L 38 16" fill="none" stroke="${color}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" /></g>`
+      : '';
+    return `<g class="rv-scratch-sketch${className}" filter="url(#rv-pencil)"><path d="M 42 90 L 278 58 L 300 358 L 48 424 Z" fill="${fill}" fill-opacity="0.62" stroke="${color}" stroke-width="5" /><path d="M 726 86 L 490 58 L 468 358 L 720 424 Z" fill="${fill}" fill-opacity="0.62" stroke="${color}" stroke-width="5" />${windows}${awning}${park}${tree}${trafficLight}${station}${landmark}<path d="M 301 358 L 467 358 L 632 512 L 136 512 Z" fill="${wash}" fill-opacity="0.16" stroke="${color}" stroke-width="5" /><path d="M 384 358 L 384 512" stroke="${color}" stroke-width="4" stroke-dasharray="22 18" opacity="0.58" /><g transform="translate(278 44) rotate(-2)"><path d="M 0 0 L 214 0 L 205 56 L 8 56 Z" fill="#eee4cc" stroke="${color}" stroke-width="5" /><text x="107" y="37" text-anchor="middle" fill="${color}" font-family="serif" font-size="27">${label}</text></g>${secondary ? `<g transform="translate(405 96) rotate(3)"><path d="M 0 0 L 185 0 L 178 46 L 8 46 Z" fill="#eee4cc" stroke="${color}" stroke-width="4" /><text x="92" y="31" text-anchor="middle" fill="${color}" font-family="serif" font-size="21">${secondary}</text></g>` : ''}${movement}</g>`;
+  }
+
   function scratchpadOperationSvg(operation, isNew) {
     const className = isNew ? ' is-new' : '';
     const color = operation.author === 'theo' ? '#087fa8' : '#24211d';
     const width = Math.max(1, Math.min(80, svgNumber(operation.width, 4)));
+    if (operation.type === 'sketch') return scratchpadSketchSvg(operation, isNew);
     if (operation.type === 'text') {
       const at = svgPoint(operation.at);
       const size = Math.max(14, Math.min(54, svgNumber(operation.size, 28)));
@@ -529,30 +572,34 @@
         return `<line x1="22" y1="${y}" x2="746" y2="${y}" stroke="rgba(72,103,111,0.10)" stroke-width="1" />`;
       }).join('');
       const margin = '<line x1="58" y1="18" x2="58" y2="494" stroke="rgba(180,77,67,0.16)" stroke-width="1" />';
-      const inkKey = '<text x="638" y="28" fill="#24211d" fill-opacity="0.62" font-size="13">Ada</text><text x="686" y="28" fill="#087fa8" fill-opacity="0.78" font-size="13">Theo</text>';
+      const defs = '<defs><filter id="rv-pencil" x="-4%" y="-4%" width="108%" height="108%"><feTurbulence type="fractalNoise" baseFrequency="0.012" numOctaves="2" seed="7" result="noise"/><feDisplacementMap in="SourceGraphic" in2="noise" scale="1.35" xChannelSelector="R" yChannelSelector="G"/></filter></defs>';
       const marks = operations.map(operation => scratchpadOperationSvg(
         operation,
         Number(operation.sequence || 0) > previousSequence
       )).join('');
       if (svg) {
-        svg.innerHTML = `${ruledLines}${margin}${inkKey}${marks || '<text class="rv-pad-empty" x="384" y="270" text-anchor="middle">Nothing here yet.</text>'}`;
+        svg.innerHTML = `${defs}${ruledLines}${margin}${marks || '<text class="rv-pad-empty" x="384" y="270" text-anchor="middle">Nothing here yet.</text>'}`;
       }
 
       const status = document.getElementById('rvPadStatus');
       const sequenceLabel = document.getElementById('rvPadSequence');
       const transit = scratchpad.inTransit;
       if (status) {
+        const messageFrom = scratchpad.messageFrom === 'theo' ? 'Theo' : scratchpad.messageFrom === 'ada' ? 'Ada' : null;
+        const messageTo = scratchpad.messageTo === 'ada' ? 'Ada' : scratchpad.messageTo === 'theo' ? 'Theo' : null;
         if (transit) {
           const from = transit.from === 'theo' ? 'Theo' : 'Ada';
           const to = transit.to === 'ada' ? 'Ada' : 'Theo';
           status.textContent = `on its way from ${from} to ${to}`;
+        } else if (messageFrom && messageTo) {
+          status.textContent = `${messageFrom} to ${messageTo}`;
         } else {
-          status.textContent = `with ${scratchpad.owner === 'theo' ? 'Theo' : 'Ada'}`;
+          status.textContent = 'waiting for a note';
         }
       }
       if (sequenceLabel) {
         const visibleCount = operations.length;
-        sequenceLabel.textContent = sequence > 0 ? `${visibleCount.toLocaleString()} live marks` : 'blank';
+        sequenceLabel.textContent = sequence > 0 && visibleCount > 0 ? 'latest note' : 'blank';
       }
       this.lastScratchpadSequence = Math.max(previousSequence, sequence);
     }
