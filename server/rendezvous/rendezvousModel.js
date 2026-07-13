@@ -34,6 +34,54 @@ function headingDelta(a, b) {
   return Math.min(delta, 360 - delta);
 }
 
+function finiteHeading(value) {
+  const heading = Number(value);
+  if (!Number.isFinite(heading)) return null;
+  return ((heading % 360) + 360) % 360;
+}
+
+function finiteHeadingDelta(a, b) {
+  const normalizedA = finiteHeading(a);
+  const normalizedB = finiteHeading(b);
+  if (!Number.isFinite(normalizedA) || !Number.isFinite(normalizedB)) return Infinity;
+  return headingDelta(normalizedA, normalizedB);
+}
+
+function explicitHeadingsFromReasoning(reasoning) {
+  const text = String(reasoning || '');
+  return [...text.matchAll(/\b(\d+(?:\.\d+)?)\s*(?:°|\bdeg(?:ree)?s?\b)/gi)]
+    .map(match => Number(match[1]))
+    .map(finiteHeading)
+    .filter(heading => Number.isFinite(heading));
+}
+
+function reconcileDecisionWithVisibleHeading(decision, options) {
+  const statedHeadings = explicitHeadingsFromReasoning(decision?.reasoning);
+  if (statedHeadings.length === 0) return decision;
+
+  const selectedHeading = Number(options?.[decision.selectedIndex]?.heading);
+  if (
+    Number.isFinite(selectedHeading) &&
+    statedHeadings.some(statedHeading => finiteHeadingDelta(selectedHeading, statedHeading) <= 12)
+  ) {
+    return decision;
+  }
+
+  const matching = (options || [])
+    .map((option, index) => ({
+      index,
+      delta: Math.min(...statedHeadings.map(statedHeading => finiteHeadingDelta(option?.heading, statedHeading)))
+    }))
+    .filter(item => Number.isFinite(item.delta) && item.delta <= 12)
+    .sort((a, b) => a.delta - b.delta || a.index - b.index);
+
+  if (matching.length !== 1) return decision;
+  return {
+    ...decision,
+    selectedIndex: matching[0].index
+  };
+}
+
 function normalizeStreetText(value) {
   return String(value || '')
     .replace(/\b(WEST)\b/gi, 'W')
@@ -503,8 +551,9 @@ Return only JSON:
           options,
           partnerPadText
         });
+        const reconciledDecision = reconcileDecisionWithVisibleHeading(decision, options);
         const policy = selectConvergencePolicyOption({ agent, options, partnerPadText, ownPadText });
-        return applyConvergencePolicy(decision, policy, { canEditPad, ownPadText });
+        return applyConvergencePolicy(reconciledDecision, policy, { canEditPad, ownPadText });
       } catch (error) {
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
