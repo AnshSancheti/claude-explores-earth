@@ -65,6 +65,20 @@
       const ry = Math.max(4, svgNumber(operation.radiusY, 0.1) * 512);
       return `<ellipse class="rv-scratch-stroke${className}" pathLength="1" cx="${center.x}" cy="${center.y}" rx="${rx}" ry="${ry}" stroke="${escapeHtml(color)}" stroke-width="${width}" />`;
     }
+    if (operation.type === 'landmark') {
+      const center = svgPoint(operation.center);
+      const radius = Math.max(12, Math.min(78, svgNumber(operation.radius, 0.055) * 768));
+      const points = [
+        `${center.x} ${center.y - radius}`,
+        `${center.x + radius} ${center.y}`,
+        `${center.x} ${center.y + radius}`,
+        `${center.x - radius} ${center.y}`
+      ].join(' L ');
+      const label = operation.label
+        ? `<text class="rv-scratch-text${className}" x="${center.x + radius + 8}" y="${center.y + 5}" fill="${escapeHtml(color)}" font-size="22">${escapeHtml(operation.label)}</text>`
+        : '';
+      return `<path class="rv-scratch-stroke${className}" pathLength="1" d="M ${points} Z" stroke="${escapeHtml(color)}" stroke-width="${width}" />${label}`;
+    }
     if (operation.type === 'stroke') {
       const points = (operation.points || []).map(svgPoint);
       if (points.length < 2) return '';
@@ -477,7 +491,9 @@
     renderScratchpad() {
       const svg = document.getElementById('rvScratchpad');
       const scratchpad = this.state?.scratchpad || {};
-      const operations = Array.isArray(scratchpad.operations) ? scratchpad.operations : [];
+      const operations = Array.isArray(scratchpad.currentOperations)
+        ? scratchpad.currentOperations
+        : (Array.isArray(scratchpad.operations) ? scratchpad.operations : []);
       const sequence = Number(scratchpad.sequence || 0);
       const previousSequence = this.lastScratchpadSequence;
       const ruledLines = Array.from({ length: 12 }, (_, index) => {
@@ -507,7 +523,8 @@
         }
       }
       if (sequenceLabel) {
-        sequenceLabel.textContent = sequence > 0 ? `${sequence.toLocaleString()} marks` : 'blank';
+        const visibleCount = operations.length;
+        sequenceLabel.textContent = sequence > 0 ? `${visibleCount.toLocaleString()} live marks` : 'blank';
       }
       this.lastScratchpadSequence = Math.max(previousSequence, sequence);
     }

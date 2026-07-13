@@ -110,8 +110,11 @@ export class RendezvousModelService {
       .slice(-5)
       .map(note => `- ${note}`)
       .join('\n') || '- No prior field notes.';
+    const recentMovement = agent.recentMovement
+      ? String(agent.recentMovement).slice(0, 160)
+      : 'No recent movement yet.';
     const padInstruction = canEditPad
-      ? `You have the physical scratchpad. You may add up to ${SCRATCHPAD_MAX_OPS_PER_TURN} drawing operations. ${forcePass ? `You have held it long enough and must pass it to ${partnerName} this turn.` : `Set passPad=true when the marks are useful enough to send to ${partnerName}.`}`
+      ? `You have the physical scratchpad. You may add up to ${SCRATCHPAD_MAX_OPS_PER_TURN} operations. If your older visible ink is stale, start with {"type":"replaceMine"}; it removes only your visible marks from the current sheet and preserves ${partnerName}'s ink. ${forcePass ? `You have held it long enough and must pass it to ${partnerName} this turn.` : `Set passPad=true when the marks are useful enough to send to ${partnerName}.`}`
       : `You do not have the physical scratchpad right now (${padStatus}). You may remember the last version you saw, but padOperations must be empty and passPad must be false.`;
     const inkInstruction = agent.id === 'theo'
       ? `Your ink is blue. ${partnerName}'s ink is charcoal black.`
@@ -128,21 +131,22 @@ ${inkInstruction} Treat only ${partnerName}'s ink as a clue to their location or
 
 Choose one visible public route. Avoid indoor shops, private interiors, dead ends, and immediate loops. Use your own observations, your private memory, and the last scratchpad you personally saw.
 
-Treat this as a practical search between friends. When you can read your street or intersection, put that concrete clue on the sheet. Interpret your friend's marks as actionable geography: move toward a location they identify, or clearly mark where you are headed so they can intercept you. A concrete place your friend marked outranks generic exploration and your own older plan. Do not merely repeat a strategy such as "unfamiliar route." Prefer a stable street name, intersection, landmark, or directional sketch that helps the two of you converge.
+Treat this as a practical search between friends sharing one real piece of paper. Make the sheet read like a compact map or symbol composition, not a transcript. Your marks should communicate your own currently observed intersection, street, or landmark, plus your own recent movement into this view. Do not use the sheet to tell ${partnerName} where to go, restate a shared target, copy ${partnerName}'s ink as your own claim, or write route advice. A concrete place your friend marked outranks generic exploration when choosing where you walk, but your new ink should remain self-evidence grounded in your personal Street View observations. Do not merely repeat a strategy such as "unfamiliar route." Prefer a stable street name, intersection, landmark symbol, or recent-movement sketch that helps the two of you infer each other's trails.
 
 Google headings are compass bearings measured clockwise: 0° is north, 90° east, 180° south, and 270° west. Each option includes the computed compass word; trust it. Never describe or select a bearing as though it points in a different direction. Before choosing, identify the newest useful place your friend marked, infer its direction from your own visible street using Manhattan geography, then choose the route whose compass label best matches that direction. Walking back one block is valid when it is necessary to pursue your friend's clue. Only prioritize novelty when the sheet contains no actionable friend location.
 
 ${padInstruction}
 
 Drawing operation grammar uses normalized 0-1 canvas coordinates:
-- {"type":"text","text":"BROADWAY?","at":{"x":0.12,"y":0.18},"size":30,"rotation":-3}
+- {"type":"replaceMine"} removes only your currently visible stale ink before your new marks.
+- {"type":"text","text":"BROADWAY","at":{"x":0.12,"y":0.18},"size":30,"rotation":-3}
 - {"type":"arrow","from":{"x":0.2,"y":0.5},"to":{"x":0.7,"y":0.5},"width":4}
 - {"type":"line","from":...,"to":...,"width":4}
 - {"type":"circle","center":{"x":0.5,"y":0.5},"radiusX":0.12,"radiusY":0.08,"width":4}
+- {"type":"landmark","center":{"x":0.5,"y":0.5},"symbol":"station","label":"GRAND CENTRAL","width":4}
 - {"type":"stroke","points":[{"x":0.1,"y":0.2},{"x":0.2,"y":0.3}],"width":4}
-- {"type":"erase","from":...,"to":...,"width":28}
 
-The sheet is finite. Prefer a small, expressive update over filling it with prose. You may cross out, annotate, or reinterpret older marks.
+The sheet is finite. Use a few intentional primitives: street/intersection strokes, one landmark symbol, one directional arrow for where you just came from or how you just moved, and at most a couple of very short proper-noun labels that you can personally see. Text is annotation, not the main message. Do not write "go", "follow", "toward", "to", "meet", target names, or instructions. Avoid repeated parallel lines and repeated labels; revise your own stale ink with replaceMine instead of stacking more marks.
 
 Return only JSON:
 {
@@ -155,7 +159,7 @@ Return only JSON:
     const userContent = [
       {
         type: 'text',
-        text: `These are the routes visible from your current panorama. Image 1 is the last scratchpad version you personally saw; the remaining images correspond to options 0 through ${options.length - 1} in order.\n\n${optionLines}\n\nYour private field memory:\n${privateMemory}\n\nAccessibility readout of the exact text visibly written in ${partnerName}'s ink:\n${partnerInkTranscript}\n\nScratchpad status: ${padStatus}`
+        text: `These are the routes visible from your current panorama. Image 1 is the last scratchpad version you personally saw; the remaining images correspond to options 0 through ${options.length - 1} in order.\n\n${optionLines}\n\nYour private field memory:\n${privateMemory}\n\nYour recent movement into this view:\n- ${recentMovement}\n\nAccessibility readout of the exact text visibly written in ${partnerName}'s ink:\n${partnerInkTranscript}\n\nScratchpad status: ${padStatus}`
       },
       {
         type: 'image_url',

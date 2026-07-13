@@ -125,7 +125,8 @@ class FakeRendezvousModel {
       options: input.options,
       canEditPad: input.canEditPad,
       forcePass: input.forcePass,
-      padStatus: input.padStatus
+      padStatus: input.padStatus,
+      partnerPadText: input.partnerPadText
     }));
     return {
       selectedIndex: input.options.findIndex(option => !input.agent.visitedPanos.includes(option.panoId)) >= 0
@@ -219,6 +220,8 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
       assert.equal(Object.hasOwn(call.agent, 'path'), false);
       assert.equal(Object.hasOwn(call, 'partner'), false);
       assert.equal(Object.hasOwn(call, 'distanceToFriend'), false);
+      assert.equal(typeof call.agent.recentMovement, 'string');
+      assert.doesNotMatch(call.agent.recentMovement, /-?\d+\.\d{3,}|partner|friend|distance/i);
       assert.equal(call.options.some(option => Object.hasOwn(option, 'distanceToFriend')), false);
       assert.equal(call.options.some(option => Object.hasOwn(option, 'position')), false);
     }
@@ -235,7 +238,11 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
     assert.equal(publicState.meeting.adaDistanceToTarget, null);
     assert.equal(publicState.meeting.theoDistanceToTarget, null);
     assert.equal(publicState.notebook, null);
-    assert.equal(publicState.scratchpad.version, 2);
+    assert.equal(publicState.scratchpad.version, 3);
+    assert.ok(Array.isArray(publicState.scratchpad.operations));
+    assert.ok(Array.isArray(publicState.scratchpad.currentOperations));
+    assert.ok(publicState.scratchpad.currentOperations.length <= publicState.scratchpad.operations.length);
+    assert.equal(publicState.scratchpad.currentOperations.some(operation => operation.type === 'replaceMine'), false);
     assert.equal(publicState.scratchpad.operations.some(operation => /-?\d+\.\d{3,}/.test(operation.text || '')), false);
     assert.equal(publicState.eventLog.some(entry => entry.type === 'agent_step' && entry.payload.searchTargetName), false);
     assert.equal(publicState.eventLog.some(entry => Object.hasOwn(entry.payload || {}, 'targetName')), false);
@@ -396,13 +403,13 @@ test('legacy rendezvous stays read-only until an explicit start archives it', as
 
     assert.equal(controller.state.runId, legacyRunId);
     assert.equal(controller.state.scratchpad, null);
-    assert.equal(controller.getPublicState().scratchpad.version, 2);
+    assert.equal(controller.getPublicState().scratchpad.version, 3);
 
     await controller.start();
     await controller.stop();
 
     assert.notEqual(controller.state.runId, legacyRunId);
-    assert.equal(controller.state.scratchpad.version, 2);
+    assert.equal(controller.state.scratchpad.version, 3);
     const archived = JSON.parse(await fsp.readFile(
       path.join(tempDir, 'rendezvous-runs', `${legacyRunId}.json`),
       'utf8'
