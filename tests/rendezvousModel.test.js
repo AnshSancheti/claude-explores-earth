@@ -413,6 +413,442 @@ test('rendezvous model response parsing allows an author replacement operation',
   assert.equal(result.passPad, true);
 });
 
+test('model decision rejects partner label echo while preserving geometry and supported own labels', async () => {
+  const requests = [];
+  const client = {
+    chat: {
+      completions: {
+        async create(request) {
+          requests.push(request);
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  selectedIndex: 0,
+                  reasoning: 'Ada points toward W 15th St; I can see Ave of the Americas here.',
+                  padOperations: [
+                    { type: 'line', from: { x: 0.2, y: 0.4 }, to: { x: 0.8, y: 0.4 } },
+                    { type: 'text', text: 'W 15th St', at: { x: 0.3, y: 0.3 } },
+                    { type: 'landmark', center: { x: 0.5, y: 0.5 }, label: 'W 15TH ST' },
+                    { type: 'text', text: 'Ave of the Americas', at: { x: 0.4, y: 0.6 } }
+                  ],
+                  passPad: true
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      visitedPanos: [],
+      currentRouteLabel: 'Ave of the Americas',
+      recentMovement: 'You most recently moved northeast into this panorama.',
+      recentNotes: [
+        "I treat my friend's W 15th St ink as their own observed place, not a route command, so from W Washington Pl I choose the available north connection.",
+        "Ada points toward W 15th St from her ink."
+      ],
+      distanceToFriend: 50,
+      partnerPath: ['hidden-partner-pano'],
+      roughPosition: { lat: 40.732, lng: -74.000 }
+    },
+    partnerName: 'Ada',
+    options: [
+      { panoId: 'sixth-option', heading: 30, label: '6th Ave' },
+      { panoId: 'washington-option', heading: 90, label: 'W Washington Pl' }
+    ],
+    screenshots: [Buffer.from('sixth'), Buffer.from('washington')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: true,
+    padStatus: 'in your hands',
+    partnerPadText: ['W 15th St']
+  });
+
+  assert.deepEqual(result.padOperations.map(operation => operation.type), ['line', 'text']);
+  assert.equal(result.padOperations[1].text, 'Ave of the Americas');
+  const serializedRequest = JSON.stringify(requests[0]);
+  assert.doesNotMatch(serializedRequest, /distanceToFriend|partnerPath|roughPosition|hidden-partner-pano|latitude|longitude|-?\d+\.\d{3,}/);
+});
+
+test('model decision rejects canonical numbered partner echoes in partial text and landmark labels', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  selectedIndex: 0,
+                  reasoning: 'I keep my geometry and avoid copying the partner label.',
+                  padOperations: [
+                    { type: 'line', from: { x: 0.2, y: 0.3 }, to: { x: 0.7, y: 0.4 } },
+                    { type: 'text', text: 'W15', at: { x: 0.3, y: 0.3 } },
+                    { type: 'landmark', center: { x: 0.5, y: 0.5 }, label: '15th' },
+                    { type: 'text', text: 'W 15', at: { x: 0.6, y: 0.6 } }
+                  ],
+                  passPad: true
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      visitedPanos: [],
+      currentRouteLabel: 'Ave of the Americas',
+      recentMovement: 'You most recently moved northeast into this panorama.'
+    },
+    partnerName: 'Ada',
+    options: [{ panoId: 'sixth-option', heading: 30, label: '6th Ave' }],
+    screenshots: [Buffer.from('sixth')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: true,
+    padStatus: 'in your hands',
+    partnerPadText: ['W 15th St']
+  });
+
+  assert.deepEqual(result.padOperations.map(operation => operation.type), ['line']);
+});
+
+test('model decision treats 6th Ave and Avenue of the Americas as the same echo key', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  selectedIndex: 0,
+                  reasoning: 'I should only write my own current label.',
+                  padOperations: [
+                    { type: 'text', text: 'Ave of the Americas', at: { x: 0.4, y: 0.4 } },
+                    { type: 'text', text: 'W Washington Pl', at: { x: 0.4, y: 0.6 } }
+                  ],
+                  passPad: true
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      visitedPanos: [],
+      currentRouteLabel: 'W Washington Pl',
+      recentMovement: 'You most recently moved north into this panorama.'
+    },
+    partnerName: 'Ada',
+    options: [{ panoId: 'washington-option', heading: 90, label: 'W Washington Pl' }],
+    screenshots: [Buffer.from('washington')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: true,
+    padStatus: 'in your hands',
+    partnerPadText: ['6th Ave']
+  });
+
+  assert.equal(result.padOperations.length, 1);
+  assert.equal(result.padOperations[0].text, 'W Washington Pl');
+});
+
+test('model decision allows Avenue of the Americas echo when own visible evidence supports 6th Ave alias', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  selectedIndex: 0,
+                  reasoning: 'I see this avenue in the current route label.',
+                  padOperations: [
+                    { type: 'text', text: 'Avenue of the Americas', at: { x: 0.4, y: 0.4 } }
+                  ],
+                  passPad: true
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'ada',
+      name: 'Ada',
+      visitedPanos: [],
+      currentRouteLabel: '6th Ave',
+      recentMovement: 'You most recently moved east into this panorama.'
+    },
+    partnerName: 'Theo',
+    options: [{ panoId: 'sixth-option', heading: 30, label: '6th Ave' }],
+    screenshots: [Buffer.from('sixth')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: true,
+    padStatus: 'in your hands',
+    partnerPadText: ['Ave of the Americas']
+  });
+
+  assert.equal(result.padOperations.length, 1);
+  assert.equal(result.padOperations[0].text, 'Avenue of the Americas');
+});
+
+test('model decision does not use stale recent notes as echo support', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  selectedIndex: 0,
+                  reasoning: 'I write the partner label from memory.',
+                  padOperations: [
+                    { type: 'text', text: 'W 15th St', at: { x: 0.4, y: 0.4 } },
+                    { type: 'text', text: 'W Washington Pl', at: { x: 0.4, y: 0.6 } }
+                  ],
+                  passPad: true
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      visitedPanos: [],
+      currentRouteLabel: 'W Washington Pl',
+      recentMovement: 'You most recently moved north into this panorama.',
+      recentNotes: [
+        'I see W 15th St in my current view.',
+        "I treat my friend's W 15th St ink as their own observed place, not a route command, so from W Washington Pl I choose the available north connection."
+      ]
+    },
+    partnerName: 'Ada',
+    options: [{ panoId: 'washington-option', heading: 90, label: 'W Washington Pl' }],
+    screenshots: [Buffer.from('washington')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: true,
+    padStatus: 'in your hands',
+    partnerPadText: ['W15']
+  });
+
+  assert.equal(result.padOperations.length, 1);
+  assert.equal(result.padOperations[0].text, 'W Washington Pl');
+});
+
+test('model decision drops lone replaceMine when every rendered replacement is a partner echo', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  selectedIndex: 0,
+                  reasoning: 'I should not erase my prior ink with only copied text.',
+                  padOperations: [
+                    { type: 'replaceMine' },
+                    { type: 'text', text: '15th', at: { x: 0.4, y: 0.4 } }
+                  ],
+                  passPad: true
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      visitedPanos: [],
+      currentRouteLabel: 'W Washington Pl',
+      recentMovement: 'You most recently moved north into this panorama.'
+    },
+    partnerName: 'Ada',
+    options: [{ panoId: 'washington-option', heading: 90, label: 'W Washington Pl' }],
+    screenshots: [Buffer.from('washington')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: true,
+    padStatus: 'in your hands',
+    partnerPadText: ['W 15th St']
+  });
+
+  assert.deepEqual(result.padOperations, []);
+});
+
+test('model decision retains replaceMine when a genuine rendered replacement survives', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  selectedIndex: 0,
+                  reasoning: 'I replace stale ink with a line I can stand behind.',
+                  padOperations: [
+                    { type: 'replaceMine' },
+                    { type: 'text', text: 'W 15th St', at: { x: 0.4, y: 0.4 } },
+                    { type: 'line', from: { x: 0.2, y: 0.3 }, to: { x: 0.7, y: 0.4 } }
+                  ],
+                  passPad: true
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      visitedPanos: [],
+      currentRouteLabel: 'W Washington Pl',
+      recentMovement: 'You most recently moved north into this panorama.'
+    },
+    partnerName: 'Ada',
+    options: [{ panoId: 'washington-option', heading: 90, label: 'W Washington Pl' }],
+    screenshots: [Buffer.from('washington')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: true,
+    padStatus: 'in your hands',
+    partnerPadText: ['W 15th St']
+  });
+
+  assert.deepEqual(result.padOperations.map(operation => operation.type), ['replaceMine', 'line']);
+});
+
+test('model decision allows echoed partner label when own visible evidence supports the same corridor', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  selectedIndex: 0,
+                  reasoning: 'I see W 15th St in my current view.',
+                  padOperations: [
+                    { type: 'text', text: 'W 15th St', at: { x: 0.3, y: 0.3 } }
+                  ],
+                  passPad: true
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'ada',
+      name: 'Ada',
+      visitedPanos: [],
+      currentRouteLabel: 'W 15th St',
+      recentMovement: 'You most recently moved southeast into this panorama.'
+    },
+    partnerName: 'Theo',
+    options: [
+      { panoId: 'fifteenth-option', heading: 120, label: 'W 15th St southeast' },
+      { panoId: 'avenue-option', heading: 20, label: '9th Ave' }
+    ],
+    screenshots: [Buffer.from('fifteenth'), Buffer.from('avenue')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: true,
+    padStatus: 'in your hands',
+    partnerPadText: ['W 15TH ST']
+  });
+
+  assert.equal(result.padOperations.length, 1);
+  assert.equal(result.padOperations[0].text, 'W 15th St');
+});
+
+test('model decision allows non-echo own labels even when partner ink names another place', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  selectedIndex: 0,
+                  reasoning: 'I mark the avenue I can read.',
+                  padOperations: [
+                    { type: 'text', text: 'Ave of the Americas', at: { x: 0.4, y: 0.5 } }
+                  ],
+                  passPad: true
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      visitedPanos: [],
+      currentRouteLabel: 'W Washington Pl',
+      recentMovement: 'You most recently moved north into this panorama.'
+    },
+    partnerName: 'Ada',
+    options: [
+      { panoId: 'avenue-option', heading: 30, label: 'Ave of the Americas' }
+    ],
+    screenshots: [Buffer.from('avenue')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: true,
+    padStatus: 'in your hands',
+    partnerPadText: ['W 15th St']
+  });
+
+  assert.equal(result.padOperations.length, 1);
+  assert.equal(result.padOperations[0].text, 'Ave of the Americas');
+});
+
 test('rendezvous model cannot edit or pass a sheet it does not hold', async () => {
   const client = {
     chat: {
