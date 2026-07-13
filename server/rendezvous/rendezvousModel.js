@@ -302,9 +302,20 @@ function decisionHasPlaceText(decision, label) {
     .some(operation => placeKeyFromText(operationTextValue(operation)) === targetKey);
 }
 
+function decisionReplacesOwnInk(decision) {
+  return (decision?.padOperations || [])
+    .some(operation => String(operation?.type || '').toLowerCase() === 'replacemine');
+}
+
 function withPolicyLocalInk(decision, policy, { canEditPad = false, ownPadText = [] } = {}) {
   if (!canEditPad || !policy?.local) return decision;
-  if (hasPlaceText(ownPadText, policy.local) || decisionHasPlaceText(decision, policy.local)) return decision;
+  const existingOwnInkSurvives = !decisionReplacesOwnInk(decision);
+  if (
+    (existingOwnInkSurvives && hasPlaceText(ownPadText, policy.local)) ||
+    decisionHasPlaceText(decision, policy.local)
+  ) {
+    return decision;
+  }
   if ((decision.padOperations || []).length >= SCRATCHPAD_MAX_OPS_PER_TURN) return decision;
   return {
     ...decision,
