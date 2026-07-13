@@ -37,7 +37,8 @@ test('rendezvous model prompt is scoped to personal memory, visible options, and
       name: 'Ada',
       style: 'landmark-first',
       visitedPanos: ['pano-a'],
-      recentNotes: ['I saw a broad public crossing.']
+      recentNotes: ['I saw a broad public crossing.'],
+      recentMovement: 'You most recently moved south into this panorama.'
     },
     partnerName: 'Theo',
     options: [
@@ -61,12 +62,63 @@ test('rendezvous model prompt is scoped to personal memory, visible options, and
   assert.match(serializedRequest, /heading 180 degrees \(south\)/);
   assert.match(serializedRequest, /0° is north, 90° east, 180° south, and 270° west/);
   assert.match(serializedRequest, /concrete place your friend marked outranks generic exploration/);
+  assert.match(serializedRequest, /sharing one real piece of paper/);
+  assert.match(serializedRequest, /replaceMine/);
+  assert.match(serializedRequest, /removes only your visible marks/);
+  assert.match(serializedRequest, /landmark/);
+  assert.match(serializedRequest, /Text is annotation, not the main message/);
+  assert.match(serializedRequest, /currently observed intersection, street, or landmark/);
+  assert.match(serializedRequest, /recent movement into this view/);
+  assert.match(serializedRequest, /You most recently moved south into this panorama/);
+  assert.match(serializedRequest, /Do not use the sheet to tell Theo where to go/);
+  assert.doesNotMatch(serializedRequest, /clearly mark where you are headed so they can intercept you/);
   assert.match(serializedRequest, /Your ink is charcoal black\. Theo's ink is blue/);
   assert.match(serializedRequest, /Treat only Theo's ink as a clue/);
   assert.match(serializedRequest, /exact text visibly written in Theo's ink/);
   assert.match(serializedRequest, /PRINCE ST|toward W BROADWAY/);
   assert.doesNotMatch(serializedRequest, /pano-a|pano-b/);
   assert.doesNotMatch(serializedRequest, /distanceToFriend|partnerPath|roughPosition|latitude|longitude/);
+});
+
+test('rendezvous model response parsing allows an author replacement operation', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  selectedIndex: 0,
+                  reasoning: 'I redraw my side as a compact intersection clue.',
+                  padOperations: [
+                    { type: 'replaceMine' },
+                    { type: 'line', from: { x: 0.2, y: 0.4 }, to: { x: 0.8, y: 0.4 } },
+                    { type: 'landmark', center: { x: 0.6, y: 0.4 }, symbol: 'station', label: 'PENN' }
+                  ],
+                  passPad: true
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: { id: 'theo', name: 'Theo', visitedPanos: [], recentNotes: [] },
+    partnerName: 'Ada',
+    options: [{ panoId: 'pano-a', heading: 90, label: 'avenue' }],
+    screenshots: [Buffer.from('one')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: true,
+    padStatus: 'in your hands'
+  });
+
+  assert.equal(result.padOperations[0].type, 'replaceMine');
+  assert.equal(result.padOperations[2].type, 'landmark');
+  assert.equal(result.passPad, true);
 });
 
 test('rendezvous model cannot edit or pass a sheet it does not hold', async () => {

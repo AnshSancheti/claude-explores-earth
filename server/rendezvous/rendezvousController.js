@@ -7,6 +7,7 @@ import { RendezvousModelService } from './rendezvousModel.js';
 import {
   appendScratchpadOperations,
   createScratchpad,
+  currentScratchpadOperations,
   normalizeScratchpad,
   renderScratchpad
 } from './scratchpad.js';
@@ -106,6 +107,12 @@ function calculateDistance(pos1, pos2) {
   const a = Math.sin(deltaPhi / 2) ** 2 +
     Math.cos(phi1) * Math.cos(phi2) * Math.sin(deltaLambda / 2) ** 2;
   return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function compassDirection(heading) {
+  const directions = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
+  const normalized = ((Number(heading) || 0) % 360 + 360) % 360;
+  return directions[Math.round(normalized / 45) % directions.length];
 }
 
 function offsetPosition(position, meters, bearingDegrees) {
@@ -621,14 +628,14 @@ export class RendezvousController {
       const canEditPad = scratchpad.owner === agentId && !scratchpad.inTransit;
       if (canEditPad) agent.padSeenSequence = scratchpad.sequence;
       const throughSequence = Math.min(agent.padSeenSequence || 0, scratchpad.sequence);
-      const partnerPadText = scratchpad.operations
+      const visiblePadOperations = currentScratchpadOperations(scratchpad, { throughSequence });
+      const partnerPadText = visiblePadOperations
         .filter(operation =>
           operation.author === partner.id &&
-          operation.type === 'text' &&
-          operation.sequence <= throughSequence
+          (operation.type === 'text' || (operation.type === 'landmark' && operation.label))
         )
         .slice(-6)
-        .map(operation => operation.text);
+        .map(operation => operation.text || operation.label);
       const [screenshots, scratchpadBuffer] = await Promise.all([
         this.#captureCandidateScreenshots(candidates),
         renderScratchpad(scratchpad, { throughSequence })
@@ -640,7 +647,10 @@ export class RendezvousController {
           name: agent.name,
           style: agent.style,
           visitedPanos: [...(agent.visitedPanos || [])],
-          recentNotes: [...(agent.recentNotes || [])]
+          recentNotes: [...(agent.recentNotes || [])],
+          recentMovement: (agent.path || []).length > 1
+            ? `You most recently moved ${compassDirection(agent.heading)} into this panorama.`
+            : 'You have not moved yet from your starting panorama.'
         },
         partnerName: partner.name,
         options: candidates.map(candidate => ({
