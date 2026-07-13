@@ -92,6 +92,7 @@ export class RendezvousModelService {
     scratchpadBuffer,
     canEditPad,
     padStatus,
+    partnerPadText = [],
     forcePass = false
   }) {
     if (!Array.isArray(options) || options.length === 0) {
@@ -115,6 +116,9 @@ export class RendezvousModelService {
     const inkInstruction = agent.id === 'theo'
       ? `Your ink is blue. ${partnerName}'s ink is charcoal black.`
       : `Your ink is charcoal black. ${partnerName}'s ink is blue.`;
+    const partnerInkTranscript = Array.isArray(partnerPadText) && partnerPadText.length > 0
+      ? partnerPadText.slice(-6).map(text => `- ${String(text).slice(0, 80)}`).join('\n')
+      : '- No legible text from your friend yet.';
 
     const systemPrompt = `You are ${agent.name}, one of two friends lost on different Manhattan street corners. Your only goal is to physically find ${partnerName}. You can walk through Google Street View and sometimes hold one shared paper scratchpad.
 
@@ -151,7 +155,7 @@ Return only JSON:
     const userContent = [
       {
         type: 'text',
-        text: `These are the routes visible from your current panorama. Image 1 is the last scratchpad version you personally saw; the remaining images correspond to options 0 through ${options.length - 1} in order.\n\n${optionLines}\n\nYour private field memory:\n${privateMemory}\n\nScratchpad status: ${padStatus}`
+        text: `These are the routes visible from your current panorama. Image 1 is the last scratchpad version you personally saw; the remaining images correspond to options 0 through ${options.length - 1} in order.\n\n${optionLines}\n\nYour private field memory:\n${privateMemory}\n\nAccessibility readout of the exact text visibly written in ${partnerName}'s ink:\n${partnerInkTranscript}\n\nScratchpad status: ${padStatus}`
       },
       {
         type: 'image_url',

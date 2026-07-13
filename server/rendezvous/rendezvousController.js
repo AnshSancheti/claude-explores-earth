@@ -611,6 +611,14 @@ export class RendezvousController {
       const canEditPad = scratchpad.owner === agentId && !scratchpad.inTransit;
       if (canEditPad) agent.padSeenSequence = scratchpad.sequence;
       const throughSequence = Math.min(agent.padSeenSequence || 0, scratchpad.sequence);
+      const partnerPadText = scratchpad.operations
+        .filter(operation =>
+          operation.author === partner.id &&
+          operation.type === 'text' &&
+          operation.sequence <= throughSequence
+        )
+        .slice(-6)
+        .map(operation => operation.text);
       const [screenshots, scratchpadBuffer] = await Promise.all([
         this.#captureCandidateScreenshots(candidates),
         renderScratchpad(scratchpad, { throughSequence })
@@ -634,6 +642,7 @@ export class RendezvousController {
         scratchpadBuffer,
         canEditPad,
         forcePass,
+        partnerPadText,
         padStatus: this.#padStatusFor(agentId)
       });
       selected = candidates[decision.selectedIndex] || candidates[0];

@@ -47,6 +47,7 @@ test('rendezvous model prompt is scoped to personal memory, visible options, and
     screenshots: [Buffer.from('one'), Buffer.from('two')],
     scratchpadBuffer: Buffer.from('pad'),
     canEditPad: true,
+    partnerPadText: ['PRINCE ST', 'toward W BROADWAY'],
     padStatus: 'in your hands',
     forcePass: false
   });
@@ -62,6 +63,8 @@ test('rendezvous model prompt is scoped to personal memory, visible options, and
   assert.match(serializedRequest, /concrete place your friend marked outranks generic exploration/);
   assert.match(serializedRequest, /Your ink is charcoal black\. Theo's ink is blue/);
   assert.match(serializedRequest, /Treat only Theo's ink as a clue/);
+  assert.match(serializedRequest, /exact text visibly written in Theo's ink/);
+  assert.match(serializedRequest, /PRINCE ST|toward W BROADWAY/);
   assert.doesNotMatch(serializedRequest, /pano-a|pano-b/);
   assert.doesNotMatch(serializedRequest, /distanceToFriend|partnerPath|roughPosition|latitude|longitude/);
 });
