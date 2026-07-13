@@ -3,6 +3,13 @@ import * as fsp from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { StreetViewHeadless } from '../services/streetViewHeadless.js';
 import { calculateBearing } from '../utils/geoUtils.js';
+import { RendezvousModelService } from './rendezvousModel.js';
+import {
+  appendScratchpadOperations,
+  createScratchpad,
+  normalizeScratchpad,
+  renderScratchpad
+} from './scratchpad.js';
 
 const AGENT_ORDER = ['ada', 'theo'];
 const AGENTS = Object.freeze({
@@ -76,63 +83,7 @@ const START_PAIRS = Object.freeze([
 
 const STREET_SEARCH_RADII_METERS = Object.freeze([18, 36, 72]);
 const STREET_SEARCH_BEARINGS = Object.freeze([0, 45, 90, 135, 180, 225, 270, 315]);
-const NOTEBOOK_REVISION_LIMIT = 18;
 const LEGACY_RENDEZVOUS_HINT_PATTERN = /rough wire|last telegram|telegrams said|telegram puts|somewhere around|nearest guidebook|wire before|meeting place|Bryant Park|Grand Central|Union Square|Washington Square|Columbus Circle/i;
-const QUESTION_CARDS = Object.freeze([
-  {
-    id: 'warmer-colder',
-    label: 'Warmer / colder',
-    prompt: 'Did that move seem to bring the friends closer?',
-    answer: ({ agent, partner }) => {
-      const distance = calculateDistance(agent.position, partner.position);
-      const previous = Number(agent.lastSharedDistanceMeters);
-      if (!Number.isFinite(previous)) {
-        if (distance < 260) return 'first read: close enough to slow down and scan faces';
-        if (distance < 850) return 'first read: the trail feels reachable, but not solved';
-        return 'first read: still a wide city between the two trails';
-      }
-      const delta = previous - distance;
-      if (delta > 120) return 'warmer: the two trails feel like they are bending closer';
-      if (delta < -120) return 'colder: that move seems to have widened the gap';
-      return 'level: the distance feels mostly unchanged';
-    }
-  },
-  {
-    id: 'street-texture',
-    label: 'Street texture',
-    prompt: 'What kind of city edge are you reading?',
-    answer: ({ agent }) => {
-      const lat = Number(agent.position?.lat);
-      if (lat >= 40.765) return 'park-edge streets and broad crossings';
-      if (lat >= 40.755) return 'bright midtown blocks with busy sidewalks';
-      if (lat >= 40.738) return 'mixed avenues and narrower commercial streets';
-      return 'lower blocks with tighter corners and slower turns';
-    }
-  },
-  {
-    id: 'landmark-class',
-    label: 'Trail class',
-    prompt: 'What kind of trace should the other trust?',
-    answer: ({ agent }) => {
-      const texture = streetTextureFor(agent.position);
-      if (/park-edge/i.test(texture)) return 'park-edge trace with open crossings, not an exact corner';
-      if (/midtown/i.test(texture)) return 'busy avenue trace with tall blocks and frequent turns';
-      if (/mixed/i.test(texture)) return 'mixed avenue trace, useful for direction but not a block';
-      return 'tight-block trace where turns can mislead quickly';
-    }
-  },
-  {
-    id: 'confidence-check',
-    label: 'Confidence check',
-    prompt: 'Should the seeker hold, sweep, or reverse?',
-    answer: ({ agent, partner }) => {
-      const distance = calculateDistance(agent.position, partner.position);
-      if (distance < 260) return 'slow sweep: look across intersections before committing';
-      if (distance < 850) return 'keep sweeping; one more coarse clue should matter';
-      return 'wide sweep; do not assume the other is near';
-    }
-  }
-]);
 
 function parseIntOr(value, fallback) {
   const parsed = parseInt(value, 10);
@@ -173,60 +124,6 @@ function offsetPosition(position, meters, bearingDegrees) {
   };
 }
 
-function bearingWord(bearing) {
-  if (!Number.isFinite(Number(bearing))) return 'onward';
-  const labels = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
-  const index = Math.round((((bearing % 360) + 360) % 360) / 45) % 8;
-  return labels[index];
-}
-
-function neighborhoodFor(position) {
-  const lat = Number(position?.lat);
-  const lng = Number(position?.lng);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return 'Manhattan';
-  if (lat >= 40.765) return 'the upper west / park edge';
-  if (lat >= 40.755 && lng < -73.985) return 'the Theater District';
-  if (lat >= 40.748 && lng >= -73.981) return 'Midtown East';
-  if (lat >= 40.748) return 'Midtown';
-  if (lat >= 40.738) return 'Chelsea / Flatiron';
-  if (lat >= 40.731 && lng < -73.994) return 'Greenwich Village';
-  if (lat >= 40.731) return 'NoHo / East Village';
-  return 'Lower Manhattan';
-}
-
-function streetTextureFor(position) {
-  const lat = Number(position?.lat);
-  if (!Number.isFinite(lat)) return 'ordinary Manhattan blocks';
-  if (lat >= 40.765) return 'park-edge streets';
-  if (lat >= 40.755) return 'busy midtown blocks';
-  if (lat >= 40.738) return 'mixed avenue blocks';
-  return 'tighter downtown blocks';
-}
-
-function uncertaintyLabel(distanceToTarget) {
-  if (!Number.isFinite(distanceToTarget)) return 'unknown';
-  if (distanceToTarget < 260) return 'low';
-  if (distanceToTarget < 850) return 'medium';
-  return 'high';
-}
-
-function notebookPlanFor(agent, partner) {
-  const distance = calculateDistance(agent?.position, partner?.position);
-  const partnerName = partner?.name || 'the other friend';
-  if (distance < 260) return `Slow the sweep and scan for ${partnerName} across nearby intersections.`;
-  if (distance < 850) return `Keep sweeping toward ${partnerName}'s stale trail; ask for coarse confirmation.`;
-  return `Widen the search for ${partnerName}; do not lock onto a single landmark.`;
-}
-
-function pointPosition(point) {
-  if (!point) return null;
-  if (point.position) return point.position;
-  if (Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lng))) {
-    return { lat: Number(point.lat), lng: Number(point.lng) };
-  }
-  return null;
-}
-
 function publicPoint(point) {
   if (!point) return null;
   return {
@@ -252,20 +149,20 @@ function stripTelegramInternal(telegram) {
     publicTelegram.clues = publicClues;
   }
   if (publicTelegram.kind !== 'notebook_update') {
-    publicTelegram.text = 'Legacy wire archived; use the shared notebook for durable clues.';
+    publicTelegram.text = 'Legacy wire archived; the drawing sheet is now the only shared channel.';
   }
   return publicTelegram;
 }
 
-function publicNotebookReason(agent, target) {
+function publicLegacyReason(agent) {
   const agentName = agent?.name || 'The agent';
   if (agent?.status === 'found') {
-    return `${agentName} reached the rendezvous using the shared notebook and low-resolution clues.`;
+    return `${agentName} reached the rendezvous after following the shared drawing sheet.`;
   }
   if (agent?.status === 'waiting') {
-    return `${agentName} is holding position briefly, reading the shared notebook instead of waiting at a fixed spot.`;
+    return `${agentName} is holding briefly and remembering the last version of the shared sheet.`;
   }
-  return `${agentName} is following the shared notebook through the other trail, keeping clues low-resolution.`;
+  return `${agentName} is searching from personal street observations and the last shared sheet.`;
 }
 
 function sanitizeLegacyNotebookText(text, fallback) {
@@ -273,8 +170,8 @@ function sanitizeLegacyNotebookText(text, fallback) {
   return LEGACY_RENDEZVOUS_HINT_PATTERN.test(text) ? fallback : text;
 }
 
-function sanitizePublicAgent(agent, target) {
-  const fallback = publicNotebookReason(agent, target);
+function sanitizePublicAgent(agent) {
+  const fallback = publicLegacyReason(agent);
   const lastDecision = agent.lastDecision
     ? {
         ...agent.lastDecision,
@@ -294,7 +191,7 @@ function sanitizePublicAgent(agent, target) {
   };
 }
 
-function sanitizePublicEvent(event, target) {
+function sanitizePublicEvent(event) {
   if (!event || typeof event !== 'object') return event;
   const payload = event.payload || event.data;
   if (!payload || typeof payload !== 'object') return event;
@@ -307,7 +204,7 @@ function sanitizePublicEvent(event, target) {
     };
   }
   const agentName = payload.agentName || payload.name || payload.agentId;
-  const fallback = publicNotebookReason({ name: agentName || 'The agent', status: payload.status }, target);
+  const fallback = publicLegacyReason({ name: agentName || 'The agent', status: payload.status });
   const sanitizedPayload = {
     ...payload,
     reasoning: sanitizeLegacyNotebookText(payload.reasoning, fallback),
@@ -330,13 +227,15 @@ export class RendezvousController {
     emit = () => {},
     dataDir,
     logger = console,
-    streetView = null
+    streetView = null,
+    agentModel = null
   } = {}) {
     this.emit = emit;
     this.logger = logger;
     this.dataDir = dataDir;
     this.savePath = path.join(dataDir, 'rendezvous-current.json');
     this.streetView = streetView || new StreetViewHeadless();
+    this.agentModel = agentModel || new RendezvousModelService({ logger });
     this.streetViewReady = false;
     this.panoramaCache = new Map();
     this.timer = null;
@@ -345,11 +244,9 @@ export class RendezvousController {
     this.state = this.#emptyState();
 
     this.stepIntervalMs = parseIntOr(process.env.RENDEZVOUS_STEP_INTERVAL_MS, 1800);
-    this.telegramEverySteps = parseIntOr(process.env.RENDEZVOUS_TELEGRAM_EVERY_STEPS, 4);
-    this.telegramDelayTurns = parseIntOr(process.env.RENDEZVOUS_TELEGRAM_DELAY_TURNS, 2);
+    this.padHandoffDelayTurns = parseIntOr(process.env.RENDEZVOUS_PAD_HANDOFF_DELAY_TURNS, 2);
+    this.padMaxHoldTurns = parseIntOr(process.env.RENDEZVOUS_PAD_MAX_HOLD_TURNS, 8);
     this.foundRadiusMeters = parseIntOr(process.env.RENDEZVOUS_FOUND_RADIUS_M, 125);
-    this.trailLagPoints = parseIntOr(process.env.RENDEZVOUS_TRAIL_LAG_POINTS, 3);
-    this.trailUncertaintyMeters = parseIntOr(process.env.RENDEZVOUS_TRAIL_UNCERTAINTY_M, 140);
   }
 
   #emptyState() {
@@ -372,6 +269,7 @@ export class RendezvousController {
         theoDistanceToTarget: null
       },
       notebook: null,
+      scratchpad: null,
       agents: {},
       telegrams: [],
       eventLog: []
@@ -402,10 +300,38 @@ export class RendezvousController {
 
   async saveState() {
     await fsp.mkdir(path.dirname(this.savePath), { recursive: true });
-    await fsp.writeFile(this.savePath, `${JSON.stringify(this.state, null, 2)}\n`);
+    const tempPath = `${this.savePath}.${process.pid}.${randomUUID()}.tmp`;
+    await fsp.writeFile(tempPath, `${JSON.stringify(this.state, null, 2)}\n`);
+    await fsp.rename(tempPath, this.savePath);
+  }
+
+  async #archiveCurrentState() {
+    if (!this.state?.runId) return;
+    const safeRunId = String(this.state.runId).replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!safeRunId) return;
+    const archiveDir = path.join(this.dataDir, 'rendezvous-runs');
+    const archivePath = path.join(archiveDir, `${safeRunId}.json`);
+    await fsp.mkdir(archiveDir, { recursive: true });
+    try {
+      await fsp.access(archivePath);
+      return;
+    } catch {
+      // The immutable archive does not exist yet.
+    }
+    let archivedState = this.state;
+    try {
+      const persisted = JSON.parse(await fsp.readFile(this.savePath, 'utf8'));
+      if (persisted?.runId === this.state.runId) archivedState = persisted;
+    } catch {
+      // Fall back to the in-memory snapshot when no persisted state is available.
+    }
+    const tempPath = `${archivePath}.${process.pid}.${randomUUID()}.tmp`;
+    await fsp.writeFile(tempPath, `${JSON.stringify(archivedState, null, 2)}\n`);
+    await fsp.rename(tempPath, archivePath);
   }
 
   #normalizeLoadedState(raw) {
+    const hasCausalScratchpad = Number(raw?.scratchpad?.version) >= 2;
     const state = {
       ...this.#emptyState(),
       ...raw,
@@ -418,7 +344,10 @@ export class RendezvousController {
         adaDistanceToTarget: null,
         theoDistanceToTarget: null
       },
-      notebook: this.#normalizeNotebook(raw.notebook),
+      notebook: null,
+      scratchpad: hasCausalScratchpad
+        ? normalizeScratchpad(raw.scratchpad, { turn: raw.turn || 0 })
+        : null,
       telegrams: Array.isArray(raw.telegrams) ? raw.telegrams : [],
       eventLog: Array.isArray(raw.eventLog) ? raw.eventLog.slice(-80) : []
     };
@@ -430,91 +359,22 @@ export class RendezvousController {
         path: Array.isArray(state.agents[agentId].path) ? state.agents[agentId].path : [],
         inbox: Array.isArray(state.agents[agentId].inbox) ? state.agents[agentId].inbox : [],
         outbox: Array.isArray(state.agents[agentId].outbox) ? state.agents[agentId].outbox : [],
-        recentNotes: Array.isArray(state.agents[agentId].recentNotes) ? state.agents[agentId].recentNotes : [],
+        recentNotes: hasCausalScratchpad && Array.isArray(state.agents[agentId].recentNotes)
+          ? state.agents[agentId].recentNotes
+          : ['I remember only the public streets I have personally walked.'],
         visitedPanos: Array.isArray(state.agents[agentId].visitedPanos) ? state.agents[agentId].visitedPanos : [],
+        padSeenSequence: Math.max(0, Math.floor(Number(state.agents[agentId].padSeenSequence) || 0)),
         friendEstimate: null,
-        lastSharedDistanceMeters: Number.isFinite(Number(state.agents[agentId].lastSharedDistanceMeters))
-          ? Number(state.agents[agentId].lastSharedDistanceMeters)
-          : null
       };
     }
     this.running = state.status === 'running';
     return state;
   }
 
-  #createNotebook() {
-    return {
-      version: 1,
-      search: {
-        name: 'Find each other',
-        shortName: 'Each other',
-        status: 'active',
-        rationale: 'No meeting spot. Follow the other trail through coarse, stale clues.'
-      },
-      proposedMeeting: {
-        name: 'Find each other',
-        status: 'retired',
-        rationale: 'No fixed meeting place; the only goal is to come within sight.'
-      },
-      lastReliableClue: 'Only durable, low-resolution clues belong here.',
-      uncertainty: 'high',
-      nextQuestion: {
-        from: 'Ada',
-        to: 'Theo',
-        card: 'Warmer / colder',
-        prompt: 'Did that move seem to bring the friends closer?'
-      },
-      plans: {
-        ada: 'Search for Theo through coarse trail clues; do not lock onto a landmark.',
-        theo: 'Search for Ada through coarse trail clues; do not lock onto a landmark.'
-      },
-      revisions: [],
-      updatedTurn: this.state.turn || 0,
-      updatedBy: null
-    };
-  }
-
-  #normalizeNotebook(notebook) {
-    const base = this.#createNotebook();
-    if (!notebook || typeof notebook !== 'object') return base;
-    return {
-      ...base,
-      ...notebook,
-      search: {
-        ...base.search,
-        ...(notebook.search || {}),
-        name: 'Find each other',
-        shortName: 'Each other',
-        rationale: notebook.search?.rationale || base.search.rationale
-      },
-      proposedMeeting: {
-        ...base.proposedMeeting,
-        ...(notebook.proposedMeeting || {}),
-        name: 'Find each other',
-        status: 'retired',
-        rationale: 'No fixed meeting place; the only goal is to come within sight.'
-      },
-      nextQuestion: {
-        ...base.nextQuestion,
-        ...(notebook.nextQuestion || {}),
-        prompt: sanitizeLegacyNotebookText(notebook.nextQuestion?.prompt, base.nextQuestion.prompt) ||
-          base.nextQuestion.prompt
-      },
-      plans: {
-        ada: sanitizeLegacyNotebookText(notebook.plans?.ada, base.plans.ada) || base.plans.ada,
-        theo: sanitizeLegacyNotebookText(notebook.plans?.theo, base.plans.theo) || base.plans.theo
-      },
-      revisions: Array.isArray(notebook.revisions)
-        ? notebook.revisions.slice(0, NOTEBOOK_REVISION_LIMIT)
-        : []
-    };
-  }
-
   getPublicState() {
-    const target = this.state.meeting?.target || null;
     const agents = {};
     for (const [agentId, agent] of Object.entries(this.state.agents || {})) {
-      const publicAgent = sanitizePublicAgent(agent, target);
+      const publicAgent = sanitizePublicAgent(agent);
       agents[agentId] = {
         ...publicAgent,
         path: (publicAgent.path || []).map(publicPoint),
@@ -532,15 +392,17 @@ export class RendezvousController {
 
     return {
       ...this.state,
-      notebook: this.#normalizeNotebook(this.state.notebook),
+      notebook: null,
+      scratchpad: normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn }),
       agents,
-      eventLog: (this.state.eventLog || []).map(event => sanitizePublicEvent(event, target)),
+      eventLog: (this.state.eventLog || []).map(event => sanitizePublicEvent(event)),
       telegrams: (this.state.telegrams || []).map(stripTelegramInternal)
     };
   }
 
   async start({ reset = false } = {}) {
-    if (reset || !this.state.runId || this.state.status === 'found') {
+    const hasCausalScratchpad = Number(this.state.scratchpad?.version) >= 2;
+    if (reset || !this.state.runId || this.state.status === 'found' || !hasCausalScratchpad) {
       await this.createRun();
     } else if (!this.state.runId) {
       await this.loadState();
@@ -589,6 +451,7 @@ export class RendezvousController {
 
   async createRun() {
     await this.ensureStreetView();
+    await this.#archiveCurrentState();
 
     const pairIndex = parseIntOr(process.env.RENDEZVOUS_START_PAIR_INDEX, Date.now()) % START_PAIRS.length;
     const pair = START_PAIRS[((pairIndex % START_PAIRS.length) + START_PAIRS.length) % START_PAIRS.length];
@@ -596,8 +459,7 @@ export class RendezvousController {
     const agents = {};
     for (const agentId of AGENT_ORDER) {
       const start = pair[agentId];
-      const partnerStart = pair[this.#partnerId(agentId)];
-      const pano = await this.#resolveStartPanorama(start, partnerStart, agentId);
+      const pano = await this.#resolveStartPanorama(start, agentId);
       agents[agentId] = this.#createAgent(agentId, pano, start.label);
     }
 
@@ -614,7 +476,8 @@ export class RendezvousController {
         adaDistanceToTarget: null,
         theoDistanceToTarget: null
       },
-      notebook: this.#createNotebook(),
+      notebook: null,
+      scratchpad: createScratchpad({ owner: 'ada', turn: 0 }),
       agents,
       telegrams: [],
       eventLog: []
@@ -627,8 +490,6 @@ export class RendezvousController {
         theo: agents.theo.startLabel
       }
     });
-    await this.#sendTelegram('ada', { opening: true });
-    await this.#sendTelegram('theo', { opening: true });
     this.#updateMeetingMetrics();
     await this.saveState();
   }
@@ -652,11 +513,11 @@ export class RendezvousController {
       inbox: [],
       outbox: [],
       recentNotes: [
-        `Started from ${startLabel} in ${neighborhoodFor(position)}.`
+        'I opened my eyes on an unfamiliar Manhattan corner.'
       ],
       lastDecision: null,
       friendEstimate: null,
-      lastSharedDistanceMeters: null
+      padSeenSequence: 0
     };
   }
 
@@ -679,11 +540,11 @@ export class RendezvousController {
     if (this.stepInFlight || !this.running || this.state.status !== 'running') return this.getPublicState();
     this.stepInFlight = true;
     try {
-      this.#deliverTelegrams();
+      this.#deliverScratchpad();
       const agentId = AGENT_ORDER[this.state.turn % AGENT_ORDER.length];
       await this.#stepAgent(agentId);
       this.state.turn += 1;
-      this.#deliverTelegrams();
+      this.#deliverScratchpad();
       this.#updateMeetingMetrics();
       this.#checkFound();
       this.state.updatedAt = new Date().toISOString();
@@ -705,15 +566,51 @@ export class RendezvousController {
     agent.panoId = current.panoId;
     agent.position = { lat: current.position.lat, lng: current.position.lng };
 
-    const target = this.#targetForAgent(agent);
     let selected = null;
     let decisionReason = null;
     let mode = 'search';
+    let modelFallbackCause = null;
 
     const candidates = await this.#candidatePanoramas(current.links || []);
-    selected = this.#chooseCandidate(agent, target, candidates);
+    if (candidates.length > 0) {
+      const scratchpad = normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
+      this.state.scratchpad = scratchpad;
+      const canEditPad = scratchpad.owner === agentId && !scratchpad.inTransit;
+      if (canEditPad) agent.padSeenSequence = scratchpad.sequence;
+      const throughSequence = Math.min(agent.padSeenSequence || 0, scratchpad.sequence);
+      const [screenshots, scratchpadBuffer] = await Promise.all([
+        this.#captureCandidateScreenshots(candidates),
+        renderScratchpad(scratchpad, { throughSequence })
+      ]);
+      const forcePass = canEditPad && this.state.turn - scratchpad.heldSinceTurn >= this.padMaxHoldTurns;
+      const decision = await this.agentModel.decide({
+        agent: {
+          id: agent.id,
+          name: agent.name,
+          style: agent.style,
+          visitedPanos: [...(agent.visitedPanos || [])],
+          recentNotes: [...(agent.recentNotes || [])]
+        },
+        partnerName: partner.name,
+        options: candidates.map(candidate => ({
+          panoId: candidate.panoId,
+          heading: candidate.heading,
+          label: candidate.label
+        })),
+        screenshots,
+        scratchpadBuffer,
+        canEditPad,
+        forcePass,
+        padStatus: this.#padStatusFor(agentId)
+      });
+      selected = candidates[decision.selectedIndex] || candidates[0];
+      decisionReason = decision.reasoning;
+      modelFallbackCause = decision.fallbackCause || null;
+      this.#applyScratchpadDecision(agentId, decision);
+    }
+
     if (!selected) {
-      const recovered = await this.#recoverFromBlockedPano(agent, target, current);
+      const recovered = await this.#recoverFromBlockedPano(agent, current);
       if (recovered) {
         mode = 'recovering';
         selected = {
@@ -740,11 +637,7 @@ export class RendezvousController {
       });
       agent.visitedPanos.push(agent.panoId);
       if (agent.visitedPanos.length > 120) agent.visitedPanos.shift();
-      decisionReason = this.#decisionReason(agent, selected, target);
-    }
-
-    if (agent.stepCount === 1 || agent.stepCount % this.telegramEverySteps === 0) {
-      await this.#sendTelegram(agentId);
+      decisionReason = decisionReason || `${agent.name} follows the clearest unfamiliar public route.`;
     }
 
     const step = {
@@ -757,12 +650,12 @@ export class RendezvousController {
       panoId: agent.panoId,
       position: agent.position,
       heading: agent.heading,
-      searchTargetName: target.name,
-      searchTargetSource: target.source,
-      distanceToSearchTarget: Math.round(calculateDistance(agent.position, target.position)),
       distanceToFriend: Math.round(calculateDistance(agent.position, partner.position)),
       reasoning: decisionReason,
-      selectedLabel: selected?.label || null
+      selectedLabel: selected?.label || null,
+      fallbackCause: modelFallbackCause,
+      scratchpadSequence: this.state.scratchpad?.sequence || 0,
+      scratchpadOwner: this.state.scratchpad?.owner || null
     };
     agent.lastDecision = step;
     agent.recentNotes.push(decisionReason);
@@ -771,7 +664,7 @@ export class RendezvousController {
     this.emit('rendezvous-step', step);
   }
 
-  async #resolveStartPanorama(start, target, agentId) {
+  async #resolveStartPanorama(start, agentId) {
     const preferred = await this.#getPanorama(start);
     if (hasStreetLinks(preferred)) return preferred;
 
@@ -782,7 +675,6 @@ export class RendezvousController {
 
     const nearby = await this.#findNearbyStreetPanorama({
       origin: start,
-      target,
       avoidPanoIds: new Set([preferred.panoId])
     });
     if (nearby) return nearby;
@@ -811,12 +703,105 @@ export class RendezvousController {
     return candidates;
   }
 
-  async #recoverFromBlockedPano(agent, target, current) {
+  async #captureCandidateScreenshots(candidates) {
+    const screenshots = [];
+    for (const candidate of candidates) {
+      await this.streetView.setHeading(candidate.heading);
+      screenshots.push(await this.streetView.getScreenshot());
+    }
+    return screenshots;
+  }
+
+  #padStatusFor(agentId) {
+    const scratchpad = normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
+    if (scratchpad.inTransit) {
+      return scratchpad.inTransit.to === agentId
+        ? `in transit to you from ${AGENTS[scratchpad.inTransit.from]?.name || 'your friend'}`
+        : `in transit to ${AGENTS[scratchpad.inTransit.to]?.name || 'your friend'}`;
+    }
+    if (scratchpad.owner === agentId) return 'in your hands';
+    return `held by ${AGENTS[scratchpad.owner]?.name || 'your friend'}`;
+  }
+
+  #applyScratchpadDecision(agentId, decision) {
+    const scratchpad = normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
+    if (scratchpad.owner !== agentId || scratchpad.inTransit) return;
+
+    const { scratchpad: updated, accepted } = appendScratchpadOperations(
+      scratchpad,
+      decision.padOperations,
+      { agentId, turn: this.state.turn }
+    );
+    this.state.scratchpad = updated;
+    this.state.agents[agentId].padSeenSequence = updated.sequence;
+    if (accepted.length > 0) {
+      this.#recordEvent('scratchpad_drawn', {
+        agentId,
+        agentName: AGENTS[agentId].name,
+        operationIds: accepted.map(operation => operation.id),
+        fromSequence: accepted[0].sequence,
+        toSequence: accepted.at(-1).sequence
+      });
+      this.emit('rendezvous-scratchpad', {
+        kind: 'drawn',
+        agentId,
+        operations: accepted,
+        sequence: updated.sequence
+      });
+    }
+
+    if (decision.passPad) this.#passScratchpad(agentId);
+  }
+
+  #passScratchpad(agentId) {
+    const scratchpad = normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
+    if (scratchpad.owner !== agentId || scratchpad.inTransit) return;
+    const recipientId = this.#partnerId(agentId);
+    scratchpad.owner = null;
+    scratchpad.inTransit = {
+      from: agentId,
+      to: recipientId,
+      sentTurn: this.state.turn,
+      deliverTurn: this.state.turn + this.padHandoffDelayTurns
+    };
+    scratchpad.updatedAt = new Date().toISOString();
+    this.state.scratchpad = scratchpad;
+    this.#recordEvent('scratchpad_passed', { ...scratchpad.inTransit, sequence: scratchpad.sequence });
+    this.emit('rendezvous-scratchpad', {
+      kind: 'passed',
+      ...scratchpad.inTransit,
+      sequence: scratchpad.sequence
+    });
+  }
+
+  #deliverScratchpad() {
+    const scratchpad = normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
+    const transit = scratchpad.inTransit;
+    if (!transit || transit.deliverTurn > this.state.turn) {
+      this.state.scratchpad = scratchpad;
+      return;
+    }
+    scratchpad.owner = transit.to;
+    scratchpad.inTransit = null;
+    scratchpad.heldSinceTurn = this.state.turn;
+    scratchpad.updatedAt = new Date().toISOString();
+    this.state.scratchpad = scratchpad;
+    if (this.state.agents[transit.to]) {
+      this.state.agents[transit.to].padSeenSequence = scratchpad.sequence;
+    }
+    this.#recordEvent('scratchpad_delivered', { ...transit, sequence: scratchpad.sequence });
+    this.emit('rendezvous-scratchpad', {
+      kind: 'delivered',
+      ...transit,
+      sequence: scratchpad.sequence
+    });
+  }
+
+  async #recoverFromBlockedPano(agent, current) {
     if (hasStreetLinks(current)) return null;
 
     const recovered = await this.#findNearbyStreetPanorama({
       origin: agent.position,
-      target,
       avoidPanoIds: new Set(agent.visitedPanos || [])
     });
     if (!recovered) return null;
@@ -843,8 +828,7 @@ export class RendezvousController {
     return recovered;
   }
 
-  async #findNearbyStreetPanorama({ origin, target, avoidPanoIds = new Set() }) {
-    const targetPosition = pointPosition(target);
+  async #findNearbyStreetPanorama({ origin, avoidPanoIds = new Set() }) {
     const points = [origin];
     for (const radius of STREET_SEARCH_RADII_METERS) {
       for (const bearing of STREET_SEARCH_BEARINGS) {
@@ -864,8 +848,7 @@ export class RendezvousController {
         if (!hasStreetLinks(pano) || avoidPanoIds.has(pano.panoId)) continue;
         candidates.push({
           ...pano,
-          recoveryDistanceMeters: calculateDistance(origin, pano.position),
-          targetDistanceMeters: targetPosition ? calculateDistance(pano.position, targetPosition) : 0
+          recoveryDistanceMeters: calculateDistance(origin, pano.position)
         });
       } catch (error) {
         this.logger.warn?.(`Nearby street pano lookup failed: ${error.message}`);
@@ -875,198 +858,10 @@ export class RendezvousController {
     return candidates
       .filter(candidate => Number.isFinite(candidate.recoveryDistanceMeters))
       .sort((a, b) => {
-        const aScore = a.recoveryDistanceMeters + a.targetDistanceMeters * 0.08 - (a.links?.length || 0) * 8;
-        const bScore = b.recoveryDistanceMeters + b.targetDistanceMeters * 0.08 - (b.links?.length || 0) * 8;
+        const aScore = a.recoveryDistanceMeters - (a.links?.length || 0) * 8;
+        const bScore = b.recoveryDistanceMeters - (b.links?.length || 0) * 8;
         return aScore - bScore;
       })[0] || null;
-  }
-
-  #chooseCandidate(agent, target, candidates) {
-    if (!candidates.length) return null;
-    const recent = new Set((agent.visitedPanos || []).slice(-8));
-
-    return candidates
-      .map(candidate => {
-        const targetDistance = calculateDistance(candidate.position, target.position);
-        const currentTargetDistance = calculateDistance(agent.position, target.position);
-        const progress = currentTargetDistance - targetDistance;
-        const revisitPenalty = recent.has(candidate.panoId) ? 180 : 0;
-        const noveltyBonus = recent.has(candidate.panoId) ? 0 : 35;
-        return {
-          ...candidate,
-          score: targetDistance + revisitPenalty - progress * 0.35 - noveltyBonus
-        };
-      })
-      .sort((a, b) => a.score - b.score)[0];
-  }
-
-  #targetForAgent(agent) {
-    const partnerId = this.#partnerId(agent.id);
-    const partner = this.state.agents[partnerId];
-    const partnerName = partner?.name || 'the other friend';
-    const partnerPath = Array.isArray(partner?.path) ? partner.path : [];
-    const latestIndex = Math.max(0, partnerPath.length - 1);
-    const lag = Math.min(this.trailLagPoints, latestIndex);
-    const stalePoint = partnerPath[Math.max(0, latestIndex - lag)] || partner?.position || agent.position;
-    const basePosition = pointPosition(stalePoint) || partner?.position || agent.position;
-    const bearingSeed = (this.state.turn * 47) + (agent.id === 'ada' ? 35 : 215);
-    const uncertainty = Math.max(0, this.trailUncertaintyMeters - Math.min(latestIndex, 6) * 10);
-    const blurredPosition = offsetPosition(basePosition, uncertainty, bearingSeed) || basePosition;
-
-    return {
-      id: `${partnerId}-stale-trail`,
-      name: `${partnerName}'s stale trail`,
-      source: 'partner_trail',
-      baseTargetName: `${partnerName}'s trail`,
-      position: blurredPosition,
-      trailAgePoints: lag,
-      uncertaintyMeters: uncertainty
-    };
-  }
-
-  #decisionReason(agent, selected, target) {
-    const bearing = calculateBearing(agent.position, target.position);
-    const direction = bearingWord(bearing);
-    const texture = streetTextureFor(agent.position);
-    const linkLine = selected?.label ? ' A public turn is available, so the plan can keep moving.' : '';
-    return `${agent.name} moves ${direction} along ${target.baseTargetName || target.name}. Notebook rule: follow stale traces, share one low-resolution clue, and never settle on a fixed meeting spot. The street reads as ${texture}.${linkLine}`;
-  }
-
-  async #sendTelegram(agentId, { opening = false } = {}) {
-    const agent = this.state.agents[agentId];
-    const partnerId = this.#partnerId(agentId);
-    const partner = this.state.agents[partnerId];
-    if (!agent || !partner) return null;
-
-    const card = this.#selectQuestionCard(agentId, opening);
-    const answer = card.answer({ agent, partner });
-    const notebookRevision = this.#applyNotebookUpdate({
-      agentId,
-      partnerId,
-      card,
-      answer,
-      opening
-    });
-    const message = this.#telegramText({
-      agent,
-      partner,
-      card,
-      answer,
-      opening,
-      notebookRevision
-    });
-
-    const telegram = {
-      id: randomUUID(),
-      kind: 'notebook_update',
-      from: agentId,
-      fromName: agent.name,
-      to: partnerId,
-      toName: partner.name,
-      sentTurn: this.state.turn,
-      deliverTurn: this.state.turn + this.telegramDelayTurns,
-      status: 'in_transit',
-      text: message,
-      clues: {
-        card: card.label,
-        answer,
-        uncertainty: notebookRevision.uncertainty,
-        expiresTurn: notebookRevision.expiresTurn
-      },
-      notebookRevision,
-      createdAt: new Date().toISOString()
-    };
-
-    this.state.telegrams.push(telegram);
-    agent.outbox.push(telegram);
-    agent.outbox = agent.outbox.slice(-10);
-    this.#recordEvent('telegram_sent', stripTelegramInternal(telegram));
-    this.emit('rendezvous-telegram', stripTelegramInternal(telegram));
-    return telegram;
-  }
-
-  #selectQuestionCard(agentId, opening) {
-    const agentOffset = agentId === 'ada' ? 0 : 1;
-    const openingOffset = opening ? 0 : 2;
-    const index = (this.state.turn + agentOffset + openingOffset) % QUESTION_CARDS.length;
-    return QUESTION_CARDS[index];
-  }
-
-  #applyNotebookUpdate({ agentId, partnerId, card, answer, opening }) {
-    const agent = this.state.agents[agentId];
-    const partner = this.state.agents[partnerId];
-    const notebook = this.#normalizeNotebook(this.state.notebook);
-    const nextCard = QUESTION_CARDS[(QUESTION_CARDS.findIndex(entry => entry.id === card.id) + 1) % QUESTION_CARDS.length];
-    const distanceToPartner = calculateDistance(agent.position, partner.position);
-    const uncertainty = uncertaintyLabel(distanceToPartner);
-    const revision = {
-      id: randomUUID(),
-      turn: this.state.turn,
-      by: agent.name,
-      agentId,
-      card: card.label,
-      prompt: card.prompt,
-      answer,
-      uncertainty,
-      expiresTurn: this.state.turn + 12,
-      createdAt: new Date().toISOString()
-    };
-
-    notebook.search = {
-      ...notebook.search,
-      name: 'Find each other',
-      shortName: 'Each other',
-      status: 'active',
-      rationale: 'No meeting spot. Follow the other trail through coarse, stale clues.'
-    };
-    notebook.proposedMeeting = {
-      ...notebook.proposedMeeting,
-      name: 'Find each other',
-      status: 'retired',
-      rationale: 'No fixed meeting place; the only goal is to come within sight.'
-    };
-    notebook.lastReliableClue = `${agent.name}: ${answer}`;
-    notebook.uncertainty = uncertainty;
-    notebook.nextQuestion = {
-      from: partner.name,
-      to: agent.name,
-      card: nextCard.label,
-      prompt: nextCard.prompt
-    };
-    notebook.plans = {
-      ...notebook.plans,
-      [agentId]: notebookPlanFor(agent, partner),
-      [partnerId]: notebook.plans?.[partnerId] || notebookPlanFor(partner, agent)
-    };
-    notebook.updatedTurn = this.state.turn;
-    notebook.updatedBy = agent.name;
-    notebook.revisions = [revision, ...(notebook.revisions || [])].slice(0, NOTEBOOK_REVISION_LIMIT);
-    this.state.notebook = notebook;
-    agent.lastSharedDistanceMeters = Number.isFinite(distanceToPartner) ? Math.round(distanceToPartner) : null;
-    this.#recordEvent('notebook_updated', revision);
-    return revision;
-  }
-
-  #telegramText({ agent, partner, card, answer, opening }) {
-    const opener = opening
-      ? `FIRST NOTEBOOK PASS TO ${partner.name.toUpperCase()}:`
-      : `NOTEBOOK PASS TO ${partner.name.toUpperCase()}:`;
-    return `${opener} ${card.label}. ${answer}. One clue only; keep searching, no meeting spot.`;
-  }
-
-  #deliverTelegrams() {
-    for (const telegram of this.state.telegrams) {
-      if (telegram.status !== 'in_transit' || telegram.deliverTurn > this.state.turn) continue;
-      const recipient = this.state.agents[telegram.to];
-      if (!recipient) continue;
-      telegram.status = 'delivered';
-      telegram.deliveredAt = new Date().toISOString();
-      recipient.inbox.push(telegram);
-      recipient.inbox = recipient.inbox.slice(-10);
-      recipient.friendEstimate = null;
-      this.#recordEvent('telegram_delivered', stripTelegramInternal(telegram));
-      this.emit('rendezvous-telegram', stripTelegramInternal(telegram));
-    }
   }
 
   #updateMeetingMetrics() {

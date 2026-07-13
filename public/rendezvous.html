@@ -8,143 +8,94 @@
   <link href="https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.css" rel="stylesheet">
   <link rel="stylesheet" href="css/rendezvous.css">
 </head>
-<body data-mobile-view="ada" data-mobile-agent="ada">
+<body data-mobile-view="ada">
   <div class="rv-shell">
     <header class="rv-header">
       <div class="rv-brand">
         <video class="rv-brand-icon" autoplay loop muted playsinline>
           <source src="/resources/orb.webm" type="video/webm">
         </video>
-        <div>
-          <h1>Rendezvous</h1>
-          <p>Two friends lost in Manhattan, keeping one shared notebook.</p>
-        </div>
+        <h1>Rendezvous</h1>
       </div>
-      <div class="rv-status-strip">
-        <div>
-          <span class="rv-kicker">status</span>
-          <strong id="rvStatus">loading</strong>
-        </div>
-        <div>
-          <span class="rv-kicker">distance</span>
-          <strong id="rvDistance">--</strong>
-        </div>
-        <div>
-          <span class="rv-kicker">goal</span>
-          <strong id="rvTarget">--</strong>
-        </div>
-        <div>
-          <span class="rv-kicker">turn</span>
-          <strong id="rvTurn">0</strong>
-        </div>
+      <div class="rv-live-line" aria-live="polite">
+        <span id="rvStatus">loading</span>
+        <span class="rv-dot">·</span>
+        <span id="rvDistance">--</span>
+        <span class="rv-dot">·</span>
+        <span>turn <span id="rvTurn">0</span></span>
       </div>
       <div class="rv-controls">
-        <button id="compassOverlay" class="rv-unlock" title="Unlock controls">Key</button>
+        <button id="compassOverlay" class="rv-icon-button" title="Unlock run controls" aria-label="Unlock run controls">
+          <i data-lucide="key-round"></i>
+        </button>
         <div id="controlButtons" class="rv-control-buttons hidden">
-          <button id="rvStartBtn" class="rv-button primary">Start</button>
-          <button id="rvStopBtn" class="rv-button">Stop</button>
-          <button id="rvResetBtn" class="rv-button danger">New run</button>
+          <button id="rvStartBtn" class="rv-icon-button" title="Start" aria-label="Start"><i data-lucide="play"></i></button>
+          <button id="rvStopBtn" class="rv-icon-button" title="Pause" aria-label="Pause"><i data-lucide="pause"></i></button>
+          <button id="rvResetBtn" class="rv-icon-button danger" title="Start a new run" aria-label="Start a new run"><i data-lucide="rotate-ccw"></i></button>
         </div>
       </div>
     </header>
 
     <main class="rv-main">
-      <section class="rv-watch">
-        <article class="rv-agent-panel ada" data-agent="ada">
-          <div class="rv-agent-topline">
-            <div>
-              <span class="rv-kicker">agent</span>
-              <h2 id="adaName">Ada</h2>
-            </div>
-            <div class="rv-agent-meta">
-              <span id="adaStep">0 steps</span>
-              <span id="adaState">searching</span>
-            </div>
+      <article class="rv-agent-panel ada" data-mobile-panel="ada">
+        <div class="rv-agent-topline">
+          <h2 id="adaName">Ada</h2>
+          <div class="rv-agent-meta">
+            <span id="adaState">searching</span>
+            <span id="adaStep">0 steps</span>
           </div>
-          <div id="streetAda" class="rv-street"></div>
-          <p id="adaLastNote" class="rv-agent-note">Waiting for the first street view.</p>
-        </article>
+        </div>
+        <div id="streetAda" class="rv-street"></div>
+        <p id="adaLastNote" class="rv-agent-note">Waiting for the first street view.</p>
+        <button type="button" class="rv-peek-switch" data-peek-to="ada" aria-label="Switch to Ada">Ada</button>
+      </article>
 
-        <article class="rv-agent-panel theo" data-agent="theo">
-          <div class="rv-agent-topline">
+      <div class="rv-center">
+        <section class="rv-scratchpad-section" data-mobile-panel="pad">
+          <div class="rv-pad-heading">
             <div>
-              <span class="rv-kicker">agent</span>
-              <h2 id="theoName">Theo</h2>
+              <h2>The sheet</h2>
+              <p id="rvPadStatus">with Ada</p>
             </div>
-            <div class="rv-agent-meta">
-              <span id="theoStep">0 steps</span>
-              <span id="theoState">searching</span>
-            </div>
+            <span id="rvPadSequence">blank</span>
           </div>
-          <div id="streetTheo" class="rv-street"></div>
-          <p id="theoLastNote" class="rv-agent-note">Waiting for the first street view.</p>
-        </article>
-      </section>
+          <div id="rvPaper" class="rv-paper" aria-label="Shared drawing pad">
+            <svg id="rvScratchpad" viewBox="0 0 768 512" role="img" aria-label="The marks Ada and Theo have left for each other"></svg>
+          </div>
+        </section>
 
-      <nav class="rv-mobile-tabs" aria-label="Rendezvous watch controls">
-        <button type="button" class="rv-mobile-tab rv-agent-switch active" data-mobile-view="ada">
-          <span>Ada</span>
-          <small id="adaDockStep">0</small>
-        </button>
-        <button type="button" class="rv-mobile-tab rv-agent-switch" data-mobile-view="theo">
-          <span>Theo</span>
-          <small id="theoDockStep">0</small>
-        </button>
-        <button type="button" class="rv-mobile-tab rv-context-switch" data-mobile-view="map">
-          <span>Map</span>
-          <small id="rvDockDistance">--</small>
-        </button>
-        <button type="button" class="rv-mobile-tab rv-context-switch" data-mobile-view="wires">
-          <span>Book</span>
-          <small id="rvDockWires">0</small>
-        </button>
-        <button type="button" class="rv-mobile-tab rv-context-switch" data-mobile-view="log">
-          <span>Notes</span>
-          <small id="rvDockTurn">0</small>
-        </button>
-      </nav>
-
-      <aside class="rv-side">
-        <section class="rv-map-section">
-          <div class="rv-section-head">
+        <section class="rv-map-section" data-mobile-panel="map">
+          <div class="rv-map-heading">
             <div>
-              <span class="rv-kicker">viewer map</span>
-              <h2>Two trails</h2>
+              <h2>Where they are</h2>
+              <p>Observer view</p>
             </div>
-            <div class="rv-section-actions">
-              <button id="rvFitBtn" class="rv-small-button">Fit</button>
-              <button type="button" class="rv-small-button rv-sheet-close" data-mobile-close>Done</button>
-            </div>
+            <button id="rvFitBtn" class="rv-icon-button quiet" title="Fit both trails" aria-label="Fit both trails"><i data-lucide="scan"></i></button>
           </div>
           <div id="rvMap" class="rv-map"></div>
         </section>
+      </div>
 
-        <section class="rv-telegraph">
-          <div class="rv-section-head">
-            <div>
-              <span class="rv-kicker">shared scratchpad</span>
-              <h2>Notebook</h2>
-            </div>
-            <div class="rv-section-actions">
-              <span id="rvTelegramCount" class="rv-count">0</span>
-              <button type="button" class="rv-small-button rv-sheet-close" data-mobile-close>Done</button>
-            </div>
+      <article class="rv-agent-panel theo" data-mobile-panel="theo">
+        <div class="rv-agent-topline">
+          <h2 id="theoName">Theo</h2>
+          <div class="rv-agent-meta">
+            <span id="theoState">searching</span>
+            <span id="theoStep">0 steps</span>
           </div>
-          <div id="rvTelegrams" class="rv-telegram-list"></div>
-        </section>
-
-        <section class="rv-log-section">
-          <div class="rv-section-head">
-            <div>
-              <span class="rv-kicker">field notes</span>
-              <h2>Decisions</h2>
-            </div>
-            <button type="button" class="rv-small-button rv-sheet-close" data-mobile-close>Done</button>
-          </div>
-          <div id="rvLog" class="rv-log"></div>
-        </section>
-      </aside>
+        </div>
+        <div id="streetTheo" class="rv-street"></div>
+        <p id="theoLastNote" class="rv-agent-note">Waiting for the first street view.</p>
+        <button type="button" class="rv-peek-switch" data-peek-to="theo" aria-label="Switch to Theo">Theo</button>
+      </article>
     </main>
+
+    <nav class="rv-mobile-tabs" aria-label="Rendezvous views">
+      <button type="button" class="rv-mobile-tab active" data-mobile-view="ada"><i data-lucide="eye"></i><span>Ada</span><small id="adaDockStep">0</small></button>
+      <button type="button" class="rv-mobile-tab" data-mobile-view="pad"><i data-lucide="notebook-pen"></i><span>Sheet</span><small id="rvDockPad">0</small></button>
+      <button type="button" class="rv-mobile-tab" data-mobile-view="theo"><i data-lucide="eye"></i><span>Theo</span><small id="theoDockStep">0</small></button>
+      <button type="button" class="rv-mobile-tab" data-mobile-view="map"><i data-lucide="map"></i><span>Map</span><small id="rvDockDistance">--</small></button>
+    </nav>
   </div>
 
   <div id="passwordModal" class="modal hidden">
@@ -166,6 +117,7 @@
   </div>
 
   <script src="https://unpkg.com/maplibre-gl@4.0.0/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
   <script src="/socket.io/socket.io.js"></script>
   <script src="js/adminAuth.js"></script>
   <script src="js/rendezvous.js"></script>

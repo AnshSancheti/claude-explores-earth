@@ -2232,11 +2232,21 @@ server.listen(PORT, HOST, async () => {
     try {
       console.log('✉️  Rendezvous mode is primary for this branch');
       await rendezvous.loadState();
-      if (RENDEZVOUS_AUTO_START && rendezvous.state.status !== 'found') {
+      if (
+        RENDEZVOUS_AUTO_START &&
+        rendezvous.state.status !== 'found' &&
+        (!rendezvous.state.runId || Number(rendezvous.state.scratchpad?.version) >= 2)
+      ) {
         await rendezvous.start();
         console.log('▶️  Rendezvous run auto-started');
       } else if (rendezvous.state.status === 'found') {
         console.log('✅ Rendezvous run already has a found state; preserving it');
+      } else if (
+        RENDEZVOUS_AUTO_START &&
+        rendezvous.state.runId &&
+        Number(rendezvous.state.scratchpad?.version) < 2
+      ) {
+        console.log('Legacy rendezvous loaded read-only; waiting for an explicit admin start');
       }
     } catch (error) {
       console.error('❌ Rendezvous startup error:', error);

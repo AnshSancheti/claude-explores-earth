@@ -23,6 +23,7 @@ function distance(pos1, pos2) {
 class FakeStreetView {
   constructor() {
     this.currentPanoId = null;
+    this.heading = 0;
     this.nodes = new Map([
       ['ada-start', {
         panoId: 'ada-start',
@@ -99,6 +100,47 @@ class FakeStreetView {
     this.currentPanoId = panoId;
     return this.getPanorama(panoId);
   }
+
+  async setHeading(heading) {
+    this.heading = heading;
+  }
+
+  async getScreenshot() {
+    return Buffer.from(`fake-street-view-${this.currentPanoId}-${this.heading}`);
+  }
+}
+
+class FakeRendezvousModel {
+  constructor() {
+    this.calls = [];
+  }
+
+  async decide(input) {
+    this.calls.push(structuredClone({
+      agent: input.agent,
+      partnerName: input.partnerName,
+      options: input.options,
+      canEditPad: input.canEditPad,
+      forcePass: input.forcePass,
+      padStatus: input.padStatus
+    }));
+    return {
+      selectedIndex: input.options.findIndex(option => !input.agent.visitedPanos.includes(option.panoId)) >= 0
+        ? input.options.findIndex(option => !input.agent.visitedPanos.includes(option.panoId))
+        : 0,
+      reasoning: `${input.agent.name} follows the clearest unfamiliar public route using only the sheet and the visible street.`,
+      padOperations: input.canEditPad
+        ? [{
+            type: 'text',
+            text: `${input.agent.name}: broad crossing`,
+            at: { x: 0.12, y: input.agent.id === 'ada' ? 0.2 : 0.35 },
+            size: 28
+          }]
+        : [],
+      passPad: input.canEditPad,
+      fallbackCause: null
+    };
+  }
 }
 
 class IndoorAdaStartStreetView extends FakeStreetView {
@@ -127,16 +169,18 @@ class IndoorAdaStartStreetView extends FakeStreetView {
   }
 }
 
-test('RendezvousController uses a shared trail notebook and can find the other agent', async () => {
+test('RendezvousController uses one causal drawing pad and can find the other agent', async () => {
   const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
   process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-test-'));
   const events = [];
+  const model = new FakeRendezvousModel();
 
   try {
     const controller = new RendezvousController({
       dataDir: tempDir,
       streetView: new FakeStreetView(),
+      agentModel: model,
       emit: (event, data) => events.push({ event, data }),
       logger: { warn() {}, error() {} }
     });
@@ -151,36 +195,37 @@ test('RendezvousController uses a shared trail notebook and can find the other a
 
     assert.equal(controller.state.status, 'found');
     assert.ok(events.some(entry => entry.event === 'rendezvous-found'));
-    assert.ok(controller.state.telegrams.some(telegram => telegram.status === 'delivered'));
     assert.ok(events.some(entry =>
       entry.event === 'rendezvous-step' &&
-        /stale traces/.test(entry.data?.reasoning || '')
+        /only the sheet/.test(entry.data?.reasoning || '')
     ));
-    assert.ok(controller.state.notebook);
-    assert.ok(controller.state.notebook.revisions.length > 0);
-    assert.ok(events.some(entry => entry.event === 'rendezvous-telegram' && entry.data?.kind === 'notebook_update'));
-    assert.ok(controller.state.eventLog.some(entry => entry.type === 'notebook_updated'));
+    assert.ok(controller.state.scratchpad);
+    assert.ok(controller.state.scratchpad.operations.length > 0);
+    assert.ok(events.some(entry => entry.event === 'rendezvous-scratchpad' && entry.data?.kind === 'drawn'));
+    assert.ok(events.some(entry => entry.event === 'rendezvous-scratchpad' && entry.data?.kind === 'delivered'));
+    assert.ok(controller.state.eventLog.some(entry => entry.type === 'scratchpad_drawn'));
+    assert.ok(controller.state.eventLog.some(entry => entry.type === 'scratchpad_passed'));
+    assert.ok(model.calls.length > 0);
+    for (const call of model.calls) {
+      assert.equal(Object.hasOwn(call.agent, 'position'), false);
+      assert.equal(Object.hasOwn(call.agent, 'path'), false);
+      assert.equal(Object.hasOwn(call, 'partner'), false);
+      assert.equal(Object.hasOwn(call, 'distanceToFriend'), false);
+      assert.equal(call.options.some(option => Object.hasOwn(option, 'distanceToFriend')), false);
+      assert.equal(call.options.some(option => Object.hasOwn(option, 'position')), false);
+    }
 
     const publicState = controller.getPublicState();
+    const completedRunId = publicState.runId;
     assert.equal(publicState.mode, 'rendezvous');
     assert.equal(publicState.meeting.goal, 'find_each_other');
     assert.equal(publicState.meeting.target, null);
     assert.equal(publicState.meeting.adaDistanceToTarget, null);
     assert.equal(publicState.meeting.theoDistanceToTarget, null);
-    assert.equal(publicState.agents.ada.friendEstimate?.position, undefined);
-    assert.equal(publicState.telegrams.some(telegram => Object.hasOwn(telegram, 'roughPosition')), false);
-    assert.equal(publicState.telegrams.some(telegram => Object.hasOwn(telegram.clues || {}, 'neighborhood')), false);
-    assert.equal(publicState.telegrams.some(telegram => Object.hasOwn(telegram.clues || {}, 'nearestLandmark')), false);
-    assert.equal(publicState.telegrams.some(telegram => Object.hasOwn(telegram.clues || {}, 'intention')), false);
-    assert.match(publicState.telegrams[0].text, /NOTEBOOK PASS|FIRST NOTEBOOK PASS/);
-    assert.match(publicState.telegrams[0].text, /no meeting spot/);
-    assert.doesNotMatch(publicState.telegrams[0].text, /Bryant Park/);
-    assert.doesNotMatch(publicState.telegrams[0].text, /-?\d+\.\d{3,}/);
-    assert.equal(publicState.notebook.search.name, 'Find each other');
-    assert.equal(publicState.notebook.proposedMeeting.name, 'Find each other');
-    assert.match(publicState.notebook.search.rationale, /No meeting spot/);
-    assert.match(publicState.notebook.lastReliableClue, /Ada|Theo/);
-    assert.ok(publicState.eventLog.some(entry => entry.type === 'agent_step' && entry.payload.searchTargetName));
+    assert.equal(publicState.notebook, null);
+    assert.equal(publicState.scratchpad.version, 2);
+    assert.equal(publicState.scratchpad.operations.some(operation => /-?\d+\.\d{3,}/.test(operation.text || '')), false);
+    assert.equal(publicState.eventLog.some(entry => entry.type === 'agent_step' && entry.payload.searchTargetName), false);
     assert.equal(publicState.eventLog.some(entry => Object.hasOwn(entry.payload || {}, 'targetName')), false);
     assert.equal(publicState.eventLog.some(entry => Object.hasOwn(entry.payload || {}, 'distanceToTarget')), false);
 
@@ -206,7 +251,7 @@ test('RendezvousController uses a shared trail notebook and can find the other a
     const migratedPublicState = controller.getPublicState();
     const migratedWire = migratedPublicState.telegrams.find(telegram => telegram.id === 'legacy-wire');
     const migratedInboxWire = migratedPublicState.agents.theo.inbox.find(telegram => telegram.id === 'legacy-wire');
-    assert.equal(migratedWire.text, 'Legacy wire archived; use the shared notebook for durable clues.');
+    assert.equal(migratedWire.text, 'Legacy wire archived; the drawing sheet is now the only shared channel.');
     assert.deepEqual(migratedWire.clues, { answer: 'hold the plan' });
     assert.equal(Object.hasOwn(migratedWire, 'roughPosition'), false);
     assert.equal(migratedInboxWire.text, migratedWire.text);
@@ -231,31 +276,30 @@ test('RendezvousController uses a shared trail notebook and can find the other a
       turn: controller.state.turn,
       payload: legacyTelegram
     });
-    controller.state.notebook.plans = {
-      ada: 'Move toward Union Square; do not infer Theo exact block.',
-      theo: 'Move toward Union Square; do not infer Ada exact block.'
-    };
-    controller.state.notebook.nextQuestion = {
-      card: 'Warmer / colder',
-      prompt: 'Did that move make the meeting place feel closer?'
-    };
-
     const sanitizedPublicState = controller.getPublicState();
     assert.doesNotMatch(sanitizedPublicState.agents.ada.lastDecision.reasoning, /telegram|rough wire|nearest guidebook|somewhere around/i);
     assert.equal(Object.hasOwn(sanitizedPublicState.agents.ada.lastDecision, 'targetName'), false);
     assert.equal(Object.hasOwn(sanitizedPublicState.agents.ada.lastDecision, 'distanceToTarget'), false);
-    assert.match(sanitizedPublicState.agents.ada.lastDecision.reasoning, /shared notebook|low-resolution/);
+    assert.match(sanitizedPublicState.agents.ada.lastDecision.reasoning, /shared (?:drawing )?sheet|personal street observations/);
     assert.doesNotMatch(sanitizedPublicState.agents.ada.recentNotes[0], /telegram|wire before|somewhere around/i);
     const sanitizedAgentEvent = sanitizedPublicState.eventLog.filter(entry => entry.type === 'agent_step').at(-1);
     assert.doesNotMatch(sanitizedAgentEvent.payload.reasoning, /telegram|rough wire|somewhere around/i);
-    assert.match(sanitizedAgentEvent.payload.reasoning, /shared notebook|low-resolution/);
+    assert.match(sanitizedAgentEvent.payload.reasoning, /shared (?:drawing )?sheet|personal street observations/);
     const sanitizedTelegramEvent = sanitizedPublicState.eventLog.find(entry =>
       entry.type === 'telegram_sent' && entry.payload?.id === 'legacy-wire'
     );
-    assert.equal(sanitizedTelegramEvent.payload.text, 'Legacy wire archived; use the shared notebook for durable clues.');
+    assert.equal(sanitizedTelegramEvent.payload.text, 'Legacy wire archived; the drawing sheet is now the only shared channel.');
     assert.deepEqual(sanitizedTelegramEvent.payload.clues, { answer: 'hold the plan' });
-    assert.doesNotMatch(sanitizedPublicState.notebook.plans.ada, /Union Square|Bryant Park/i);
-    assert.doesNotMatch(sanitizedPublicState.notebook.nextQuestion.prompt, /meeting place/i);
+    assert.equal(sanitizedPublicState.notebook, null);
+
+    await controller.reset();
+    const archived = JSON.parse(await fsp.readFile(
+      path.join(tempDir, 'rendezvous-runs', `${completedRunId}.json`),
+      'utf8'
+    ));
+    assert.equal(archived.runId, completedRunId);
+    assert.equal(archived.status, 'found');
+    assert.notEqual(controller.state.runId, completedRunId);
   } finally {
     if (previousPairIndex === undefined) {
       delete process.env.RENDEZVOUS_START_PAIR_INDEX;
@@ -303,6 +347,55 @@ test('RendezvousController avoids indoor start panos and recovers blocked agents
     assert.equal(controller.state.agents.ada.lastDecision.mode, 'recovering');
     assert.ok(events.some(entry => entry.event === 'rendezvous-step' && entry.data?.mode === 'recovering'));
     assert.ok(controller.state.eventLog.some(entry => entry.type === 'street_recovery'));
+  } finally {
+    if (previousPairIndex === undefined) {
+      delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    } else {
+      process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    }
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('legacy rendezvous stays read-only until an explicit start archives it', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-test-'));
+  const legacyRunId = 'legacy-run';
+  const legacyState = {
+    mode: 'rendezvous',
+    runId: legacyRunId,
+    status: 'idle',
+    turn: 0,
+    notebook: { version: 1, lastReliableClue: 'legacy clue' },
+    agents: {},
+    eventLog: []
+  };
+  await fsp.writeFile(path.join(tempDir, 'rendezvous-current.json'), JSON.stringify(legacyState));
+
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.loadState();
+
+    assert.equal(controller.state.runId, legacyRunId);
+    assert.equal(controller.state.scratchpad, null);
+    assert.equal(controller.getPublicState().scratchpad.version, 2);
+
+    await controller.start();
+    await controller.stop();
+
+    assert.notEqual(controller.state.runId, legacyRunId);
+    assert.equal(controller.state.scratchpad.version, 2);
+    const archived = JSON.parse(await fsp.readFile(
+      path.join(tempDir, 'rendezvous-runs', `${legacyRunId}.json`),
+      'utf8'
+    ));
+    assert.deepEqual(archived.notebook, legacyState.notebook);
   } finally {
     if (previousPairIndex === undefined) {
       delete process.env.RENDEZVOUS_START_PAIR_INDEX;

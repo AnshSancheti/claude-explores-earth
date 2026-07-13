@@ -1,8 +1,8 @@
 (function() {
   const AGENT_IDS = ['ada', 'theo'];
   const AGENT_COLORS = {
-    ada: '#ffcc4d',
-    theo: '#55d6ff'
+    ada: '#d6a84e',
+    theo: '#4e9bb0'
   };
 
   function escapeHtml(value) {
@@ -37,6 +37,57 @@
     return 'Waiting for the first move.';
   }
 
+  function svgNumber(value, fallback = 0) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+  }
+
+  function svgPoint(value) {
+    return {
+      x: Math.max(0, Math.min(1, svgNumber(value?.x, 0.5))) * 768,
+      y: Math.max(0, Math.min(1, svgNumber(value?.y, 0.5))) * 512
+    };
+  }
+
+  function scratchpadOperationSvg(operation, isNew) {
+    const className = isNew ? ' is-new' : '';
+    const color = operation.color || (operation.author === 'theo' ? '#185e78' : '#24211d');
+    const width = Math.max(1, Math.min(80, svgNumber(operation.width, 4)));
+    if (operation.type === 'text') {
+      const at = svgPoint(operation.at);
+      const size = Math.max(14, Math.min(54, svgNumber(operation.size, 28)));
+      const rotation = Math.max(-18, Math.min(18, svgNumber(operation.rotation, 0)));
+      return `<text class="rv-scratch-text${className}" x="${at.x}" y="${at.y}" fill="${escapeHtml(color)}" font-size="${size}" transform="rotate(${rotation} ${at.x} ${at.y})">${escapeHtml(operation.text || '')}</text>`;
+    }
+    if (operation.type === 'circle') {
+      const center = svgPoint(operation.center);
+      const rx = Math.max(4, svgNumber(operation.radiusX, 0.1) * 768);
+      const ry = Math.max(4, svgNumber(operation.radiusY, 0.1) * 512);
+      return `<ellipse class="rv-scratch-stroke${className}" pathLength="1" cx="${center.x}" cy="${center.y}" rx="${rx}" ry="${ry}" stroke="${escapeHtml(color)}" stroke-width="${width}" />`;
+    }
+    if (operation.type === 'stroke') {
+      const points = (operation.points || []).map(svgPoint);
+      if (points.length < 2) return '';
+      const d = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`).join(' ');
+      return `<path class="rv-scratch-stroke${className}" pathLength="1" d="${d}" stroke="${escapeHtml(color)}" stroke-width="${width}" />`;
+    }
+    if (['line', 'arrow', 'erase'].includes(operation.type)) {
+      const from = svgPoint(operation.from);
+      const to = svgPoint(operation.to);
+      const stroke = operation.type === 'erase' ? '#f2ecdd' : color;
+      let svg = `<path class="rv-scratch-stroke${className}" pathLength="1" d="M ${from.x} ${from.y} L ${to.x} ${to.y}" stroke="${escapeHtml(stroke)}" stroke-width="${width}" />`;
+      if (operation.type === 'arrow') {
+        const angle = Math.atan2(to.y - from.y, to.x - from.x);
+        const length = Math.max(12, width * 4);
+        const left = { x: to.x - Math.cos(angle - Math.PI / 6) * length, y: to.y - Math.sin(angle - Math.PI / 6) * length };
+        const right = { x: to.x - Math.cos(angle + Math.PI / 6) * length, y: to.y - Math.sin(angle + Math.PI / 6) * length };
+        svg += `<path class="rv-scratch-stroke${className}" pathLength="1" d="M ${left.x} ${left.y} L ${to.x} ${to.y} L ${right.x} ${right.y}" stroke="${escapeHtml(color)}" stroke-width="${width}" />`;
+      }
+      return svg;
+    }
+    return '';
+  }
+
   class RendezvousApp {
     constructor() {
       this.socket = null;
@@ -49,7 +100,7 @@
       this.googleReady = false;
       this.pendingStreetState = null;
       this.mobileView = 'ada';
-      this.mobileAgent = 'ada';
+      this.lastScratchpadSequence = 0;
     }
 
     initialize() {
@@ -57,6 +108,7 @@
       this.setupControls();
       this.initializeMap();
       this.waitForGoogleMaps();
+      window.lucide?.createIcons?.();
       window.rendezvousApp = this;
     }
 
@@ -83,10 +135,12 @@
         this.pulseDock(step.agentId);
       });
 
-      this.socket.on('rendezvous-telegram', () => {
-        const list = document.getElementById('rvTelegrams');
-        if (list) list.classList.add('pulse');
-        window.setTimeout(() => list?.classList.remove('pulse'), 450);
+      this.socket.on('rendezvous-scratchpad', () => {
+        const paper = document.getElementById('rvPaper');
+        paper?.classList.remove('pulse');
+        void paper?.offsetWidth;
+        paper?.classList.add('pulse');
+        window.setTimeout(() => paper?.classList.remove('pulse'), 750);
       });
 
       this.socket.on('rendezvous-found', (payload) => {
@@ -112,6 +166,9 @@
         }
       });
       document.getElementById('rvFitBtn')?.addEventListener('click', () => this.fitMap());
+      for (const button of document.querySelectorAll('[data-peek-to]')) {
+        button.addEventListener('click', () => this.setMobileView(button.dataset.peekTo || 'ada'));
+      }
       this.setupMobileTabs();
     }
 
@@ -124,20 +181,12 @@
         button.setAttribute('aria-pressed', button.dataset.mobileView === this.mobileView ? 'true' : 'false');
         button.addEventListener('click', () => setView(button.dataset.mobileView || 'ada'));
       }
-      for (const button of document.querySelectorAll('[data-mobile-close]')) {
-        button.addEventListener('click', () => this.setMobileView(this.mobileAgent));
-      }
-
       this.mobileMedia = window.matchMedia('(max-width: 900px)');
       const syncMobileView = () => {
         if (this.mobileMedia.matches) {
           document.body.dataset.mobileView = this.mobileView;
-          document.body.dataset.mobileAgent = this.mobileAgent;
-          this.syncMobileSheet();
         } else {
           document.body.removeAttribute('data-mobile-view');
-          document.body.removeAttribute('data-mobile-agent');
-          document.body.removeAttribute('data-mobile-sheet');
         }
         if (this.mobileMedia.matches && this.mobileView === 'map') {
           this.resizeMapPane();
@@ -152,19 +201,12 @@
     }
 
     setMobileView(view) {
-      const allowed = new Set(['ada', 'theo', 'map', 'wires', 'log']);
+      const allowed = new Set(['ada', 'theo', 'pad', 'map']);
       this.mobileView = allowed.has(view) ? view : 'ada';
-      if (this.mobileView === 'ada' || this.mobileView === 'theo') {
-        this.mobileAgent = this.mobileView;
-      }
       if (this.mobileMedia?.matches === false) {
         document.body.removeAttribute('data-mobile-view');
-        document.body.removeAttribute('data-mobile-agent');
-        document.body.removeAttribute('data-mobile-sheet');
       } else {
         document.body.dataset.mobileView = this.mobileView;
-        document.body.dataset.mobileAgent = this.mobileAgent;
-        this.syncMobileSheet();
       }
       for (const button of document.querySelectorAll('button[data-mobile-view]')) {
         const active = button.dataset.mobileView === this.mobileView;
@@ -173,14 +215,6 @@
       }
       if (this.mobileView === 'map') {
         this.resizeMapPane();
-      }
-    }
-
-    syncMobileSheet() {
-      if (['map', 'wires', 'log'].includes(this.mobileView)) {
-        document.body.dataset.mobileSheet = this.mobileView;
-      } else {
-        document.body.removeAttribute('data-mobile-sheet');
       }
     }
 
@@ -222,8 +256,8 @@
             },
             paint: {
               'line-color': AGENT_COLORS[agentId],
-              'line-width': 4,
-              'line-opacity': 0.85
+              'line-width': 2.25,
+              'line-opacity': 0.78
             }
           });
         }
@@ -261,8 +295,7 @@
       this.state = state;
       this.renderHeader();
       this.renderAgents();
-      this.renderTelegrams();
-      this.renderLog();
+      this.renderScratchpad();
       this.renderMap();
       this.renderLiveContext();
       if (this.googleReady) {
@@ -276,10 +309,6 @@
       const state = this.state || {};
       document.getElementById('rvStatus').textContent = formatStatus(state.status);
       document.getElementById('rvDistance').textContent = formatDistance(state.meeting?.distanceMeters);
-      document.getElementById('rvTarget').textContent = state.notebook?.search?.shortName ||
-        state.notebook?.search?.name ||
-        state.notebook?.proposedMeeting?.name ||
-        'Each other';
       document.getElementById('rvTurn').textContent = Number(state.turn || 0).toLocaleString();
 
       const startBtn = document.getElementById('rvStartBtn');
@@ -304,11 +333,9 @@
     renderLiveContext() {
       const state = this.state || {};
       const dockDistance = document.getElementById('rvDockDistance');
-      const dockWires = document.getElementById('rvDockWires');
-      const dockTurn = document.getElementById('rvDockTurn');
+      const dockPad = document.getElementById('rvDockPad');
       if (dockDistance) dockDistance.textContent = formatDistance(state.meeting?.distanceMeters);
-      if (dockWires) dockWires.textContent = Number(state.notebook?.revisions?.length || 0).toLocaleString();
-      if (dockTurn) dockTurn.textContent = Number(state.turn || 0).toLocaleString();
+      if (dockPad) dockPad.textContent = Number(state.scratchpad?.sequence || 0).toLocaleString();
     }
 
     renderStreetViews(state) {
@@ -323,7 +350,7 @@
             pano: agent.panoId,
             pov: { heading: Number(agent.heading) || 0, pitch: 0 },
             zoom: 1,
-            addressControl: true,
+            addressControl: false,
             linksControl: true,
             panControl: false,
             enableCloseButton: false,
@@ -454,91 +481,41 @@
       });
     }
 
-    renderTelegrams() {
-      const list = document.getElementById('rvTelegrams');
-      const notebook = this.state?.notebook;
-      const revisions = Array.isArray(notebook?.revisions) ? notebook.revisions : [];
-      document.getElementById('rvTelegramCount').textContent = String(revisions.length || 0);
-      if (!list) return;
-      if (!notebook) {
-        list.innerHTML = '<div class="rv-log-entry"><p class="rv-log-text">The shared notebook has not been opened yet.</p></div>';
-        return;
-      }
-      const plans = notebook.plans || {};
-      const meeting = notebook.proposedMeeting || {};
-      const next = notebook.nextQuestion || {};
-      const revisionHtml = revisions.length
-        ? revisions.slice(0, 8).map(revision => `
-          <article class="rv-notebook-revision ${escapeHtml(revision.agentId || '')}">
-            <div class="rv-wire-head">
-              <span>${escapeHtml(revision.by || 'Notebook')}</span>
-              <span>turn ${Number(revision.turn || 0).toLocaleString()}</span>
-            </div>
-            <p class="rv-wire-text"><strong>${escapeHtml(revision.card || 'Question')}</strong>: ${escapeHtml(revision.answer || 'No answer yet.')}</p>
-          </article>
-        `).join('')
-        : '<article class="rv-notebook-revision"><p class="rv-wire-text">Waiting for the first constrained clue.</p></article>';
-
-      list.innerHTML = `
-        <article class="rv-notebook-card">
-          <div class="rv-notebook-row">
-            <span>Goal</span>
-            <strong>${escapeHtml(notebook.search?.name || meeting.name || 'Find each other')}</strong>
-          </div>
-          <p class="rv-notebook-rationale">${escapeHtml(notebook.search?.rationale || meeting.rationale || 'No meeting spot. Follow the other trail through coarse, stale clues.')}</p>
-          <div class="rv-notebook-grid">
-            <div>
-              <span>Last durable clue</span>
-              <p>${escapeHtml(notebook.lastReliableClue || 'No durable clue yet.')}</p>
-            </div>
-            <div>
-              <span>Uncertainty</span>
-              <p>${escapeHtml(notebook.uncertainty || 'unknown')}</p>
-            </div>
-          </div>
-          <div class="rv-notebook-question">
-            <span>Next question</span>
-            <strong>${escapeHtml(next.card || 'Question card')}</strong>
-            <p>${escapeHtml(next.prompt || 'Ask for one coarse clue.')}</p>
-          </div>
-          <div class="rv-notebook-plans">
-            <p><strong>Ada</strong> ${escapeHtml(plans.ada || "Search through Theo's coarse trail clues.")}</p>
-            <p><strong>Theo</strong> ${escapeHtml(plans.theo || "Search through Ada's coarse trail clues.")}</p>
-          </div>
-        </article>
-        <div class="rv-notebook-revisions">
-          ${revisionHtml}
-        </div>
-      `;
-    }
-
-    renderLog() {
-      const log = document.getElementById('rvLog');
-      if (!log) return;
-      const entries = [...(this.state?.eventLog || [])]
-        .filter(event => ['agent_step', 'rendezvous_found', 'run_created', 'run_started'].includes(event.type))
-        .slice(-18)
-        .reverse();
-      if (entries.length === 0) {
-        log.innerHTML = '<div class="rv-log-entry"><p class="rv-log-text">Waiting for the first field note.</p></div>';
-        return;
-      }
-      log.innerHTML = entries.map(event => {
-        const payload = event.payload || {};
-        const title = event.type === 'agent_step'
-          ? `${payload.agentName || payload.agentId} step ${payload.stepCount || ''}`
-          : event.type.replace(/_/g, ' ');
-        const text = payload.reasoning || payload.reason || payload.target || 'Run updated.';
-        return `
-          <article class="rv-log-entry">
-            <div class="rv-log-head">
-              <span>${escapeHtml(title)}</span>
-              <span>turn ${Number(event.turn || 0).toLocaleString()}</span>
-            </div>
-            <p class="rv-log-text">${escapeHtml(text)}</p>
-          </article>
-        `;
+    renderScratchpad() {
+      const svg = document.getElementById('rvScratchpad');
+      const scratchpad = this.state?.scratchpad || {};
+      const operations = Array.isArray(scratchpad.operations) ? scratchpad.operations : [];
+      const sequence = Number(scratchpad.sequence || 0);
+      const previousSequence = this.lastScratchpadSequence;
+      const ruledLines = Array.from({ length: 12 }, (_, index) => {
+        const y = 52 + index * 38;
+        return `<line x1="22" y1="${y}" x2="746" y2="${y}" stroke="rgba(72,103,111,0.10)" stroke-width="1" />`;
       }).join('');
+      const margin = '<line x1="58" y1="18" x2="58" y2="494" stroke="rgba(180,77,67,0.16)" stroke-width="1" />';
+      const marks = operations.map(operation => scratchpadOperationSvg(
+        operation,
+        Number(operation.sequence || 0) > previousSequence
+      )).join('');
+      if (svg) {
+        svg.innerHTML = `${ruledLines}${margin}${marks || '<text class="rv-pad-empty" x="384" y="270" text-anchor="middle">Nothing here yet.</text>'}`;
+      }
+
+      const status = document.getElementById('rvPadStatus');
+      const sequenceLabel = document.getElementById('rvPadSequence');
+      const transit = scratchpad.inTransit;
+      if (status) {
+        if (transit) {
+          const from = transit.from === 'theo' ? 'Theo' : 'Ada';
+          const to = transit.to === 'ada' ? 'Ada' : 'Theo';
+          status.textContent = `on its way from ${from} to ${to}`;
+        } else {
+          status.textContent = `with ${scratchpad.owner === 'theo' ? 'Theo' : 'Ada'}`;
+        }
+      }
+      if (sequenceLabel) {
+        sequenceLabel.textContent = sequence > 0 ? `${sequence.toLocaleString()} marks` : 'blank';
+      }
+      this.lastScratchpadSequence = Math.max(previousSequence, sequence);
     }
 
     flashAgent(agentId) {
