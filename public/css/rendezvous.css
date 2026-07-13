@@ -241,12 +241,24 @@ button:disabled {
   margin: 0;
   padding: 12px 14px 13px;
   overflow: auto;
+  overscroll-behavior: contain;
   border-top: 1px solid var(--line);
   background: var(--surface);
   color: #c4c2ba;
   font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   font-size: 14px;
   line-height: 1.4;
+  scrollbar-color: rgba(239, 237, 229, 0.28) transparent;
+  scrollbar-width: thin;
+}
+
+.rv-agent-note::-webkit-scrollbar {
+  width: 5px;
+}
+
+.rv-agent-note::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(239, 237, 229, 0.24);
 }
 
 .rv-center {
@@ -602,7 +614,7 @@ button:disabled {
 
   .rv-agent-note {
     min-height: 58px;
-    max-height: 76px;
+    max-height: clamp(92px, 16dvh, 132px);
     padding: 10px 11px 11px;
     font-size: 13px;
   }
