@@ -138,7 +138,17 @@ function hasStreetLinks(panorama) {
   return Array.isArray(panorama?.links) && panorama.links.some(link => link?.pano);
 }
 
-function isShortPanoLoop(visitedPanos = []) {
+export function isShortPanoLoop(visitedPanos = []) {
+  const activeTail = visitedPanos.slice(-4);
+  if (
+    activeTail.length === 4 &&
+    activeTail[0] !== activeTail[1] &&
+    activeTail[0] === activeTail[2] &&
+    activeTail[1] === activeTail[3]
+  ) {
+    return true;
+  }
+
   const tail = visitedPanos.slice(-6);
   if (tail.length < 4) return false;
   const unique = new Set(tail);
