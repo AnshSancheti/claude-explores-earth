@@ -47,6 +47,9 @@ function normalizeStreetText(value) {
 function corridorFromText(value) {
   const text = normalizeStreetText(value);
   if (!text) return null;
+  if (/\b(BROOKLYN|QUEENS|BRONX|STATEN ISLAND|NEW JERSEY|JERSEY CITY|HOBOKEN|OAKLAND|CHICAGO)\b/.test(text)) {
+    return null;
+  }
 
   const numbered = text.match(/\b(?:W|E)?\s*(\d{1,3})(?:ST|ND|RD|TH)?\s+ST\b/);
   if (numbered) {
@@ -93,14 +96,24 @@ function newestCorridor(texts = []) {
   return null;
 }
 
-function optionDirectionScore(option, desiredHeading) {
+function isExplicitLocalObservation(value) {
+  const text = normalizeStreetText(value);
+  if (!text) return false;
+  if (/\b(FRIEND|PARTNER|THEO|ADA|INK|ROUTE COMMAND|AVAILABLE|CONNECTION|CHOOSE|TARGET)\b/.test(text)) {
+    return false;
+  }
+  return /\b(I AM|I'M|I CAN SEE|I SEE|CURRENT|VISIBLE|THIS PANORAMA|THIS VIEW|THIS BLOCK|MY CORNER|MY STREET)\b/.test(text);
+}
+
+function optionDirectionScore(option, desiredHeading, { visited = false } = {}) {
   const heading = Number(option?.heading);
   if (!Number.isFinite(heading)) return Infinity;
   const delta = headingDelta(heading, desiredHeading);
   const label = normalizeStreetText(option?.label);
   const avenueBonus = /\b(AVE|AVENUE|BROADWAY|UNIVERSITY PL|GREENWICH|VARICK|7TH|8TH|9TH|6TH|5TH)\b/.test(label) ? 8 : 0;
   const publicStreetBonus = /\b(ST|AVE|AVENUE|BROADWAY|PLACE|PL)\b/.test(label) ? 4 : 0;
-  return delta - avenueBonus - publicStreetBonus;
+  const visitedPenalty = visited ? 12 : 0;
+  return delta - avenueBonus - publicStreetBonus + visitedPenalty;
 }
 
 export function selectConvergencePolicyOption({ agent = {}, options = [], partnerPadText = [] } = {}) {
@@ -109,22 +122,26 @@ export function selectConvergencePolicyOption({ agent = {}, options = [], partne
   const target = newestCorridor(partnerPadText);
   if (!target) return null;
 
-  const agentLocalTexts = [
-    ...(Array.isArray(agent.recentNotes) ? agent.recentNotes : []),
-    agent.recentMovement
-  ];
   const optionLocalTexts = options.map(option => option?.label);
-  const local = newestCorridor(agentLocalTexts) || newestCorridor(optionLocalTexts);
+  const localObservationTexts = Array.isArray(agent.recentNotes)
+    ? agent.recentNotes.filter(isExplicitLocalObservation)
+    : [];
+  const local = newestCorridor(optionLocalTexts) ||
+    newestCorridor([agent.recentMovement]) ||
+    newestCorridor(localObservationTexts);
   if (!local || local.key === target.key) return null;
 
   const rankDelta = target.northRank - local.northRank;
   if (!Number.isFinite(rankDelta) || Math.abs(rankDelta) < 1) return null;
 
   const desiredHeading = rankDelta > 0 ? 0 : 180;
+  const visitedPanos = new Set(Array.isArray(agent.visitedPanos) ? agent.visitedPanos : []);
   const scored = options
     .map((option, index) => ({
       index,
-      score: optionDirectionScore(option, desiredHeading),
+      score: optionDirectionScore(option, desiredHeading, {
+        visited: visitedPanos.has(option?.panoId)
+      }),
       delta: headingDelta(option?.heading, desiredHeading)
     }))
     .filter(item => Number.isFinite(item.score) && item.delta <= 75)

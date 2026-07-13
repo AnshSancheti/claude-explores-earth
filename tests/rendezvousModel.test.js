@@ -128,6 +128,106 @@ test('convergence policy sends Theo north from W Houston toward partner W 14th i
   assert.equal(policy.desiredDirection, 'north');
 });
 
+test('convergence policy ignores stale policy-authored notes when reading local corridor', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      visitedPanos: [],
+      recentNotes: [
+        "I treat my friend's 14TH ST ink as their own observed place, not a route command, so from HOUSTON I choose the available north connection."
+      ],
+      recentMovement: 'You most recently moved east into this W Houston St panorama.'
+    },
+    partnerPadText: ['W 14TH ST'],
+    options: [
+      { panoId: 'east-option', heading: 80, label: 'W Houston St east' },
+      { panoId: 'north-option', heading: 5, label: '7th Ave S north' }
+    ]
+  });
+
+  assert.equal(policy.selectedIndex, 1);
+  assert.equal(policy.local, 'HOUSTON');
+  assert.equal(policy.target, '14TH ST');
+});
+
+test('convergence policy returns null for same corridor ink', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      recentMovement: 'You most recently moved east into this W Houston St panorama.'
+    },
+    partnerPadText: ['W HOUSTON ST'],
+    options: [
+      { panoId: 'east-option', heading: 80, label: 'W Houston St east' },
+      { panoId: 'north-option', heading: 5, label: '7th Ave S north' }
+    ]
+  });
+
+  assert.equal(policy, null);
+});
+
+test('convergence policy returns null for unknown or outside-Manhattan partner text', () => {
+  const base = {
+    agent: {
+      recentMovement: 'You most recently moved west into this W 14th St panorama.'
+    },
+    options: [
+      { panoId: 'south-option', heading: 180, label: '9th Ave south' }
+    ]
+  };
+
+  assert.equal(selectConvergencePolicyOption({ ...base, partnerPadText: ['BIG CLOCK'] }), null);
+  assert.equal(selectConvergencePolicyOption({ ...base, partnerPadText: ['BROOKLYN 14TH ST'] }), null);
+});
+
+test('convergence policy returns null when no available connector matches the needed direction', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      recentMovement: 'You most recently moved west into this W 14th St panorama.'
+    },
+    partnerPadText: ['W HOUSTON ST'],
+    options: [
+      { panoId: 'west-option', heading: 270, label: 'W 14th St west' },
+      { panoId: 'east-option', heading: 90, label: 'W 14th St east' }
+    ]
+  });
+
+  assert.equal(policy, null);
+});
+
+test('convergence policy prefers an unvisited matching connector over a visited one', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      visitedPanos: ['visited-south'],
+      recentMovement: 'You most recently moved west into this W 14th St panorama.'
+    },
+    partnerPadText: ['W HOUSTON ST'],
+    options: [
+      { panoId: 'visited-south', heading: 178, label: '9th Ave south' },
+      { panoId: 'fresh-south', heading: 190, label: '8th Ave south' },
+      { panoId: 'north-option', heading: 0, label: '9th Ave north' }
+    ]
+  });
+
+  assert.equal(policy.selectedIndex, 1);
+});
+
+test('convergence policy allows a visited matching connector when it is the only convergence route', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      visitedPanos: ['visited-south'],
+      recentMovement: 'You most recently moved west into this W 14th St panorama.'
+    },
+    partnerPadText: ['W HOUSTON ST'],
+    options: [
+      { panoId: 'visited-south', heading: 178, label: '9th Ave south' },
+      { panoId: 'west-option', heading: 270, label: 'W 14th St west' }
+    ]
+  });
+
+  assert.equal(policy.selectedIndex, 0);
+});
+
 test('model decision applies corridor convergence over generic exploration while preserving no-leak request shape', async () => {
   const requests = [];
   const client = {
