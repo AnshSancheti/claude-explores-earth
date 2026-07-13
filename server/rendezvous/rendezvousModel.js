@@ -96,6 +96,36 @@ function newestCorridor(texts = []) {
   return null;
 }
 
+function placeKeyFromText(value) {
+  const text = normalizeStreetText(value)
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\b(AVENUE)\b/g, 'AVE')
+    .replace(/\b(PLACE)\b/g, 'PL')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (/\bAVE\s+OF\s+THE\s+AMERICAS\b/.test(text)) return '6TH AVE';
+  const numberedAvenue = text.match(/\b(?:W|E)?\s*(\d{1,2})(?:ST|ND|RD|TH)?\s+AVE\b/);
+  if (numberedAvenue) {
+    const number = Number(numberedAvenue[1]);
+    if (Number.isFinite(number)) return `${number}${number === 1 ? 'ST' : number === 2 ? 'ND' : number === 3 ? 'RD' : 'TH'} AVE`;
+  }
+  const numberedStreet = text.match(/\b(?:W|E)\s*(\d{1,3})(?:ST|ND|RD|TH)?(?:\s+ST)?\b/) ||
+    text.match(/\b(\d{1,3})(?:ST|ND|RD|TH)(?:\s+ST)?\b/) ||
+    text.match(/\b(\d{1,3})\s+ST\b/);
+  if (numberedStreet) return `${Number(numberedStreet[1])} ST`;
+  const corridor = corridorFromText(value);
+  if (corridor) return corridor.key;
+  return text || null;
+}
+
+function placeKeysFromTexts(texts = []) {
+  return new Set(
+    texts
+      .map(placeKeyFromText)
+      .filter(Boolean)
+  );
+}
+
 function isExplicitLocalObservation(value) {
   const text = normalizeStreetText(value);
   if (!text) return false;
@@ -169,7 +199,41 @@ function fallbackDecision(options, visitedPanos, cause, { canEditPad = false, fo
   };
 }
 
-function sanitizeDecision(raw, optionCount, { canEditPad, forcePass }) {
+function operationTextValue(operation) {
+  if (!operation || typeof operation !== 'object') return '';
+  const type = String(operation.type || '').toLowerCase();
+  if (type === 'text') return operation.text || '';
+  if (type === 'landmark') return operation.label || operation.text || '';
+  return '';
+}
+
+function isRenderedReplacementOperation(operation) {
+  if (!operation || typeof operation !== 'object') return false;
+  return String(operation.type || '').toLowerCase() !== 'replacemine';
+}
+
+function filterPartnerEchoPadOperations(padOperations, { agent = {}, options = [], partnerPadText = [] } = {}) {
+  if (!Array.isArray(padOperations) || padOperations.length === 0) return [];
+  const partnerKeys = placeKeysFromTexts(partnerPadText);
+  if (partnerKeys.size === 0) return padOperations;
+
+  const ownKeys = placeKeysFromTexts([
+    ...options.map(option => option?.label),
+    agent.currentRouteLabel,
+    agent.recentMovement
+  ]);
+
+  const filtered = padOperations.filter(operation => {
+    const key = placeKeyFromText(operationTextValue(operation));
+    return !key || !partnerKeys.has(key) || ownKeys.has(key);
+  });
+  const hasReplaceMine = filtered.some(operation => String(operation?.type || '').toLowerCase() === 'replacemine');
+  if (!hasReplaceMine) return filtered;
+  if (filtered.some(isRenderedReplacementOperation)) return filtered;
+  return filtered.filter(operation => String(operation?.type || '').toLowerCase() !== 'replacemine');
+}
+
+function sanitizeDecision(raw, optionCount, { canEditPad, forcePass, agent, options, partnerPadText }) {
   const parsedIndex = parseInt(raw?.selectedIndex, 10);
   const selectedIndex = Number.isFinite(parsedIndex) && parsedIndex >= 0 && parsedIndex < optionCount
     ? parsedIndex
@@ -182,7 +246,11 @@ function sanitizeDecision(raw, optionCount, { canEditPad, forcePass }) {
     selectedIndex,
     reasoning,
     padOperations: canEditPad && Array.isArray(raw?.padOperations)
-      ? raw.padOperations.slice(0, SCRATCHPAD_MAX_OPS_PER_TURN)
+      ? filterPartnerEchoPadOperations(raw.padOperations.slice(0, SCRATCHPAD_MAX_OPS_PER_TURN), {
+          agent,
+          options,
+          partnerPadText
+        })
       : [],
     passPad: canEditPad && (forcePass || raw?.passPad === true),
     fallbackCause: null
@@ -346,7 +414,13 @@ Return only JSON:
           throw new Error(`Rendezvous model returned blank content (${detail})`);
         }
         const raw = parseJsonContent(content);
-        const decision = sanitizeDecision(raw, options.length, { canEditPad, forcePass });
+        const decision = sanitizeDecision(raw, options.length, {
+          canEditPad,
+          forcePass,
+          agent,
+          options,
+          partnerPadText
+        });
         const policy = selectConvergencePolicyOption({ agent, options, partnerPadText });
         return applyConvergencePolicy(decision, policy);
       } catch (error) {
