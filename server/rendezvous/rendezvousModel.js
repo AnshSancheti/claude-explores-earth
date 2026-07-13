@@ -51,7 +51,9 @@ function corridorFromText(value) {
     return null;
   }
 
-  const numbered = text.match(/\b(?:W|E)?\s*(\d{1,3})(?:ST|ND|RD|TH)?\s+ST\b/);
+  const numbered = text.match(/\b(?:W|E)\s*(\d{1,3})(?:ST|ND|RD|TH)?(?:\s+ST)?\b/) ||
+    text.match(/\b(\d{1,3})(?:ST|ND|RD|TH)(?:\s+ST)?\b(?!\s+AVE)/) ||
+    text.match(/\b(\d{1,3})\s+ST\b/);
   if (numbered) {
     const number = Number(numbered[1]);
     if (Number.isFinite(number)) {
@@ -86,6 +88,24 @@ function corridorFromText(value) {
   }
 
   return null;
+}
+
+function hasConnectorRouteComponent(value) {
+  const text = normalizeStreetText(value)
+    .replace(/\b(AVENUE)\b/g, 'AVE')
+    .replace(/\b(PLACE)\b/g, 'PL')
+    .replace(/\bAVE\s+OF\s+THE\s+AMERICAS\b/g, '6TH AVE');
+  if (!text) return false;
+
+  const components = text
+    .split(/\s*(?:\/|&|\bAND\b|\bAT\b|\bCORNER OF\b|\bNEAR\b)\s*/i)
+    .map(component => component.trim())
+    .filter(Boolean);
+  const texts = components.length > 1 ? components : [text];
+  return texts.some(component =>
+    /\b(?:[1-9]|1[0-2])(?:ST|ND|RD|TH)?\s+AVE\b/.test(component) ||
+    /\b(?:AVE|BROADWAY|UNIVERSITY PL|GREENWICH|VARICK|7TH|8TH|9TH|6TH|5TH)\b/.test(component)
+  );
 }
 
 function newestCorridor(texts = []) {
@@ -145,7 +165,7 @@ function optionDirectionScore(option, desiredHeading) {
   return delta - avenueBonus - publicStreetBonus;
 }
 
-export function selectConvergencePolicyOption({ agent = {}, options = [], partnerPadText = [] } = {}) {
+export function selectConvergencePolicyOption({ agent = {}, options = [], partnerPadText = [], ownPadText = [] } = {}) {
   if (!Array.isArray(options) || options.length === 0) return null;
 
   const target = newestCorridor(partnerPadText);
@@ -157,6 +177,7 @@ export function selectConvergencePolicyOption({ agent = {}, options = [], partne
     : [];
   const local = newestCorridor(optionLocalTexts) ||
     newestCorridor([agent.currentRouteLabel]) ||
+    newestCorridor(Array.isArray(ownPadText) ? ownPadText : []) ||
     newestCorridor([agent.recentMovement]) ||
     newestCorridor(localObservationTexts);
   if (!local || local.key === target.key) return null;
@@ -170,10 +191,21 @@ export function selectConvergencePolicyOption({ agent = {}, options = [], partne
     .map((option, index) => ({
       index,
       visited: visitedPanos.has(option?.panoId),
+      labelCorridor: corridorFromText(option?.label),
       score: optionDirectionScore(option, desiredHeading),
       delta: headingDelta(option?.heading, desiredHeading)
     }))
-    .filter(item => Number.isFinite(item.score) && item.delta <= 75);
+    .filter(item => {
+      if (!Number.isFinite(item.score) || item.delta > 75) return false;
+      if (
+        item.labelCorridor?.key === local.key &&
+        target.key !== local.key &&
+        !hasConnectorRouteComponent(options[item.index]?.label)
+      ) {
+        return false;
+      }
+      return true;
+    });
   const unvisitedCandidates = validCandidates.filter(item => !item.visited);
   const scored = (unvisitedCandidates.length > 0 ? unvisitedCandidates : validCandidates)
     .sort((a, b) => a.score - b.score || a.index - b.index);
@@ -301,6 +333,7 @@ export class RendezvousModelService {
     canEditPad,
     padStatus,
     partnerPadText = [],
+    ownPadText = [],
     forcePass = false
   }) {
     if (!Array.isArray(options) || options.length === 0) {
@@ -333,6 +366,9 @@ export class RendezvousModelService {
     const partnerInkTranscript = Array.isArray(partnerPadText) && partnerPadText.length > 0
       ? partnerPadText.slice(-6).map(text => `- ${String(text).slice(0, 80)}`).join('\n')
       : '- No legible text from your friend yet.';
+    const ownInkTranscript = Array.isArray(ownPadText) && ownPadText.length > 0
+      ? ownPadText.slice(-6).map(text => `- ${String(text).slice(0, 80)}`).join('\n')
+      : '- No current legible place text from your own ink.';
 
     const systemPrompt = `You are ${agent.name}, one of two friends lost on different Manhattan street corners. Your only goal is to physically find ${partnerName}. You can walk through Google Street View and sometimes hold one shared paper scratchpad.
 
@@ -370,7 +406,7 @@ Return only JSON:
     const userContent = [
       {
         type: 'text',
-        text: `These are the routes visible from your current panorama. Image 1 is the last scratchpad version you personally saw; the remaining images correspond to options 0 through ${options.length - 1} in order.\n\n${optionLines}\n\nYour private field memory:\n${privateMemory}\n\nYour recent movement into this view:\n- ${recentMovement}\n\nYour own last selected visible route label:\n- ${currentRouteLabel}\n\nAccessibility readout of the exact text visibly written in ${partnerName}'s ink:\n${partnerInkTranscript}\n\nScratchpad status: ${padStatus}`
+        text: `These are the routes visible from your current panorama. Image 1 is the last scratchpad version you personally saw; the remaining images correspond to options 0 through ${options.length - 1} in order.\n\n${optionLines}\n\nYour private field memory:\n${privateMemory}\n\nYour recent movement into this view:\n- ${recentMovement}\n\nYour own last selected visible route label:\n- ${currentRouteLabel}\n\nAccessibility readout of current place text visibly written in your own ink:\n${ownInkTranscript}\n\nAccessibility readout of the exact text visibly written in ${partnerName}'s ink:\n${partnerInkTranscript}\n\nScratchpad status: ${padStatus}`
       },
       {
         type: 'image_url',
@@ -421,7 +457,7 @@ Return only JSON:
           options,
           partnerPadText
         });
-        const policy = selectConvergencePolicyOption({ agent, options, partnerPadText });
+        const policy = selectConvergencePolicyOption({ agent, options, partnerPadText, ownPadText });
         return applyConvergencePolicy(decision, policy);
       } catch (error) {
         lastError = error;
@@ -439,7 +475,7 @@ Return only JSON:
       status ? `api_error_${status}` : 'model_error',
       { canEditPad, forcePass }
     );
-    const policy = selectConvergencePolicyOption({ agent, options, partnerPadText });
+    const policy = selectConvergencePolicyOption({ agent, options, partnerPadText, ownPadText });
     return applyConvergencePolicy(fallback, policy);
   }
 }
