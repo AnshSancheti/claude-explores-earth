@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import * as fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { RendezvousController } from '../server/rendezvous/rendezvousController.js';
+import {
+  RendezvousController,
+  isShortPanoLoop
+} from '../server/rendezvous/rendezvousController.js';
 
 function distance(pos1, pos2) {
   const lat1 = Number(pos1.lat);
@@ -168,6 +171,11 @@ class IndoorAdaStartStreetView extends FakeStreetView {
     return super.getPanorama(positionOrPanoId);
   }
 }
+
+test('isShortPanoLoop detects an active ABAB suffix after an older third pano', () => {
+  assert.equal(isShortPanoLoop(['midtown', 'central', 'midtown', '4d', 'midtown', '4d']), true);
+  assert.equal(isShortPanoLoop(['midtown', 'central', 'midtown', '4d', 'midtown', 'east']), false);
+});
 
 test('RendezvousController uses one causal drawing pad and can find the other agent', async () => {
   const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
