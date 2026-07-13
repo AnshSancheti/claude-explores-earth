@@ -60,6 +60,8 @@ test('rendezvous model prompt is scoped to personal memory, visible options, and
   assert.match(serializedRequest, /heading 180 degrees \(south\)/);
   assert.match(serializedRequest, /0° is north, 90° east, 180° south, and 270° west/);
   assert.match(serializedRequest, /concrete place your friend marked outranks generic exploration/);
+  assert.match(serializedRequest, /Your ink is charcoal black\. Theo's ink is blue/);
+  assert.match(serializedRequest, /Treat only Theo's ink as a clue/);
   assert.doesNotMatch(serializedRequest, /pano-a|pano-b/);
   assert.doesNotMatch(serializedRequest, /distanceToFriend|partnerPath|roughPosition|latitude|longitude/);
 });

@@ -112,10 +112,15 @@ export class RendezvousModelService {
     const padInstruction = canEditPad
       ? `You have the physical scratchpad. You may add up to ${SCRATCHPAD_MAX_OPS_PER_TURN} drawing operations. ${forcePass ? `You have held it long enough and must pass it to ${partnerName} this turn.` : `Set passPad=true when the marks are useful enough to send to ${partnerName}.`}`
       : `You do not have the physical scratchpad right now (${padStatus}). You may remember the last version you saw, but padOperations must be empty and passPad must be false.`;
+    const inkInstruction = agent.id === 'theo'
+      ? `Your ink is blue. ${partnerName}'s ink is charcoal black.`
+      : `Your ink is charcoal black. ${partnerName}'s ink is blue.`;
 
     const systemPrompt = `You are ${agent.name}, one of two friends lost on different Manhattan street corners. Your only goal is to physically find ${partnerName}. You can walk through Google Street View and sometimes hold one shared paper scratchpad.
 
 This is a real cooperative search, not a riddle-writing exercise. The scratchpad is the only information that ever crosses between you. You are never given ${partnerName}'s coordinates, path, distance, neighborhood, plans, or hidden state. Do not invent access to them. Street names and landmarks you can genuinely read or recognize are fair to write down.
+
+${inkInstruction} Treat only ${partnerName}'s ink as a clue to their location or movement. Your own older marks are memory, not evidence about where ${partnerName} is. When both colors name places, pursue the place written in ${partnerName}'s color.
 
 Choose one visible public route. Avoid indoor shops, private interiors, dead ends, and immediate loops. Use your own observations, your private memory, and the last scratchpad you personally saw.
 
