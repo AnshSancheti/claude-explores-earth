@@ -128,6 +128,53 @@ test('convergence policy sends Theo north from W Houston toward partner W 14th i
   assert.equal(policy.desiredDirection, 'north');
 });
 
+test('convergence policy sends Ada south from own W 14th selected route label toward partner W 3rd ink', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      id: 'ada',
+      name: 'Ada',
+      currentRouteLabel: 'W 14th St',
+      recentNotes: [
+        "I treat my friend's W 3rd ink as their own observed place, not a route command, so from W 14th I choose the available south connection."
+      ],
+      recentMovement: 'You most recently moved west into this panorama.'
+    },
+    partnerPadText: ['W 3rd St'],
+    options: [
+      { panoId: 'north-option', heading: 350, label: 'public way north' },
+      { panoId: 'south-option', heading: 178, label: '9th Ave south' },
+      { panoId: 'west-option', heading: 270, label: 'public way west' }
+    ]
+  });
+
+  assert.equal(policy.selectedIndex, 1);
+  assert.equal(policy.desiredDirection, 'south');
+  assert.equal(policy.local, '14TH ST');
+  assert.equal(policy.target, '3RD ST');
+});
+
+test('convergence policy sends Theo north from own W 3rd selected route label toward partner W 14th ink', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      currentRouteLabel: 'W 3rd St',
+      recentMovement: 'You most recently moved east into this panorama.'
+    },
+    partnerPadText: ['W 14th St'],
+    options: [
+      { panoId: 'east-option', heading: 85, label: 'public way east' },
+      { panoId: 'south-option', heading: 185, label: 'public way south' },
+      { panoId: 'north-option', heading: 5, label: '9th Ave north' }
+    ]
+  });
+
+  assert.equal(policy.selectedIndex, 2);
+  assert.equal(policy.desiredDirection, 'north');
+  assert.equal(policy.local, '3RD ST');
+  assert.equal(policy.target, '14TH ST');
+});
+
 test('convergence policy ignores stale policy-authored notes when reading local corridor', () => {
   const policy = selectConvergencePolicyOption({
     agent: {
@@ -254,7 +301,11 @@ test('model decision applies corridor convergence over generic exploration while
       name: 'Ada',
       visitedPanos: [],
       recentNotes: ['I am on W 14th St.'],
-      recentMovement: 'You most recently moved west into this W 14th St panorama.'
+      recentMovement: 'You most recently moved west into this W 14th St panorama.',
+      currentRouteLabel: 'W 14th St',
+      distanceToFriend: 50,
+      partnerPath: ['hidden-partner-pano'],
+      roughPosition: { lat: 40.735, lng: -74.001 }
     },
     partnerName: 'Theo',
     options: [
@@ -273,7 +324,9 @@ test('model decision applies corridor convergence over generic exploration while
   assert.match(result.reasoning, /own observed place, not a route command/);
   const serializedRequest = JSON.stringify(requests[0]);
   assert.doesNotMatch(serializedRequest, /north-option|south-option|west-option/);
-  assert.doesNotMatch(serializedRequest, /distanceToFriend|partnerPath|roughPosition|latitude|longitude|-?\d+\.\d{3,}/);
+  assert.match(serializedRequest, /Your own last selected visible route label/);
+  assert.match(serializedRequest, /W 14th St/);
+  assert.doesNotMatch(serializedRequest, /distanceToFriend|partnerPath|roughPosition|hidden-partner-pano|latitude|longitude|-?\d+\.\d{3,}/);
 });
 
 test('model decision sends Theo north from W Houston toward partner W 14th even if model picks east', async () => {

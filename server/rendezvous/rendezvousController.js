@@ -650,7 +650,8 @@ export class RendezvousController {
           recentNotes: [...(agent.recentNotes || [])],
           recentMovement: (agent.path || []).length > 1
             ? `You most recently moved ${compassDirection(agent.heading)} into this panorama.`
-            : 'You have not moved yet from your starting panorama.'
+            : 'You have not moved yet from your starting panorama.',
+          currentRouteLabel: agent.lastDecision?.selectedLabel || null
         },
         partnerName: partner.name,
         options: candidates.map(candidate => ({
