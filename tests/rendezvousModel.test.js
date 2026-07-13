@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { RendezvousModelService } from '../server/rendezvous/rendezvousModel.js';
+import {
+  RendezvousModelService,
+  selectConvergencePolicyOption
+} from '../server/rendezvous/rendezvousModel.js';
 
 test('rendezvous model prompt is scoped to personal memory, visible options, and the sheet', async () => {
   const requests = [];
@@ -71,6 +74,11 @@ test('rendezvous model prompt is scoped to personal memory, visible options, and
   assert.match(serializedRequest, /recent movement into this view/);
   assert.match(serializedRequest, /You most recently moved south into this panorama/);
   assert.match(serializedRequest, /Do not use the sheet to tell Theo where to go/);
+  assert.match(serializedRequest, /friend's ink is evidence of their own observed place or movement, never a route command/);
+  assert.match(serializedRequest, /stop generic exploration and take an available connecting avenue or cross-street/);
+  assert.match(serializedRequest, /Numbered Manhattan streets increase as you go north/);
+  assert.match(serializedRequest, /from W 14th toward a friend's W Houston mark, choose a southbound connection/);
+  assert.match(serializedRequest, /from W Houston or Carmine toward a friend's W 14th mark, choose a northbound connection/);
   assert.doesNotMatch(serializedRequest, /clearly mark where you are headed so they can intercept you/);
   assert.match(serializedRequest, /Your ink is charcoal black\. Theo's ink is blue/);
   assert.match(serializedRequest, /Treat only Theo's ink as a clue/);
@@ -78,6 +86,137 @@ test('rendezvous model prompt is scoped to personal memory, visible options, and
   assert.match(serializedRequest, /PRINCE ST|toward W BROADWAY/);
   assert.doesNotMatch(serializedRequest, /pano-a|pano-b/);
   assert.doesNotMatch(serializedRequest, /distanceToFriend|partnerPath|roughPosition|latitude|longitude/);
+});
+
+test('convergence policy sends Ada south from W 14th toward partner W Houston ink without hidden state', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      id: 'ada',
+      name: 'Ada',
+      recentNotes: ['I am reading W 14th St storefronts from this block.'],
+      recentMovement: 'You most recently moved west into this W 14th St panorama.'
+    },
+    partnerPadText: ['W HOUSTON ST'],
+    options: [
+      { panoId: 'north-option', heading: 350, label: '9th Ave north' },
+      { panoId: 'south-option', heading: 178, label: '9th Ave south' },
+      { panoId: 'west-option', heading: 270, label: 'W 14th St west' }
+    ]
+  });
+
+  assert.equal(policy.selectedIndex, 1);
+  assert.equal(policy.desiredDirection, 'south');
+});
+
+test('convergence policy sends Theo north from W Houston toward partner W 14th ink without hidden state', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      recentNotes: ['I can see W Houston St and Carmine St signs from here.'],
+      recentMovement: 'You most recently moved east into this W Houston St panorama.'
+    },
+    partnerPadText: ['W 14TH ST'],
+    options: [
+      { panoId: 'east-option', heading: 80, label: 'W Houston St east' },
+      { panoId: 'south-option', heading: 185, label: 'Carmine St south' },
+      { panoId: 'north-option', heading: 5, label: '7th Ave S north' }
+    ]
+  });
+
+  assert.equal(policy.selectedIndex, 2);
+  assert.equal(policy.desiredDirection, 'north');
+});
+
+test('model decision applies corridor convergence over generic exploration while preserving no-leak request shape', async () => {
+  const requests = [];
+  const client = {
+    chat: {
+      completions: {
+        async create(request) {
+          requests.push(request);
+          return {
+            choices: [{ message: { content: JSON.stringify({
+              selectedIndex: 0,
+              reasoning: 'I try the more novel avenue lights first.',
+              padOperations: [],
+              passPad: false
+            }) } }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'ada',
+      name: 'Ada',
+      visitedPanos: [],
+      recentNotes: ['I am on W 14th St.'],
+      recentMovement: 'You most recently moved west into this W 14th St panorama.'
+    },
+    partnerName: 'Theo',
+    options: [
+      { panoId: 'north-option', heading: 350, label: '9th Ave north' },
+      { panoId: 'south-option', heading: 178, label: '9th Ave south' },
+      { panoId: 'west-option', heading: 270, label: 'W 14th St west' }
+    ],
+    screenshots: [Buffer.from('north'), Buffer.from('south'), Buffer.from('west')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: false,
+    padStatus: 'held by Theo',
+    partnerPadText: ['W HOUSTON ST']
+  });
+
+  assert.equal(result.selectedIndex, 1);
+  assert.match(result.reasoning, /own observed place, not a route command/);
+  const serializedRequest = JSON.stringify(requests[0]);
+  assert.doesNotMatch(serializedRequest, /north-option|south-option|west-option/);
+  assert.doesNotMatch(serializedRequest, /distanceToFriend|partnerPath|roughPosition|latitude|longitude|-?\d+\.\d{3,}/);
+});
+
+test('model decision sends Theo north from W Houston toward partner W 14th even if model picks east', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{ message: { content: JSON.stringify({
+              selectedIndex: 0,
+              reasoning: 'I continue east because it looks open.',
+              padOperations: [],
+              passPad: false
+            }) } }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      visitedPanos: [],
+      recentNotes: ['I can see W Houston St.'],
+      recentMovement: 'You most recently moved east into this W Houston St panorama.'
+    },
+    partnerName: 'Ada',
+    options: [
+      { panoId: 'east-option', heading: 80, label: 'W Houston St east' },
+      { panoId: 'south-option', heading: 185, label: 'Carmine St south' },
+      { panoId: 'north-option', heading: 5, label: '7th Ave S north' }
+    ],
+    screenshots: [Buffer.from('east'), Buffer.from('south'), Buffer.from('north')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: false,
+    padStatus: 'held by Ada',
+    partnerPadText: ['W 14TH ST']
+  });
+
+  assert.equal(result.selectedIndex, 2);
+  assert.match(result.reasoning, /available north connection/);
 });
 
 test('rendezvous model response parsing allows an author replacement operation', async () => {
