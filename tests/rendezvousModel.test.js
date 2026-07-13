@@ -603,6 +603,228 @@ test('model decision reconciles decimal headings across the 360-degree wrap', as
   assert.equal(result.selectedIndex, 1);
 });
 
+test('model decision uses structured intended heading when prose has no explicit degrees', async () => {
+  const requests = [];
+  const client = {
+    chat: {
+      completions: {
+        async create(request) {
+          requests.push(request);
+          return {
+            choices: [{ message: { content: JSON.stringify({
+              selectedIndex: 0,
+              intendedHeading: 299.6,
+              reasoning: 'The westernmost visible route matches the westward orientation from my recent northwest entry.',
+              padOperations: [],
+              passPad: false
+            }) } }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'ada',
+      name: 'Ada',
+      visitedPanos: [],
+      recentNotes: [],
+      recentMovement: 'You most recently moved northwest into this panorama.',
+      currentRouteLabel: 'W 17th St',
+      distanceToFriend: 528,
+      observerState: { hidden: true }
+    },
+    partnerName: 'Theo',
+    options: [
+      { panoId: 'se-option', heading: 121.317, label: 'W 17th St' },
+      { panoId: 'west-option', heading: 299.408, label: 'W 17th St' }
+    ],
+    screenshots: [Buffer.from('se'), Buffer.from('west')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: false,
+    padStatus: 'held by Theo',
+    ownPadText: ['W 17th St'],
+    partnerPadText: []
+  });
+
+  assert.equal(result.selectedIndex, 1);
+  assert.equal(result.intendedHeading, 299.6);
+  const serializedRequest = JSON.stringify(requests[0]);
+  assert.match(serializedRequest, /intendedHeading/);
+  assert.match(serializedRequest, /actually intend from your reasoning/);
+  assert.match(serializedRequest, /do not fill it merely by copying selectedIndex/);
+  assert.doesNotMatch(serializedRequest, /distanceToFriend|observerState|"hidden":true|latitude|longitude|-?\d+\.\d{3,}/);
+});
+
+test('model decision keeps selected index when structured intended heading is ambiguous', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{ message: { content: JSON.stringify({
+              selectedIndex: 0,
+              intendedHeading: 300,
+              reasoning: 'I choose the westward branch.',
+              padOperations: [],
+              passPad: false
+            }) } }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: { id: 'ada', name: 'Ada', visitedPanos: [], recentNotes: [] },
+    partnerName: 'Theo',
+    options: [
+      { panoId: 'west-a', heading: 299, label: 'W 17th St' },
+      { panoId: 'west-b', heading: 301, label: 'W 17th St' },
+      { panoId: 'east', heading: 121, label: 'W 17th St' }
+    ],
+    screenshots: [Buffer.from('west-a'), Buffer.from('west-b'), Buffer.from('east')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: false,
+    padStatus: 'held by Theo'
+  });
+
+  assert.equal(result.selectedIndex, 0);
+});
+
+test('model decision ignores null empty nonfinite and nonscalar structured intent', async () => {
+  for (const invalidHeading of [
+    null,
+    '',
+    ' ',
+    'NaN',
+    Number.NaN,
+    Infinity,
+    -Infinity,
+    'west',
+    false,
+    true,
+    [],
+    [0],
+    [''],
+    ['299.4'],
+    {},
+    { heading: 299.4 }
+  ]) {
+    const client = {
+      chat: {
+        completions: {
+          async create() {
+            return {
+              choices: [{ message: { content: JSON.stringify({
+                selectedIndex: 0,
+                intendedHeading: invalidHeading,
+                reasoning: 'The westernmost route has the right westward orientation.',
+                padOperations: [],
+                passPad: false
+              }) } }]
+            };
+          }
+        }
+      }
+    };
+    const service = new RendezvousModelService({ client, logger: { warn() {} } });
+    const result = await service.decide({
+      agent: { id: 'ada', name: 'Ada', visitedPanos: [], recentNotes: [] },
+      partnerName: 'Theo',
+      options: [
+        { panoId: 'se-option', heading: 121.317, label: 'W 17th St' },
+        { panoId: 'west-option', heading: 299.408, label: 'W 17th St' }
+      ],
+      screenshots: [Buffer.from('se'), Buffer.from('west')],
+      scratchpadBuffer: Buffer.from('pad'),
+      canEditPad: false,
+      padStatus: 'held by Theo'
+    });
+
+    assert.equal(result.selectedIndex, 0);
+    assert.equal(result.intendedHeading, null);
+  }
+});
+
+test('model decision accepts numeric string number negative and wrapped structured intent', async () => {
+  for (const [intendedHeading, expectedHeading] of [
+    ['299.4', 299.4],
+    [299.4, 299.4],
+    [-60.6, 299.4],
+    [659.4, 299.4]
+  ]) {
+    const client = {
+      chat: {
+        completions: {
+          async create() {
+            return {
+              choices: [{ message: { content: JSON.stringify({
+                selectedIndex: 0,
+                intendedHeading,
+                reasoning: 'The westernmost route has the right westward orientation.',
+                padOperations: [],
+                passPad: false
+              }) } }]
+            };
+          }
+        }
+      }
+    };
+    const service = new RendezvousModelService({ client, logger: { warn() {} } });
+    const result = await service.decide({
+      agent: { id: 'ada', name: 'Ada', visitedPanos: [], recentNotes: [] },
+      partnerName: 'Theo',
+      options: [
+        { panoId: 'se-option', heading: 121.317, label: 'W 17th St' },
+        { panoId: 'west-option', heading: 299.408, label: 'W 17th St' }
+      ],
+      screenshots: [Buffer.from('se'), Buffer.from('west')],
+      scratchpadBuffer: Buffer.from('pad'),
+      canEditPad: false,
+      padStatus: 'held by Theo'
+    });
+
+    assert.equal(result.selectedIndex, 1);
+    assert.ok(Math.abs(result.intendedHeading - expectedHeading) < 0.0000001);
+  }
+});
+
+test('model decision without structured intent still requires explicit degree text for reconciliation', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{ message: { content: JSON.stringify({
+              selectedIndex: 0,
+              reasoning: 'The westernmost visible route matches the westward orientation.',
+              padOperations: [],
+              passPad: false
+            }) } }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: { id: 'ada', name: 'Ada', visitedPanos: [], recentNotes: [] },
+    partnerName: 'Theo',
+    options: [
+      { panoId: 'se-option', heading: 121.317, label: 'W 17th St' },
+      { panoId: 'west-option', heading: 299.408, label: 'W 17th St' }
+    ],
+    screenshots: [Buffer.from('se'), Buffer.from('west')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: false,
+    padStatus: 'held by Theo'
+  });
+
+  assert.equal(result.selectedIndex, 0);
+});
+
 test('model decision sends Theo north from W Houston toward partner W 14th even if model picks east', async () => {
   const client = {
     chat: {
