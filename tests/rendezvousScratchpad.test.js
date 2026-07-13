@@ -26,6 +26,7 @@ test('scratchpad accepts a bounded drawing grammar and assigns authorship', asyn
   assert.equal(accepted.length, SCRATCHPAD_MAX_OPS_PER_TURN);
   assert.equal(scratchpad.sequence, SCRATCHPAD_MAX_OPS_PER_TURN);
   assert.equal(accepted.every(operation => operation.author === 'theo'), true);
+  assert.equal(accepted.every(operation => operation.color === '#087fa8'), true);
   assert.equal(accepted[0].text, 'Broadway?');
   assert.deepEqual(accepted[0].at, { x: 0, y: 1 });
   assert.deepEqual(accepted[1].from, { x: 0, y: 0.2 });

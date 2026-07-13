@@ -8,7 +8,7 @@ export const SCRATCHPAD_MAX_OPS_PER_TURN = 12;
 
 const AGENT_INK = Object.freeze({
   ada: '#24211d',
-  theo: '#185e78'
+  theo: '#087fa8'
 });
 
 function clamp(value, min, max, fallback = min) {
@@ -229,6 +229,8 @@ export async function renderScratchpad(scratchpad, { throughSequence = Infinity 
     <rect width="100%" height="100%" fill="#f2ecdd" />
     ${rules}
     <line x1="58" y1="18" x2="58" y2="494" stroke="#b44d43" stroke-opacity="0.16" stroke-width="1" />
+    <text x="638" y="28" fill="#24211d" fill-opacity="0.62" font-family="sans-serif" font-size="13">Ada</text>
+    <text x="686" y="28" fill="#087fa8" fill-opacity="0.78" font-family="sans-serif" font-size="13">Theo</text>
     ${operations}
   </svg>`;
   return sharp(Buffer.from(svg)).png().toBuffer();

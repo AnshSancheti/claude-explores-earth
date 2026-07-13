@@ -51,7 +51,7 @@
 
   function scratchpadOperationSvg(operation, isNew) {
     const className = isNew ? ' is-new' : '';
-    const color = operation.color || (operation.author === 'theo' ? '#185e78' : '#24211d');
+    const color = operation.author === 'theo' ? '#087fa8' : '#24211d';
     const width = Math.max(1, Math.min(80, svgNumber(operation.width, 4)));
     if (operation.type === 'text') {
       const at = svgPoint(operation.at);
@@ -485,12 +485,13 @@
         return `<line x1="22" y1="${y}" x2="746" y2="${y}" stroke="rgba(72,103,111,0.10)" stroke-width="1" />`;
       }).join('');
       const margin = '<line x1="58" y1="18" x2="58" y2="494" stroke="rgba(180,77,67,0.16)" stroke-width="1" />';
+      const inkKey = '<text x="638" y="28" fill="#24211d" fill-opacity="0.62" font-size="13">Ada</text><text x="686" y="28" fill="#087fa8" fill-opacity="0.78" font-size="13">Theo</text>';
       const marks = operations.map(operation => scratchpadOperationSvg(
         operation,
         Number(operation.sequence || 0) > previousSequence
       )).join('');
       if (svg) {
-        svg.innerHTML = `${ruledLines}${margin}${marks || '<text class="rv-pad-empty" x="384" y="270" text-anchor="middle">Nothing here yet.</text>'}`;
+        svg.innerHTML = `${ruledLines}${margin}${inkKey}${marks || '<text class="rv-pad-empty" x="384" y="270" text-anchor="middle">Nothing here yet.</text>'}`;
       }
 
       const status = document.getElementById('rvPadStatus');

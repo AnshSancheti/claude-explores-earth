@@ -157,7 +157,7 @@ Return only JSON:
         type: 'image_url',
         image_url: {
           url: `data:image/png;base64,${scratchpadBuffer.toString('base64')}`,
-          detail: 'low'
+          detail: 'high'
         }
       },
       ...screenshots.map(buffer => ({
