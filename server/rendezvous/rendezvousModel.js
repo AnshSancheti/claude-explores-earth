@@ -26,7 +26,7 @@ function fallbackDecision(options, visitedPanos, cause, { canEditPad = false, fo
   const selectedIndex = unvisitedIndex >= 0 ? unvisitedIndex : 0;
   return {
     selectedIndex,
-    reasoning: 'The model is unavailable, so I am keeping to the least familiar public way forward.',
+    reasoning: 'I take the least familiar public way forward and keep the search moving.',
     padOperations: [],
     passPad: canEditPad && forcePass,
     fallbackCause: cause
@@ -57,7 +57,12 @@ export class RendezvousModelService {
   constructor({ client = null, logger = console } = {}) {
     this.logger = logger;
     this.model = process.env.RENDEZVOUS_MODEL || 'gpt-5-nano';
-    this.maxTokens = parseIntOr(process.env.RENDEZVOUS_MODEL_MAX_TOKENS, 1800);
+    this.maxTokens = parseIntOr(process.env.RENDEZVOUS_MODEL_MAX_TOKENS, 2400);
+    this.maxRetryTokens = Math.max(
+      this.maxTokens,
+      parseIntOr(process.env.RENDEZVOUS_MODEL_MAX_RETRY_TOKENS, 4800)
+    );
+    this.reasoningEffort = process.env.RENDEZVOUS_MODEL_REASONING_EFFORT || 'low';
     this.maxAttempts = Math.max(1, parseIntOr(process.env.RENDEZVOUS_MODEL_ATTEMPTS, 2));
     this.client = client;
   }
@@ -92,7 +97,11 @@ export class RendezvousModelService {
       const label = option.label ? `; Street View label: ${option.label}` : '';
       return `Option ${index}: heading ${Math.round(Number(option.heading) || 0)} degrees; ${visited}${label}`;
     }).join('\n');
-    const privateMemory = (agent.recentNotes || []).slice(-5).map(note => `- ${note}`).join('\n') || '- No prior field notes.';
+    const privateMemory = (agent.recentNotes || [])
+      .filter(note => !/model (?:is|was) unavailable/i.test(note))
+      .slice(-5)
+      .map(note => `- ${note}`)
+      .join('\n') || '- No prior field notes.';
     const padInstruction = canEditPad
       ? `You have the physical scratchpad. You may add up to ${SCRATCHPAD_MAX_OPS_PER_TURN} drawing operations. ${forcePass ? `You have held it long enough and must pass it to ${partnerName} this turn.` : `Set passPad=true when the marks are useful enough to send to ${partnerName}.`}`
       : `You do not have the physical scratchpad right now (${padStatus}). You may remember the last version you saw, but padOperations must be empty and passPad must be false.`;
@@ -102,6 +111,8 @@ export class RendezvousModelService {
 This is a real cooperative search, not a riddle-writing exercise. The scratchpad is the only information that ever crosses between you. You are never given ${partnerName}'s coordinates, path, distance, neighborhood, plans, or hidden state. Do not invent access to them. Street names and landmarks you can genuinely read or recognize are fair to write down.
 
 Choose one visible public route. Avoid indoor shops, private interiors, dead ends, and immediate loops. Use your own observations, your private memory, and the last scratchpad you personally saw.
+
+Treat this as a practical search between friends. When you can read your street or intersection, put that concrete clue on the sheet. Interpret your friend's marks as actionable geography: move toward a location they identify, or clearly mark where you are headed so they can intercept you. Do not merely repeat a generic strategy such as "unfamiliar route." Prefer a stable street name, intersection, landmark, or directional sketch that helps the two of you converge.
 
 ${padInstruction}
 
@@ -145,6 +156,7 @@ Return only JSON:
     ];
 
     let lastError = null;
+    let attemptMaxTokens = this.maxTokens;
     for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
       try {
         const response = await this.#client().chat.completions.create({
@@ -154,13 +166,28 @@ Return only JSON:
             { role: 'user', content: userContent }
           ],
           response_format: { type: 'json_object' },
-          max_completion_tokens: this.maxTokens
+          reasoning_effort: this.reasoningEffort,
+          max_completion_tokens: attemptMaxTokens
         });
-        const raw = parseJsonContent(response?.choices?.[0]?.message?.content);
+        const choice = response?.choices?.[0];
+        const content = choice?.message?.content;
+        if (typeof content !== 'string' || !content.trim()) {
+          const completionTokens = response?.usage?.completion_tokens;
+          const detail = [
+            choice?.finish_reason ? `finish=${choice.finish_reason}` : null,
+            Number.isFinite(completionTokens) ? `completion_tokens=${completionTokens}` : null,
+            `budget=${attemptMaxTokens}`
+          ].filter(Boolean).join(', ');
+          throw new Error(`Rendezvous model returned blank content (${detail})`);
+        }
+        const raw = parseJsonContent(content);
         return sanitizeDecision(raw, options.length, { canEditPad, forcePass });
       } catch (error) {
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
+        if (/blank content/i.test(error?.message || '')) {
+          attemptMaxTokens = Math.min(this.maxRetryTokens, Math.max(attemptMaxTokens * 2, 3200));
+        }
       }
     }
 

@@ -112,4 +112,42 @@ test('model failure still honors a forced handoff', async () => {
   assert.equal(result.passPad, true);
   assert.deepEqual(result.padOperations, []);
   assert.equal(result.fallbackCause, 'model_error');
+  assert.doesNotMatch(result.reasoning, /model|unavailable/i);
+});
+
+test('blank-content retry raises the output budget and uses low reasoning effort', async () => {
+  const requests = [];
+  const client = {
+    chat: { completions: { async create(request) {
+      requests.push(request);
+      if (requests.length === 1) {
+        return {
+          usage: { completion_tokens: request.max_completion_tokens },
+          choices: [{ finish_reason: 'length', message: { content: '' } }]
+        };
+      }
+      return {
+        choices: [{ message: { content: JSON.stringify({
+          selectedIndex: 0,
+          reasoning: 'I follow the named avenue toward the mark on the sheet.',
+          padOperations: [],
+          passPad: false
+        }) } }]
+      };
+    } } }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: { id: 'ada', name: 'Ada', visitedPanos: [], recentNotes: [] },
+    partnerName: 'Theo',
+    options: [{ panoId: 'pano-a', heading: 0, label: 'Broadway' }],
+    screenshots: [Buffer.from('one')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: false,
+    padStatus: 'held by Theo'
+  });
+
+  assert.equal(result.fallbackCause, null);
+  assert.equal(requests[0].reasoning_effort, 'low');
+  assert.ok(requests[1].max_completion_tokens > requests[0].max_completion_tokens);
 });

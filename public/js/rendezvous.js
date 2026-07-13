@@ -166,9 +166,6 @@
         }
       });
       document.getElementById('rvFitBtn')?.addEventListener('click', () => this.fitMap());
-      for (const button of document.querySelectorAll('[data-peek-to]')) {
-        button.addEventListener('click', () => this.setMobileView(button.dataset.peekTo || 'ada'));
-      }
       this.setupMobileTabs();
     }
 
@@ -331,11 +328,7 @@
     }
 
     renderLiveContext() {
-      const state = this.state || {};
-      const dockDistance = document.getElementById('rvDockDistance');
-      const dockPad = document.getElementById('rvDockPad');
-      if (dockDistance) dockDistance.textContent = formatDistance(state.meeting?.distanceMeters);
-      if (dockPad) dockPad.textContent = Number(state.scratchpad?.sequence || 0).toLocaleString();
+      // Mobile navigation intentionally stays quiet; live context remains in the header.
     }
 
     renderStreetViews(state) {

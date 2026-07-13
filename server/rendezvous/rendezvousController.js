@@ -138,6 +138,14 @@ function hasStreetLinks(panorama) {
   return Array.isArray(panorama?.links) && panorama.links.some(link => link?.pano);
 }
 
+function isShortPanoLoop(visitedPanos = []) {
+  const tail = visitedPanos.slice(-6);
+  if (tail.length < 4) return false;
+  const unique = new Set(tail);
+  if (unique.size <= 2) return true;
+  return tail.length >= 6 && tail.slice(2).every((panoId, index) => panoId === tail[index]);
+}
+
 function stripTelegramInternal(telegram) {
   if (!telegram) return telegram;
   const { roughPosition, ...publicTelegram } = telegram;
@@ -571,7 +579,28 @@ export class RendezvousController {
     let mode = 'search';
     let modelFallbackCause = null;
 
-    const candidates = await this.#candidatePanoramas(current.links || []);
+    const localCandidates = await this.#candidatePanoramas(current.links || []);
+    const unvisitedCandidates = localCandidates.filter(candidate =>
+      !(agent.visitedPanos || []).includes(candidate.panoId)
+    );
+    let candidates = unvisitedCandidates.length > 0 ? unvisitedCandidates : localCandidates;
+    let loopEscapePanoId = null;
+
+    if (unvisitedCandidates.length === 0 && isShortPanoLoop(agent.visitedPanos || [])) {
+      const escape = await this.#findNearbyStreetPanorama({
+        origin: agent.position,
+        avoidPanoIds: new Set(agent.visitedPanos || [])
+      });
+      if (escape) {
+        loopEscapePanoId = escape.panoId;
+        candidates = [{
+          panoId: escape.panoId,
+          position: { lat: escape.position.lat, lng: escape.position.lng },
+          heading: calculateBearing(agent.position, escape.position),
+          label: 'nearby public corner that breaks the loop'
+        }];
+      }
+    }
     if (candidates.length > 0) {
       const scratchpad = normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
       this.state.scratchpad = scratchpad;
@@ -637,6 +666,15 @@ export class RendezvousController {
       });
       agent.visitedPanos.push(agent.panoId);
       if (agent.visitedPanos.length > 120) agent.visitedPanos.shift();
+      if (loopEscapePanoId && agent.panoId === loopEscapePanoId) {
+        mode = 'loop_break';
+        this.#recordEvent('loop_recovery', {
+          agentId,
+          agentName: agent.name,
+          toPanoId: agent.panoId,
+          distanceMeters: Math.round(calculateDistance(previousPosition, agent.position))
+        });
+      }
       decisionReason = decisionReason || `${agent.name} follows the clearest unfamiliar public route.`;
     }
 
