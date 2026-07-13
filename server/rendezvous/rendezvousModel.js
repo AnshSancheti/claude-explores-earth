@@ -126,6 +126,7 @@ export function selectConvergencePolicyOption({ agent = {}, options = [], partne
     ? agent.recentNotes.filter(isExplicitLocalObservation)
     : [];
   const local = newestCorridor(optionLocalTexts) ||
+    newestCorridor([agent.currentRouteLabel]) ||
     newestCorridor([agent.recentMovement]) ||
     newestCorridor(localObservationTexts);
   if (!local || local.key === target.key) return null;
@@ -252,6 +253,9 @@ export class RendezvousModelService {
     const recentMovement = agent.recentMovement
       ? String(agent.recentMovement).slice(0, 160)
       : 'No recent movement yet.';
+    const currentRouteLabel = agent.currentRouteLabel
+      ? String(agent.currentRouteLabel).slice(0, 120)
+      : 'No previous visible route label yet.';
     const padInstruction = canEditPad
       ? `You have the physical scratchpad. You may add up to ${SCRATCHPAD_MAX_OPS_PER_TURN} operations. If your older visible ink is stale, start with {"type":"replaceMine"}; it removes only your visible marks from the current sheet and preserves ${partnerName}'s ink. ${forcePass ? `You have held it long enough and must pass it to ${partnerName} this turn.` : `Set passPad=true when the marks are useful enough to send to ${partnerName}.`}`
       : `You do not have the physical scratchpad right now (${padStatus}). You may remember the last version you saw, but padOperations must be empty and passPad must be false.`;
@@ -298,7 +302,7 @@ Return only JSON:
     const userContent = [
       {
         type: 'text',
-        text: `These are the routes visible from your current panorama. Image 1 is the last scratchpad version you personally saw; the remaining images correspond to options 0 through ${options.length - 1} in order.\n\n${optionLines}\n\nYour private field memory:\n${privateMemory}\n\nYour recent movement into this view:\n- ${recentMovement}\n\nAccessibility readout of the exact text visibly written in ${partnerName}'s ink:\n${partnerInkTranscript}\n\nScratchpad status: ${padStatus}`
+        text: `These are the routes visible from your current panorama. Image 1 is the last scratchpad version you personally saw; the remaining images correspond to options 0 through ${options.length - 1} in order.\n\n${optionLines}\n\nYour private field memory:\n${privateMemory}\n\nYour recent movement into this view:\n- ${recentMovement}\n\nYour own last selected visible route label:\n- ${currentRouteLabel}\n\nAccessibility readout of the exact text visibly written in ${partnerName}'s ink:\n${partnerInkTranscript}\n\nScratchpad status: ${padStatus}`
       },
       {
         type: 'image_url',
