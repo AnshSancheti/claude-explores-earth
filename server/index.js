@@ -2276,6 +2276,7 @@ server.listen(PORT, HOST, async () => {
 
 // Graceful shutdown handling
 let shutdownInProgress = false;
+const SHUTDOWN_DEADLINE_MS = 20_000;
 async function gracefulShutdown(signal) {
   if (shutdownInProgress) {
     console.log(`${signal} received while shutdown is already in progress.`);
@@ -2284,12 +2285,18 @@ async function gracefulShutdown(signal) {
   shutdownInProgress = true;
 
   console.log(`${signal} received, saving state and shutting down...`);
+  const deadline = setTimeout(() => {
+    console.error(`Shutdown exceeded ${SHUTDOWN_DEADLINE_MS}ms; forcing exit.`);
+    process.exit(1);
+  }, SHUTDOWN_DEADLINE_MS);
+
   if (rendezvous) {
     await rendezvous.shutdown().catch(error => {
       console.error('Rendezvous shutdown failed:', error);
     });
   }
   const stopResult = await globalExploration.shutdown();
+  clearTimeout(deadline);
   process.exit(stopResult?.error ? 1 : 0);
 }
 
