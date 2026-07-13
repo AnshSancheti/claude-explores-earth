@@ -561,6 +561,102 @@ test('model decision does not duplicate own local text when current own ink alre
   assert.equal(result.padOperations.length, 0);
 });
 
+test('model decision appends policy local text after replaceMine because old own ink will not survive', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{ message: { content: JSON.stringify({
+              selectedIndex: 1,
+              reasoning: 'I replace my stale marks with a cleaner motion cue.',
+              padOperations: [
+                { type: 'replaceMine' },
+                { type: 'arrow', from: { x: 0.2, y: 0.8 }, to: { x: 0.6, y: 0.25 } }
+              ],
+              passPad: false
+            }) } }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'ada',
+      name: 'Ada',
+      visitedPanos: [],
+      currentRouteLabel: 'Ave of the Americas'
+    },
+    partnerName: 'Theo',
+    options: [
+      { panoId: 'south-avenue', heading: 209, label: 'Ave of the Americas' },
+      { panoId: 'north-avenue', heading: 29, label: 'Ave of the Americas' },
+      { panoId: 'street-east', heading: 135, label: 'W 18th St' }
+    ],
+    screenshots: [Buffer.from('south'), Buffer.from('north'), Buffer.from('east')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: true,
+    padStatus: 'in your hands',
+    ownPadText: ['18TH ST'],
+    partnerPadText: ['W 14th']
+  });
+
+  assert.equal(result.selectedIndex, 0);
+  assert.equal(result.passPad, true);
+  assert.deepEqual(result.padOperations.map(operation => operation.type), ['replaceMine', 'arrow', 'text']);
+  assert.equal(result.padOperations[2].text, '18TH ST');
+});
+
+test('model decision does not duplicate policy local text when outgoing replacement already contains canonical label', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{ message: { content: JSON.stringify({
+              selectedIndex: 1,
+              reasoning: 'I replace my marks and keep the current street label.',
+              padOperations: [
+                { type: 'replaceMine' },
+                { type: 'text', text: 'W 18th St', at: { x: 0.2, y: 0.7 } }
+              ],
+              passPad: false
+            }) } }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'ada',
+      name: 'Ada',
+      visitedPanos: [],
+      currentRouteLabel: 'Ave of the Americas'
+    },
+    partnerName: 'Theo',
+    options: [
+      { panoId: 'south-avenue', heading: 209, label: 'Ave of the Americas' },
+      { panoId: 'north-avenue', heading: 29, label: 'Ave of the Americas' },
+      { panoId: 'street-east', heading: 135, label: 'W 18th St' }
+    ],
+    screenshots: [Buffer.from('south'), Buffer.from('north'), Buffer.from('east')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: true,
+    padStatus: 'in your hands',
+    ownPadText: ['18TH ST'],
+    partnerPadText: ['W 14th']
+  });
+
+  assert.equal(result.selectedIndex, 0);
+  assert.equal(result.padOperations.length, 2);
+  assert.equal(result.padOperations.filter(operation => operation.type === 'text').length, 1);
+  assert.equal(result.padOperations[1].text, 'W 18th St');
+});
+
 test('model decision does not add policy local text when sheet cannot be edited', async () => {
   const client = {
     chat: {
