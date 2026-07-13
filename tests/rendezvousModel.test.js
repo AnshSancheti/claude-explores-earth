@@ -195,7 +195,7 @@ test('convergence policy returns null when no available connector matches the ne
   assert.equal(policy, null);
 });
 
-test('convergence policy prefers an unvisited matching connector over a visited one', () => {
+test('convergence policy makes a geometrically better visited connector lose to a valid unvisited one', () => {
   const policy = selectConvergencePolicyOption({
     agent: {
       visitedPanos: ['visited-south'],
@@ -204,7 +204,7 @@ test('convergence policy prefers an unvisited matching connector over a visited 
     partnerPadText: ['W HOUSTON ST'],
     options: [
       { panoId: 'visited-south', heading: 178, label: '9th Ave south' },
-      { panoId: 'fresh-south', heading: 190, label: '8th Ave south' },
+      { panoId: 'fresh-southwest', heading: 235, label: 'public street southwest' },
       { panoId: 'north-option', heading: 0, label: '9th Ave north' }
     ]
   });

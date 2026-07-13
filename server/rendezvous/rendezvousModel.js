@@ -105,15 +105,14 @@ function isExplicitLocalObservation(value) {
   return /\b(I AM|I'M|I CAN SEE|I SEE|CURRENT|VISIBLE|THIS PANORAMA|THIS VIEW|THIS BLOCK|MY CORNER|MY STREET)\b/.test(text);
 }
 
-function optionDirectionScore(option, desiredHeading, { visited = false } = {}) {
+function optionDirectionScore(option, desiredHeading) {
   const heading = Number(option?.heading);
   if (!Number.isFinite(heading)) return Infinity;
   const delta = headingDelta(heading, desiredHeading);
   const label = normalizeStreetText(option?.label);
   const avenueBonus = /\b(AVE|AVENUE|BROADWAY|UNIVERSITY PL|GREENWICH|VARICK|7TH|8TH|9TH|6TH|5TH)\b/.test(label) ? 8 : 0;
   const publicStreetBonus = /\b(ST|AVE|AVENUE|BROADWAY|PLACE|PL)\b/.test(label) ? 4 : 0;
-  const visitedPenalty = visited ? 12 : 0;
-  return delta - avenueBonus - publicStreetBonus + visitedPenalty;
+  return delta - avenueBonus - publicStreetBonus;
 }
 
 export function selectConvergencePolicyOption({ agent = {}, options = [], partnerPadText = [] } = {}) {
@@ -136,15 +135,16 @@ export function selectConvergencePolicyOption({ agent = {}, options = [], partne
 
   const desiredHeading = rankDelta > 0 ? 0 : 180;
   const visitedPanos = new Set(Array.isArray(agent.visitedPanos) ? agent.visitedPanos : []);
-  const scored = options
+  const validCandidates = options
     .map((option, index) => ({
       index,
-      score: optionDirectionScore(option, desiredHeading, {
-        visited: visitedPanos.has(option?.panoId)
-      }),
+      visited: visitedPanos.has(option?.panoId),
+      score: optionDirectionScore(option, desiredHeading),
       delta: headingDelta(option?.heading, desiredHeading)
     }))
-    .filter(item => Number.isFinite(item.score) && item.delta <= 75)
+    .filter(item => Number.isFinite(item.score) && item.delta <= 75);
+  const unvisitedCandidates = validCandidates.filter(item => !item.visited);
+  const scored = (unvisitedCandidates.length > 0 ? unvisitedCandidates : validCandidates)
     .sort((a, b) => a.score - b.score || a.index - b.index);
 
   if (!scored[0]) return null;
