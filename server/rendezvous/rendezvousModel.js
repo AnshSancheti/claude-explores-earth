@@ -27,6 +27,135 @@ function compassDirection(heading) {
   return directions[Math.round(normalized / 45) % directions.length];
 }
 
+function headingDelta(a, b) {
+  const normalizedA = ((Number(a) || 0) % 360 + 360) % 360;
+  const normalizedB = ((Number(b) || 0) % 360 + 360) % 360;
+  const delta = Math.abs(normalizedA - normalizedB);
+  return Math.min(delta, 360 - delta);
+}
+
+function normalizeStreetText(value) {
+  return String(value || '')
+    .replace(/\b(WEST)\b/gi, 'W')
+    .replace(/\b(EAST)\b/gi, 'E')
+    .replace(/\b(STREET)\b/gi, 'ST')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
+}
+
+function corridorFromText(value) {
+  const text = normalizeStreetText(value);
+  if (!text) return null;
+  if (/\b(BROOKLYN|QUEENS|BRONX|STATEN ISLAND|NEW JERSEY|JERSEY CITY|HOBOKEN|OAKLAND|CHICAGO)\b/.test(text)) {
+    return null;
+  }
+
+  const numbered = text.match(/\b(?:W|E)?\s*(\d{1,3})(?:ST|ND|RD|TH)?\s+ST\b/);
+  if (numbered) {
+    const number = Number(numbered[1]);
+    if (Number.isFinite(number)) {
+      return {
+        key: `${number} ST`,
+        label: `${number}${number === 1 ? 'ST' : number === 2 ? 'ND' : number === 3 ? 'RD' : 'TH'} ST`,
+        northRank: number
+      };
+    }
+  }
+
+  const villageRanks = [
+    ['CANAL', -6],
+    ['SPRING', -5],
+    ['PRINCE', -4],
+    ['BLEECKER', -2],
+    ['CARMINE', -1],
+    ['HOUSTON', 0],
+    ['GREENWICH VILLAGE', 0],
+    ['WASHINGTON SQ', 1],
+    ['WASHINGTON SQUARE', 1],
+    ['UNION SQ', 14],
+    ['UNION SQUARE', 14]
+  ];
+  const match = villageRanks.find(([name]) => text.includes(name));
+  if (match) {
+    return {
+      key: match[0],
+      label: match[0],
+      northRank: match[1]
+    };
+  }
+
+  return null;
+}
+
+function newestCorridor(texts = []) {
+  for (const text of [...texts].reverse()) {
+    const corridor = corridorFromText(text);
+    if (corridor) return corridor;
+  }
+  return null;
+}
+
+function isExplicitLocalObservation(value) {
+  const text = normalizeStreetText(value);
+  if (!text) return false;
+  if (/\b(FRIEND|PARTNER|THEO|ADA|INK|ROUTE COMMAND|AVAILABLE|CONNECTION|CHOOSE|TARGET)\b/.test(text)) {
+    return false;
+  }
+  return /\b(I AM|I'M|I CAN SEE|I SEE|CURRENT|VISIBLE|THIS PANORAMA|THIS VIEW|THIS BLOCK|MY CORNER|MY STREET)\b/.test(text);
+}
+
+function optionDirectionScore(option, desiredHeading) {
+  const heading = Number(option?.heading);
+  if (!Number.isFinite(heading)) return Infinity;
+  const delta = headingDelta(heading, desiredHeading);
+  const label = normalizeStreetText(option?.label);
+  const avenueBonus = /\b(AVE|AVENUE|BROADWAY|UNIVERSITY PL|GREENWICH|VARICK|7TH|8TH|9TH|6TH|5TH)\b/.test(label) ? 8 : 0;
+  const publicStreetBonus = /\b(ST|AVE|AVENUE|BROADWAY|PLACE|PL)\b/.test(label) ? 4 : 0;
+  return delta - avenueBonus - publicStreetBonus;
+}
+
+export function selectConvergencePolicyOption({ agent = {}, options = [], partnerPadText = [] } = {}) {
+  if (!Array.isArray(options) || options.length === 0) return null;
+
+  const target = newestCorridor(partnerPadText);
+  if (!target) return null;
+
+  const optionLocalTexts = options.map(option => option?.label);
+  const localObservationTexts = Array.isArray(agent.recentNotes)
+    ? agent.recentNotes.filter(isExplicitLocalObservation)
+    : [];
+  const local = newestCorridor(optionLocalTexts) ||
+    newestCorridor([agent.recentMovement]) ||
+    newestCorridor(localObservationTexts);
+  if (!local || local.key === target.key) return null;
+
+  const rankDelta = target.northRank - local.northRank;
+  if (!Number.isFinite(rankDelta) || Math.abs(rankDelta) < 1) return null;
+
+  const desiredHeading = rankDelta > 0 ? 0 : 180;
+  const visitedPanos = new Set(Array.isArray(agent.visitedPanos) ? agent.visitedPanos : []);
+  const validCandidates = options
+    .map((option, index) => ({
+      index,
+      visited: visitedPanos.has(option?.panoId),
+      score: optionDirectionScore(option, desiredHeading),
+      delta: headingDelta(option?.heading, desiredHeading)
+    }))
+    .filter(item => Number.isFinite(item.score) && item.delta <= 75);
+  const unvisitedCandidates = validCandidates.filter(item => !item.visited);
+  const scored = (unvisitedCandidates.length > 0 ? unvisitedCandidates : validCandidates)
+    .sort((a, b) => a.score - b.score || a.index - b.index);
+
+  if (!scored[0]) return null;
+  return {
+    selectedIndex: scored[0].index,
+    desiredDirection: desiredHeading === 0 ? 'north' : 'south',
+    target: target.label,
+    local: local.label
+  };
+}
+
 function fallbackDecision(options, visitedPanos, cause, { canEditPad = false, forcePass = false } = {}) {
   const unvisitedIndex = options.findIndex(option => !visitedPanos.includes(option.panoId));
   const selectedIndex = unvisitedIndex >= 0 ? unvisitedIndex : 0;
@@ -56,6 +185,16 @@ function sanitizeDecision(raw, optionCount, { canEditPad, forcePass }) {
       : [],
     passPad: canEditPad && (forcePass || raw?.passPad === true),
     fallbackCause: null
+  };
+}
+
+function applyConvergencePolicy(decision, policy) {
+  if (!policy || !Number.isFinite(policy.selectedIndex)) return decision;
+  if (decision.selectedIndex === policy.selectedIndex) return decision;
+  return {
+    ...decision,
+    selectedIndex: policy.selectedIndex,
+    reasoning: `I treat my friend's ${policy.target} ink as their own observed place, not a route command, so from ${policy.local} I choose the available ${policy.desiredDirection} connection.`
   };
 }
 
@@ -133,7 +272,7 @@ Choose one visible public route. Avoid indoor shops, private interiors, dead end
 
 Treat this as a practical search between friends sharing one real piece of paper. Make the sheet read like a compact map or symbol composition, not a transcript. Your marks should communicate your own currently observed intersection, street, or landmark, plus your own recent movement into this view. Do not use the sheet to tell ${partnerName} where to go, restate a shared target, copy ${partnerName}'s ink as your own claim, or write route advice. A concrete place your friend marked outranks generic exploration when choosing where you walk, but your new ink should remain self-evidence grounded in your personal Street View observations. Do not merely repeat a strategy such as "unfamiliar route." Prefer a stable street name, intersection, landmark symbol, or recent-movement sketch that helps the two of you infer each other's trails.
 
-Google headings are compass bearings measured clockwise: 0° is north, 90° east, 180° south, and 270° west. Each option includes the computed compass word; trust it. Never describe or select a bearing as though it points in a different direction. Before choosing, identify the newest useful place your friend marked, infer its direction from your own visible street using Manhattan geography, then choose the route whose compass label best matches that direction. Walking back one block is valid when it is necessary to pursue your friend's clue. Only prioritize novelty when the sheet contains no actionable friend location.
+Google headings are compass bearings measured clockwise: 0° is north, 90° east, 180° south, and 270° west. Each option includes the computed compass word; trust it. Never describe or select a bearing as though it points in a different direction. Before choosing, identify the newest useful place your friend marked, infer its direction from your own visible street using Manhattan geography, then choose the route whose compass label best matches that direction. Your friend's ink is evidence of their own observed place or movement, never a route command for you to copy. If ${partnerName}'s ink names a different Manhattan corridor, stop generic exploration and take an available connecting avenue or cross-street whose compass direction moves toward that named corridor. Numbered Manhattan streets increase as you go north; W/E 14th St is north of Houston St, and Houston / Carmine / Bleecker / Prince / Greenwich Village corridors are south of 14th St. So from W 14th toward a friend's W Houston mark, choose a southbound connection; from W Houston or Carmine toward a friend's W 14th mark, choose a northbound connection. Walking back one block is valid when it is necessary to pursue your friend's clue. Only prioritize novelty when the sheet contains no actionable friend location.
 
 ${padInstruction}
 
@@ -203,7 +342,9 @@ Return only JSON:
           throw new Error(`Rendezvous model returned blank content (${detail})`);
         }
         const raw = parseJsonContent(content);
-        return sanitizeDecision(raw, options.length, { canEditPad, forcePass });
+        const decision = sanitizeDecision(raw, options.length, { canEditPad, forcePass });
+        const policy = selectConvergencePolicyOption({ agent, options, partnerPadText });
+        return applyConvergencePolicy(decision, policy);
       } catch (error) {
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
@@ -214,11 +355,13 @@ Return only JSON:
     }
 
     const status = lastError?.status ?? lastError?.response?.status;
-    return fallbackDecision(
+    const fallback = fallbackDecision(
       options,
       agent.visitedPanos || [],
       status ? `api_error_${status}` : 'model_error',
       { canEditPad, forcePass }
     );
+    const policy = selectConvergencePolicyOption({ agent, options, partnerPadText });
+    return applyConvergencePolicy(fallback, policy);
   }
 }
