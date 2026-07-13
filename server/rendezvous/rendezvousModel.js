@@ -289,14 +289,49 @@ function sanitizeDecision(raw, optionCount, { canEditPad, forcePass, agent, opti
   };
 }
 
-function applyConvergencePolicy(decision, policy) {
-  if (!policy || !Number.isFinite(policy.selectedIndex)) return decision;
-  if (decision.selectedIndex === policy.selectedIndex) return decision;
+function hasPlaceText(texts, label) {
+  const targetKey = placeKeyFromText(label);
+  if (!targetKey) return false;
+  return Array.isArray(texts) && texts.some(text => placeKeyFromText(text) === targetKey);
+}
+
+function decisionHasPlaceText(decision, label) {
+  const targetKey = placeKeyFromText(label);
+  if (!targetKey) return false;
+  return (decision?.padOperations || [])
+    .some(operation => placeKeyFromText(operationTextValue(operation)) === targetKey);
+}
+
+function withPolicyLocalInk(decision, policy, { canEditPad = false, ownPadText = [] } = {}) {
+  if (!canEditPad || !policy?.local) return decision;
+  if (hasPlaceText(ownPadText, policy.local) || decisionHasPlaceText(decision, policy.local)) return decision;
+  if ((decision.padOperations || []).length >= SCRATCHPAD_MAX_OPS_PER_TURN) return decision;
   return {
+    ...decision,
+    padOperations: [
+      ...(decision.padOperations || []),
+      {
+        type: 'text',
+        text: policy.local,
+        at: { x: 0.12, y: 0.86 },
+        size: 20,
+        rotation: 0
+      }
+    ],
+    passPad: true
+  };
+}
+
+function applyConvergencePolicy(decision, policy, { canEditPad = false, ownPadText = [] } = {}) {
+  if (!policy || !Number.isFinite(policy.selectedIndex)) return decision;
+  if (decision.selectedIndex === policy.selectedIndex) {
+    return withPolicyLocalInk(decision, policy, { canEditPad, ownPadText });
+  }
+  return withPolicyLocalInk({
     ...decision,
     selectedIndex: policy.selectedIndex,
     reasoning: `I treat my friend's ${policy.target} ink as their own observed place, not a route command, so from ${policy.local} I choose the available ${policy.desiredDirection} connection.`
-  };
+  }, policy, { canEditPad, ownPadText });
 }
 
 export class RendezvousModelService {
@@ -458,7 +493,7 @@ Return only JSON:
           partnerPadText
         });
         const policy = selectConvergencePolicyOption({ agent, options, partnerPadText, ownPadText });
-        return applyConvergencePolicy(decision, policy);
+        return applyConvergencePolicy(decision, policy, { canEditPad, ownPadText });
       } catch (error) {
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
@@ -476,6 +511,6 @@ Return only JSON:
       { canEditPad, forcePass }
     );
     const policy = selectConvergencePolicyOption({ agent, options, partnerPadText, ownPadText });
-    return applyConvergencePolicy(fallback, policy);
+    return applyConvergencePolicy(fallback, policy, { canEditPad, ownPadText });
   }
 }
