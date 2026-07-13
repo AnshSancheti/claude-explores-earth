@@ -90,6 +90,24 @@ function corridorFromText(value) {
   return null;
 }
 
+function hasConnectorRouteComponent(value) {
+  const text = normalizeStreetText(value)
+    .replace(/\b(AVENUE)\b/g, 'AVE')
+    .replace(/\b(PLACE)\b/g, 'PL')
+    .replace(/\bAVE\s+OF\s+THE\s+AMERICAS\b/g, '6TH AVE');
+  if (!text) return false;
+
+  const components = text
+    .split(/\s*(?:\/|&|\bAND\b|\bAT\b|\bCORNER OF\b|\bNEAR\b)\s*/i)
+    .map(component => component.trim())
+    .filter(Boolean);
+  const texts = components.length > 1 ? components : [text];
+  return texts.some(component =>
+    /\b(?:[1-9]|1[0-2])(?:ST|ND|RD|TH)?\s+AVE\b/.test(component) ||
+    /\b(?:AVE|BROADWAY|UNIVERSITY PL|GREENWICH|VARICK|7TH|8TH|9TH|6TH|5TH)\b/.test(component)
+  );
+}
+
 function newestCorridor(texts = []) {
   for (const text of [...texts].reverse()) {
     const corridor = corridorFromText(text);
@@ -179,7 +197,13 @@ export function selectConvergencePolicyOption({ agent = {}, options = [], partne
     }))
     .filter(item => {
       if (!Number.isFinite(item.score) || item.delta > 75) return false;
-      if (item.labelCorridor?.key === local.key && target.key !== local.key) return false;
+      if (
+        item.labelCorridor?.key === local.key &&
+        target.key !== local.key &&
+        !hasConnectorRouteComponent(options[item.index]?.label)
+      ) {
+        return false;
+      }
       return true;
     });
   const unvisitedCandidates = validCandidates.filter(item => !item.visited);

@@ -283,6 +283,40 @@ test('convergence policy rejects same-corridor W14 labels as connectors toward p
   assert.equal(policy, null);
 });
 
+test('convergence policy allows W14 slash 7th Ave intersection label as a connector', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      currentRouteLabel: 'W 14th St'
+    },
+    ownPadText: ['W14th'],
+    partnerPadText: ['W12TH ST'],
+    options: [
+      { panoId: 'intersection-south', heading: 178, label: 'W 14th St / 7th Ave' },
+      { panoId: 'pure-west', heading: 270, label: 'W 14th St' }
+    ]
+  });
+
+  assert.equal(policy.selectedIndex, 0);
+  assert.equal(policy.desiredDirection, 'south');
+});
+
+test('convergence policy allows 7th Ave ampersand W14 intersection label as a connector', () => {
+  const policy = selectConvergencePolicyOption({
+    agent: {
+      currentRouteLabel: 'W 14th St'
+    },
+    ownPadText: ['W14th'],
+    partnerPadText: ['W12TH ST'],
+    options: [
+      { panoId: 'intersection-south', heading: 182, label: '7th Ave & W 14th St' },
+      { panoId: 'pure-east', heading: 90, label: 'W 14th St' }
+    ]
+  });
+
+  assert.equal(policy.selectedIndex, 0);
+  assert.equal(policy.desiredDirection, 'south');
+});
+
 test('convergence policy still allows unlabeled and avenue connectors toward another corridor', () => {
   const policy = selectConvergencePolicyOption({
     agent: {
