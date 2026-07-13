@@ -35,6 +35,9 @@ function headingDelta(a, b) {
 }
 
 function finiteHeading(value) {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  if (typeof value === 'string' && value.trim() === '') return null;
   const heading = Number(value);
   if (!Number.isFinite(heading)) return null;
   return ((heading % 360) + 360) % 360;
@@ -55,14 +58,13 @@ function explicitHeadingsFromReasoning(reasoning) {
     .filter(heading => Number.isFinite(heading));
 }
 
-function reconcileDecisionWithVisibleHeading(decision, options) {
-  const statedHeadings = explicitHeadingsFromReasoning(decision?.reasoning);
-  if (statedHeadings.length === 0) return decision;
-
+function reconcileDecisionFromHeadings(decision, options, intendedHeadings) {
+  const headings = (intendedHeadings || []).map(finiteHeading).filter(heading => Number.isFinite(heading));
+  if (headings.length === 0) return decision;
   const selectedHeading = Number(options?.[decision.selectedIndex]?.heading);
   if (
     Number.isFinite(selectedHeading) &&
-    statedHeadings.some(statedHeading => finiteHeadingDelta(selectedHeading, statedHeading) <= 12)
+    headings.some(heading => finiteHeadingDelta(selectedHeading, heading) <= 12)
   ) {
     return decision;
   }
@@ -70,7 +72,7 @@ function reconcileDecisionWithVisibleHeading(decision, options) {
   const matching = (options || [])
     .map((option, index) => ({
       index,
-      delta: Math.min(...statedHeadings.map(statedHeading => finiteHeadingDelta(option?.heading, statedHeading)))
+      delta: Math.min(...headings.map(heading => finiteHeadingDelta(option?.heading, heading)))
     }))
     .filter(item => Number.isFinite(item.delta) && item.delta <= 12)
     .sort((a, b) => a.delta - b.delta || a.index - b.index);
@@ -80,6 +82,13 @@ function reconcileDecisionWithVisibleHeading(decision, options) {
     ...decision,
     selectedIndex: matching[0].index
   };
+}
+
+function reconcileDecisionWithVisibleHeading(decision, options) {
+  if (Number.isFinite(decision?.intendedHeading)) {
+    return reconcileDecisionFromHeadings(decision, options, [decision.intendedHeading]);
+  }
+  return reconcileDecisionFromHeadings(decision, options, explicitHeadingsFromReasoning(decision?.reasoning));
 }
 
 function normalizeStreetText(value) {
@@ -321,9 +330,11 @@ function sanitizeDecision(raw, optionCount, { canEditPad, forcePass, agent, opti
   const reasoning = typeof raw?.reasoning === 'string' && raw.reasoning.trim()
     ? raw.reasoning.trim().slice(0, 420)
     : 'I am testing the most legible public route and keeping my bearings.';
+  const intendedHeading = finiteHeading(raw?.intendedHeading);
 
   return {
     selectedIndex,
+    intendedHeading,
     reasoning,
     padOperations: canEditPad && Array.isArray(raw?.padOperations)
       ? filterPartnerEchoPadOperations(raw.padOperations.slice(0, SCRATCHPAD_MAX_OPS_PER_TURN), {
@@ -492,6 +503,7 @@ The sheet is finite. Use a few intentional primitives: street/intersection strok
 Return only JSON:
 {
   "selectedIndex": <0-${options.length - 1}>,
+  "intendedHeading": <numeric visible option heading degrees that matches the compass direction you actually intend from your reasoning; do not fill it merely by copying selectedIndex; use null if none>,
   "reasoning": "one concise first-person field note grounded in what is visible and what the pad suggests",
   "padOperations": [],
   "passPad": false
