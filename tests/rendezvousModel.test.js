@@ -422,6 +422,187 @@ test('model decision applies corridor convergence over generic exploration while
   assert.doesNotMatch(serializedRequest, /distanceToFriend|partnerPath|roughPosition|hidden-partner-pano|latitude|longitude|-?\d+\.\d{3,}/);
 });
 
+test('model decision reconciles selected index when reasoning names a different visible heading', async () => {
+  const requests = [];
+  const client = {
+    chat: {
+      completions: {
+        async create(request) {
+          requests.push(request);
+          return {
+            choices: [{ message: { content: JSON.stringify({
+              selectedIndex: 0,
+              reasoning: 'Option 0 shows SE toward W14th St (119°), matching the described direction and corridor.',
+              padOperations: [],
+              passPad: false
+            }) } }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'ada',
+      name: 'Ada',
+      visitedPanos: [],
+      recentNotes: [],
+      recentMovement: 'You most recently moved southeast into this panorama.',
+      currentRouteLabel: 'W 17th St',
+      distanceToFriend: 761,
+      partnerPath: ['hidden-partner-pano']
+    },
+    partnerName: 'Theo',
+    options: [
+      { panoId: 'live-nw-option', heading: 299.1241, label: 'W 17th St' },
+      { panoId: 'live-se-option', heading: 119.12415, label: 'W 17th St' }
+    ],
+    screenshots: [Buffer.from('nw'), Buffer.from('se')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: false,
+    padStatus: 'held by Theo',
+    ownPadText: ['W 17th St'],
+    partnerPadText: ['14TH ST']
+  });
+
+  assert.equal(result.selectedIndex, 1);
+  const serializedRequest = JSON.stringify(requests[0]);
+  assert.match(serializedRequest, /Option 0: heading 299 degrees/);
+  assert.match(serializedRequest, /Option 1: heading 119 degrees/);
+  assert.doesNotMatch(serializedRequest, /distanceToFriend|partnerPath|hidden-partner-pano|latitude|longitude|-?\d+\.\d{3,}/);
+});
+
+test('model decision keeps selected index when explicit heading already matches it', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{ message: { content: JSON.stringify({
+              selectedIndex: 0,
+              reasoning: 'I avoid the 119° backtrack and choose the 299° W17th branch.',
+              padOperations: [],
+              passPad: false
+            }) } }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'ada',
+      name: 'Ada',
+      visitedPanos: [],
+      recentNotes: [],
+      recentMovement: 'You most recently moved southeast into this panorama.',
+      currentRouteLabel: 'W 17th St'
+    },
+    partnerName: 'Theo',
+    options: [
+      { panoId: 'live-nw-option', heading: 299.1241, label: 'W 17th St' },
+      { panoId: 'live-se-option', heading: 119.12415, label: 'W 17th St' }
+    ],
+    screenshots: [Buffer.from('nw'), Buffer.from('se')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: false,
+    padStatus: 'held by Theo',
+    ownPadText: ['W 17th St'],
+    partnerPadText: ['14TH ST']
+  });
+
+  assert.equal(result.selectedIndex, 0);
+});
+
+test('model decision ignores missing and non-finite option headings during reconciliation', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{ message: { content: JSON.stringify({
+              selectedIndex: 0,
+              reasoning: 'The north choice at 0° is the clearest continuation.',
+              padOperations: [],
+              passPad: false
+            }) } }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'ada',
+      name: 'Ada',
+      visitedPanos: [],
+      recentNotes: [],
+      recentMovement: 'You most recently moved north into this panorama.',
+      currentRouteLabel: 'W 17th St'
+    },
+    partnerName: 'Theo',
+    options: [
+      { panoId: 'missing-heading', label: 'W 17th St' },
+      { panoId: 'nan-heading', heading: Number.NaN, label: 'W 17th St' },
+      { panoId: 'east-heading', heading: 91, label: 'W 17th St' }
+    ],
+    screenshots: [Buffer.from('missing'), Buffer.from('nan'), Buffer.from('east')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: false,
+    padStatus: 'held by Theo',
+    ownPadText: ['W 17th St'],
+    partnerPadText: ['14TH ST']
+  });
+
+  assert.equal(result.selectedIndex, 0);
+});
+
+test('model decision reconciles decimal headings across the 360-degree wrap', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{ message: { content: JSON.stringify({
+              selectedIndex: 0,
+              reasoning: 'The visible branch at 360.5° carries me north around the corner.',
+              padOperations: [],
+              passPad: false
+            }) } }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const result = await service.decide({
+    agent: {
+      id: 'theo',
+      name: 'Theo',
+      visitedPanos: [],
+      recentNotes: [],
+      recentMovement: 'You most recently moved northwest into this panorama.',
+      currentRouteLabel: 'W Houston St'
+    },
+    partnerName: 'Ada',
+    options: [
+      { panoId: 'west-option', heading: 270, label: 'W Houston St' },
+      { panoId: 'north-wrap-option', heading: 0.4, label: '6th Ave' }
+    ],
+    screenshots: [Buffer.from('west'), Buffer.from('north')],
+    scratchpadBuffer: Buffer.from('pad'),
+    canEditPad: false,
+    padStatus: 'held by Ada',
+    ownPadText: ['W Houston St'],
+    partnerPadText: []
+  });
+
+  assert.equal(result.selectedIndex, 1);
+});
+
 test('model decision sends Theo north from W Houston toward partner W 14th even if model picks east', async () => {
   const client = {
     chat: {
