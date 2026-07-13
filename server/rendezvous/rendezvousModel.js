@@ -112,7 +112,9 @@ This is a real cooperative search, not a riddle-writing exercise. The scratchpad
 
 Choose one visible public route. Avoid indoor shops, private interiors, dead ends, and immediate loops. Use your own observations, your private memory, and the last scratchpad you personally saw.
 
-Treat this as a practical search between friends. When you can read your street or intersection, put that concrete clue on the sheet. Interpret your friend's marks as actionable geography: move toward a location they identify, or clearly mark where you are headed so they can intercept you. Do not merely repeat a generic strategy such as "unfamiliar route." Prefer a stable street name, intersection, landmark, or directional sketch that helps the two of you converge.
+Treat this as a practical search between friends. When you can read your street or intersection, put that concrete clue on the sheet. Interpret your friend's marks as actionable geography: move toward a location they identify, or clearly mark where you are headed so they can intercept you. A concrete place your friend marked outranks generic exploration and your own older plan. Do not merely repeat a strategy such as "unfamiliar route." Prefer a stable street name, intersection, landmark, or directional sketch that helps the two of you converge.
+
+Google headings are compass bearings measured clockwise: 0° is north, 90° east, 180° south, and 270° west. Never describe a bearing with the wrong compass direction. Before choosing, identify the newest useful place your friend marked, infer its direction from your own visible street using Manhattan geography, then choose the route whose numeric bearing best matches that direction. Only prioritize novelty when the sheet contains no actionable friend location.
 
 ${padInstruction}
 
