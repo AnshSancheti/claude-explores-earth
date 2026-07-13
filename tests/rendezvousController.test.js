@@ -213,14 +213,11 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
       assert.equal(Object.hasOwn(call, 'distanceToFriend'), false);
       assert.equal(call.options.some(option => Object.hasOwn(option, 'distanceToFriend')), false);
       assert.equal(call.options.some(option => Object.hasOwn(option, 'position')), false);
-      if (call.options.some(option => !call.agent.visitedPanos.includes(option.panoId))) {
-        assert.equal(
-          call.options.every(option => !call.agent.visitedPanos.includes(option.panoId)),
-          true,
-          'visited back-links should be withheld while a progressive route exists'
-        );
-      }
     }
+    assert.ok(model.calls.some(call =>
+      call.options.some(option => call.agent.visitedPanos.includes(option.panoId)) &&
+      call.options.some(option => !call.agent.visitedPanos.includes(option.panoId))
+    ), 'agents should retain a deliberate backtracking option before a loop is established');
 
     const publicState = controller.getPublicState();
     const completedRunId = publicState.runId;

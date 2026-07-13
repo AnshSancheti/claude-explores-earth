@@ -583,22 +583,26 @@ export class RendezvousController {
     const unvisitedCandidates = localCandidates.filter(candidate =>
       !(agent.visitedPanos || []).includes(candidate.panoId)
     );
-    let candidates = unvisitedCandidates.length > 0 ? unvisitedCandidates : localCandidates;
+    let candidates = localCandidates;
     let loopEscapePanoId = null;
 
-    if (unvisitedCandidates.length === 0 && isShortPanoLoop(agent.visitedPanos || [])) {
-      const escape = await this.#findNearbyStreetPanorama({
-        origin: agent.position,
-        avoidPanoIds: new Set(agent.visitedPanos || [])
-      });
-      if (escape) {
-        loopEscapePanoId = escape.panoId;
-        candidates = [{
-          panoId: escape.panoId,
-          position: { lat: escape.position.lat, lng: escape.position.lng },
-          heading: calculateBearing(agent.position, escape.position),
-          label: 'nearby public corner that breaks the loop'
-        }];
+    if (isShortPanoLoop(agent.visitedPanos || [])) {
+      if (unvisitedCandidates.length > 0) {
+        candidates = unvisitedCandidates;
+      } else {
+        const escape = await this.#findNearbyStreetPanorama({
+          origin: agent.position,
+          avoidPanoIds: new Set(agent.visitedPanos || [])
+        });
+        if (escape) {
+          loopEscapePanoId = escape.panoId;
+          candidates = [{
+            panoId: escape.panoId,
+            position: { lat: escape.position.lat, lng: escape.position.lng },
+            heading: calculateBearing(agent.position, escape.position),
+            label: 'nearby public corner that breaks the loop'
+          }];
+        }
       }
     }
     if (candidates.length > 0) {

@@ -21,6 +21,12 @@ function parseJsonContent(rawContent) {
   }
 }
 
+function compassDirection(heading) {
+  const directions = ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'];
+  const normalized = ((Number(heading) || 0) % 360 + 360) % 360;
+  return directions[Math.round(normalized / 45) % directions.length];
+}
+
 function fallbackDecision(options, visitedPanos, cause, { canEditPad = false, forcePass = false } = {}) {
   const unvisitedIndex = options.findIndex(option => !visitedPanos.includes(option.panoId));
   const selectedIndex = unvisitedIndex >= 0 ? unvisitedIndex : 0;
@@ -95,7 +101,8 @@ export class RendezvousModelService {
     const optionLines = options.map((option, index) => {
       const visited = agent.visitedPanos?.includes(option.panoId) ? 'walked before' : 'unfamiliar';
       const label = option.label ? `; Street View label: ${option.label}` : '';
-      return `Option ${index}: heading ${Math.round(Number(option.heading) || 0)} degrees; ${visited}${label}`;
+      const heading = Math.round(Number(option.heading) || 0);
+      return `Option ${index}: heading ${heading} degrees (${compassDirection(heading)}); ${visited}${label}`;
     }).join('\n');
     const privateMemory = (agent.recentNotes || [])
       .filter(note => !/model (?:is|was) unavailable/i.test(note))
@@ -114,7 +121,7 @@ Choose one visible public route. Avoid indoor shops, private interiors, dead end
 
 Treat this as a practical search between friends. When you can read your street or intersection, put that concrete clue on the sheet. Interpret your friend's marks as actionable geography: move toward a location they identify, or clearly mark where you are headed so they can intercept you. A concrete place your friend marked outranks generic exploration and your own older plan. Do not merely repeat a strategy such as "unfamiliar route." Prefer a stable street name, intersection, landmark, or directional sketch that helps the two of you converge.
 
-Google headings are compass bearings measured clockwise: 0° is north, 90° east, 180° south, and 270° west. Never describe a bearing with the wrong compass direction. Before choosing, identify the newest useful place your friend marked, infer its direction from your own visible street using Manhattan geography, then choose the route whose numeric bearing best matches that direction. Only prioritize novelty when the sheet contains no actionable friend location.
+Google headings are compass bearings measured clockwise: 0° is north, 90° east, 180° south, and 270° west. Each option includes the computed compass word; trust it. Never describe or select a bearing as though it points in a different direction. Before choosing, identify the newest useful place your friend marked, infer its direction from your own visible street using Manhattan geography, then choose the route whose compass label best matches that direction. Walking back one block is valid when it is necessary to pursue your friend's clue. Only prioritize novelty when the sheet contains no actionable friend location.
 
 ${padInstruction}
 
