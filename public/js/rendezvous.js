@@ -49,6 +49,40 @@
     };
   }
 
+  function scratchpadLandmarkSvg(operation, className, color, width) {
+    const center = svgPoint(operation.center);
+    const radius = Math.max(12, Math.min(78, svgNumber(operation.radius, 0.055) * 768));
+    const symbol = operation.symbol || 'dot';
+    if (symbol === 'dot') {
+      return `<circle class="rv-scratch-stroke${className}" cx="${center.x}" cy="${center.y}" r="${radius * 0.55}" fill="${escapeHtml(color)}" stroke="${escapeHtml(color)}" stroke-width="${width}" />`;
+    }
+    if (symbol === 'square') {
+      const size = radius * 1.25;
+      return `<rect class="rv-scratch-stroke${className}" x="${center.x - size / 2}" y="${center.y - size / 2}" width="${size}" height="${size}" stroke="${escapeHtml(color)}" stroke-width="${width}" />`;
+    }
+    if (symbol === 'park') {
+      return [
+        `<circle class="rv-scratch-stroke${className}" cx="${center.x}" cy="${center.y - radius * 0.18}" r="${radius * 0.52}" stroke="${escapeHtml(color)}" stroke-width="${width}" />`,
+        `<path class="rv-scratch-stroke${className}" pathLength="1" d="M ${center.x} ${center.y + radius * 0.3} L ${center.x} ${center.y + radius * 0.85} M ${center.x - radius * 0.32} ${center.y + radius * 0.85} L ${center.x + radius * 0.32} ${center.y + radius * 0.85}" stroke="${escapeHtml(color)}" stroke-width="${width}" />`
+      ].join('');
+    }
+    if (symbol === 'star') {
+      const points = Array.from({ length: 10 }, (_, index) => {
+        const angle = -Math.PI / 2 + index * Math.PI / 5;
+        const pointRadius = index % 2 === 0 ? radius * 0.72 : radius * 0.32;
+        return `${center.x + Math.cos(angle) * pointRadius} ${center.y + Math.sin(angle) * pointRadius}`;
+      }).join(' L ');
+      return `<path class="rv-scratch-stroke${className}" pathLength="1" d="M ${points} Z" stroke="${escapeHtml(color)}" stroke-width="${width}" />`;
+    }
+    const points = [
+      `${center.x} ${center.y - radius}`,
+      `${center.x + radius} ${center.y}`,
+      `${center.x} ${center.y + radius}`,
+      `${center.x - radius} ${center.y}`
+    ].join(' L ');
+    return `<path class="rv-scratch-stroke${className}" pathLength="1" d="M ${points} Z" stroke="${escapeHtml(color)}" stroke-width="${width}" />`;
+  }
+
   function scratchpadOperationSvg(operation, isNew) {
     const className = isNew ? ' is-new' : '';
     const color = operation.author === 'theo' ? '#087fa8' : '#24211d';
@@ -68,16 +102,10 @@
     if (operation.type === 'landmark') {
       const center = svgPoint(operation.center);
       const radius = Math.max(12, Math.min(78, svgNumber(operation.radius, 0.055) * 768));
-      const points = [
-        `${center.x} ${center.y - radius}`,
-        `${center.x + radius} ${center.y}`,
-        `${center.x} ${center.y + radius}`,
-        `${center.x - radius} ${center.y}`
-      ].join(' L ');
       const label = operation.label
         ? `<text class="rv-scratch-text${className}" x="${center.x + radius + 8}" y="${center.y + 5}" fill="${escapeHtml(color)}" font-size="22">${escapeHtml(operation.label)}</text>`
         : '';
-      return `<path class="rv-scratch-stroke${className}" pathLength="1" d="M ${points} Z" stroke="${escapeHtml(color)}" stroke-width="${width}" />${label}`;
+      return `${scratchpadLandmarkSvg(operation, className, color, width)}${label}`;
     }
     if (operation.type === 'stroke') {
       const points = (operation.points || []).map(svgPoint);

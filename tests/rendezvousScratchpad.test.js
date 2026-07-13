@@ -4,8 +4,10 @@ import {
   appendScratchpadOperations,
   createScratchpad,
   currentScratchpadOperations,
+  landmarkSymbolSvg,
   normalizeScratchpad,
   renderScratchpad,
+  SCRATCHPAD_MAX_OPERATIONS,
   SCRATCHPAD_MAX_CURRENT_OPS_PER_AUTHOR,
   SCRATCHPAD_MAX_OPS_PER_TURN
 } from '../server/rendezvous/scratchpad.js';
@@ -49,6 +51,42 @@ test('legacy notebook state normalizes to a blank versioned sheet', () => {
   assert.equal(scratchpad.owner, 'ada');
   assert.equal(scratchpad.sequence, 0);
   assert.deepEqual(scratchpad.operations, []);
+});
+
+test('v2 migration preserves legacy route text in audit while marking it non-current', () => {
+  const scratchpad = normalizeScratchpad({
+    version: 2,
+    owner: 'theo',
+    sequence: 2,
+    operations: [
+      {
+        id: 'legacy-route-text',
+        type: 'text',
+        author: 'ada',
+        text: 'GO NW TOWARD UNIV PL',
+        at: { x: 0.2, y: 0.2 },
+        size: 28,
+        sequence: 1,
+        turn: 12
+      },
+      {
+        id: 'legacy-place-text',
+        type: 'text',
+        author: 'theo',
+        text: 'W HOUSTON',
+        at: { x: 0.5, y: 0.5 },
+        size: 28,
+        sequence: 2,
+        turn: 13
+      }
+    ]
+  });
+
+  const routeText = scratchpad.operations.find(operation => operation.id === 'legacy-route-text');
+  assert.equal(routeText.text, 'GO NW TOWARD UNIV PL');
+  assert.equal(routeText.supersededReason, 'legacy_directive_text');
+  assert.equal(currentScratchpadOperations(scratchpad).some(operation => operation.text === 'GO NW TOWARD UNIV PL'), false);
+  assert.equal(currentScratchpadOperations(scratchpad).some(operation => operation.text === 'W HOUSTON'), true);
 });
 
 test('replaceMine revises only the current holder author while preserving friend ink and audit history', () => {
@@ -134,6 +172,67 @@ test('crowded legacy sheets normalize to a bounded current composition at each s
 
   const image = await renderScratchpad(scratchpad);
   assert.equal(image.subarray(1, 4).toString(), 'PNG');
+});
+
+test('scratchpad audit retention keeps a bounded sequence suffix with archive metadata', () => {
+  const rawOperations = Array.from({ length: SCRATCHPAD_MAX_OPERATIONS + 15 }, (_, index) => ({
+    id: `audit-${index + 1}`,
+    type: 'line',
+    author: index % 2 === 0 ? 'ada' : 'theo',
+    from: { x: 0.05, y: (index % 20) / 25 },
+    to: { x: 0.95, y: (index % 20) / 25 + 0.02 },
+    width: 3,
+    sequence: index + 1,
+    turn: index + 1
+  }));
+
+  const scratchpad = normalizeScratchpad({
+    version: 2,
+    owner: 'ada',
+    sequence: rawOperations.length,
+    operations: rawOperations
+  });
+
+  assert.equal(scratchpad.operations.length, SCRATCHPAD_MAX_OPERATIONS);
+  assert.equal(scratchpad.sequence, SCRATCHPAD_MAX_OPERATIONS + 15);
+  assert.equal(scratchpad.archivedOperationCount, 15);
+  assert.equal(scratchpad.archivedThroughSequence, 15);
+  assert.equal(scratchpad.earliestRetainedSequence, 16);
+  assert.equal(scratchpad.operations[0].sequence, 16);
+  assert.equal(scratchpad.operations.at(-1).sequence, SCRATCHPAD_MAX_OPERATIONS + 15);
+  assert.deepEqual(currentScratchpadOperations(scratchpad, { throughSequence: 10 }), []);
+});
+
+test('landmark symbol renderer emits distinct glyphs for symbol variants', () => {
+  const base = {
+    type: 'landmark',
+    author: 'ada',
+    color: '#24211d',
+    center: { x: 0.5, y: 0.5 },
+    radius: 0.055,
+    width: 4
+  };
+  const variants = Object.fromEntries(['dot', 'star', 'park', 'station', 'square'].map(symbol => [
+    symbol,
+    landmarkSymbolSvg({ ...base, symbol })
+  ]));
+
+  assert.match(variants.dot, /<circle/);
+  assert.match(variants.star, /<path/);
+  assert.match(variants.park, /<circle[\s\S]*<path/);
+  assert.match(variants.station, /<path/);
+  assert.match(variants.square, /<rect/);
+  assert.equal(new Set(Object.values(variants)).size, 5);
+});
+
+test('frontend scratchpad renderer includes distinct landmark symbol branches', async () => {
+  const source = await import('node:fs/promises').then(fs =>
+    fs.readFile(new URL('../public/js/rendezvous.js', import.meta.url), 'utf8')
+  );
+  for (const symbol of ['dot', 'star', 'park', 'square']) {
+    assert.match(source, new RegExp(`symbol === '${symbol}'`));
+  }
+  assert.match(source, /scratchpadLandmarkSvg/);
 });
 
 test('scratchpad text rejects coordinate-like and hidden-distance labels', () => {
