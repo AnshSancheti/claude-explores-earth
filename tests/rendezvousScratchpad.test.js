@@ -180,5 +180,7 @@ test('frontend scratchpad renderer includes the scene composer and pencil treatm
   assert.match(source, /trafficLight/);
   assert.match(source, /rvScratchpadImage/);
   assert.match(source, /currentMessage/);
+  assert.match(source, /agent\?\.lastThought\?\.reasoning/);
+  assert.doesNotMatch(source, /agent\?\.lastDecision\?\.reasoning/);
   assert.doesNotMatch(source, /latest note/);
 });

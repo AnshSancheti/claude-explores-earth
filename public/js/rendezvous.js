@@ -30,11 +30,8 @@
   }
 
   function latestNote(agent) {
-    if (agent?.lastDecision?.reasoning) return agent.lastDecision.reasoning;
-    if (Array.isArray(agent?.recentNotes) && agent.recentNotes.length > 0) {
-      return agent.recentNotes.at(-1);
-    }
-    return 'Waiting for the first move.';
+    if (agent?.lastThought?.reasoning) return agent.lastThought.reasoning;
+    return 'Waiting for the first choice.';
   }
 
   function svgNumber(value, fallback = 0) {

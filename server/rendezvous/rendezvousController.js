@@ -98,6 +98,7 @@ const START_PAIRS = Object.freeze([
 const STREET_SEARCH_RADII_METERS = Object.freeze([18, 36, 72]);
 const STREET_SEARCH_BEARINGS = Object.freeze([0, 45, 90, 135, 180, 225, 270, 315]);
 const LEGACY_RENDEZVOUS_HINT_PATTERN = /rough wire|last telegram|telegrams said|telegram puts|somewhere around|nearest guidebook|wire before|meeting place|Bryant Park|Grand Central|Union Square|Washington Square|Columbus Circle/i;
+const MODEL_THOUGHT_MODES = new Set(['decision', 'decision_wait', 'retrace']);
 
 function parseIntOr(value, fallback) {
   const parsed = parseInt(value, 10);
@@ -208,6 +209,46 @@ function sanitizeLegacyNotebookText(text, fallback) {
   return LEGACY_RENDEZVOUS_HINT_PATTERN.test(text) ? fallback : text;
 }
 
+function normalizeLastThought(raw) {
+  if (!raw) return null;
+  const source = typeof raw === 'string' ? { reasoning: raw } : raw;
+  const reasoning = typeof source.reasoning === 'string' ? source.reasoning.trim().slice(0, 700) : '';
+  if (!reasoning) return null;
+  return {
+    reasoning,
+    turn: Math.max(0, Math.floor(Number(source.turn) || 0)),
+    stepCount: Math.max(0, Math.floor(Number(source.stepCount) || 0)),
+    mode: MODEL_THOUGHT_MODES.has(source.mode) ? source.mode : 'decision',
+    selectedLabel: typeof source.selectedLabel === 'string' ? source.selectedLabel.slice(0, 160) : null,
+    createdAt: typeof source.createdAt === 'string' ? source.createdAt : null
+  };
+}
+
+function isModelAuthoredThought(payload) {
+  return payload &&
+    MODEL_THOUGHT_MODES.has(payload.mode) &&
+    !payload.fallbackCause &&
+    typeof payload.reasoning === 'string' &&
+    payload.reasoning.trim().length > 0 &&
+    !/model unavailable/i.test(payload.reasoning);
+}
+
+function recoverLastThought(agentId, storedThought, eventLog = []) {
+  const normalized = normalizeLastThought(storedThought);
+  if (normalized) return normalized;
+  for (let index = eventLog.length - 1; index >= 0; index -= 1) {
+    const event = eventLog[index];
+    const payload = event?.payload || event?.data;
+    if (event?.type !== 'agent_step' || payload?.agentId !== agentId || !isModelAuthoredThought(payload)) continue;
+    return normalizeLastThought({
+      ...payload,
+      turn: event.turn ?? payload.turn,
+      createdAt: event.timestamp || null
+    });
+  }
+  return null;
+}
+
 function sanitizePublicAgent(agent) {
   const {
     privateMemory: _privateMemory,
@@ -222,6 +263,10 @@ function sanitizePublicAgent(agent) {
         reasoning: sanitizeLegacyNotebookText(agent.lastDecision.reasoning, fallback)
       }
     : agent.lastDecision;
+  const lastThought = normalizeLastThought(agent.lastThought);
+  if (lastThought) {
+    lastThought.reasoning = sanitizeLegacyNotebookText(lastThought.reasoning, fallback);
+  }
   if (lastDecision) {
     delete lastDecision.targetName;
     delete lastDecision.distanceToTarget;
@@ -229,6 +274,7 @@ function sanitizePublicAgent(agent) {
   return {
     ...publicFields,
     lastDecision,
+    lastThought,
     recentNotes: Array.isArray(agent.recentNotes)
       ? agent.recentNotes.map(note => sanitizeLegacyNotebookText(note, fallback))
       : agent.recentNotes
@@ -515,6 +561,7 @@ export class RendezvousController {
         privateMemory: normalizeAgentMemory(loadedAgent.privateMemory, { recentNotes }),
         movementSinceDecision: normalizeMovementMemory(loadedAgent.movementSinceDecision),
         waitTurnsRemaining: Math.min(6, Math.max(0, Math.floor(Number(loadedAgent.waitTurnsRemaining) || 0))),
+        lastThought: recoverLastThought(agentId, loadedAgent.lastThought, state.eventLog),
         friendEstimate: null,
       };
     }
@@ -688,6 +735,7 @@ export class RendezvousController {
       movementSinceDecision: createMovementMemory(),
       waitTurnsRemaining: 0,
       lastDecision: null,
+      lastThought: null,
       friendEstimate: null,
       padSeenSequence: 0
     };
@@ -740,6 +788,7 @@ export class RendezvousController {
     let decisionReason = null;
     let mode = 'auto';
     let modelFallbackCause = null;
+    let hasFreshModelThought = false;
     let waitingAtBranch = false;
     let deliberateWait = agent.waitTurnsRemaining > 0;
 
@@ -839,6 +888,7 @@ export class RendezvousController {
           decisionReason = decision.reasoning;
           modelFallbackCause = decision.fallbackCause || null;
           if (!modelFallbackCause) {
+            hasFreshModelThought = true;
             agent.privateMemory = applyMemoryRevision(agent.privateMemory, decision.memoryUpdate, {
               turn: this.state.turn,
               sheetMessage: scratchpad.currentMessage,
@@ -949,6 +999,16 @@ export class RendezvousController {
       scratchpadSequence: this.state.scratchpad?.sequence || 0,
       scratchpadOwner: this.state.scratchpad?.owner || null
     };
+    if (hasFreshModelThought) {
+      agent.lastThought = normalizeLastThought({
+        reasoning: step.reasoning,
+        turn: step.turn,
+        stepCount: step.stepCount,
+        mode: step.mode,
+        selectedLabel: step.selectedLabel,
+        createdAt: new Date().toISOString()
+      });
+    }
     agent.lastDecision = step;
     agent.recentNotes.push(decisionReason);
     agent.recentNotes = agent.recentNotes.slice(-8);

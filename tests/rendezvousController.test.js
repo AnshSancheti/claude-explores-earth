@@ -243,11 +243,20 @@ test('corridor movement is automatic and a nonholder waits at a real branch', as
     controller.state.status = 'running';
     controller.running = true;
     controller.state.scratchpad.owner = 'theo';
+    controller.state.agents.ada.lastThought = {
+      reasoning: 'I will remember this model-authored choice.',
+      turn: 0,
+      stepCount: 0,
+      mode: 'decision',
+      selectedLabel: 'the remembered route',
+      createdAt: new Date().toISOString()
+    };
 
     await controller.tick();
     assert.equal(controller.state.agents.ada.panoId, 'ada-start');
     assert.equal(controller.state.agents.ada.stepCount, 0);
     assert.equal(controller.state.agents.ada.lastDecision.mode, 'waiting_for_sheet');
+    assert.equal(controller.state.agents.ada.lastThought.reasoning, 'I will remember this model-authored choice.');
     assert.equal(model.calls.length, 0);
 
     controller.state.turn = 0;
@@ -258,6 +267,7 @@ test('corridor movement is automatic and a nonholder waits at a real branch', as
     await controller.tick();
     assert.equal(controller.state.agents.ada.panoId, 'target');
     assert.equal(controller.state.agents.ada.lastDecision.mode, 'auto');
+    assert.equal(controller.state.agents.ada.lastThought.reasoning, 'I will remember this model-authored choice.');
     assert.equal(model.calls.length, 0);
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
@@ -295,6 +305,8 @@ test('private memory survives restart, stays out of public state, and supports d
     await controller.tick();
     assert.equal(controller.state.agents.ada.panoId, 'ada-start');
     assert.equal(controller.state.agents.ada.lastDecision.mode, 'decision_wait');
+    assert.equal(controller.state.agents.ada.lastThought.reasoning, 'I make a cooperative choice from what I remember.');
+    assert.equal(controller.state.agents.ada.lastThought.mode, 'decision_wait');
     assert.equal(controller.state.agents.ada.waitTurnsRemaining, 2);
     assert.equal(controller.state.agents.ada.privateMemory.receivedSheets[0].sequence, 1);
     assert.match(controller.state.agents.ada.privateMemory.receivedSheets[0].interpretation, /convergence/);
@@ -309,6 +321,10 @@ test('private memory survives restart, stays out of public state, and supports d
     assert.doesNotMatch(JSON.stringify(publicState), /approaching a shared landmark|circle may indicate convergence/i);
 
     await controller.saveState();
+    const persistedPath = path.join(tempDir, 'rendezvous-current.json');
+    const persisted = JSON.parse(await fsp.readFile(persistedPath, 'utf8'));
+    delete persisted.agents.ada.lastThought;
+    await fsp.writeFile(persistedPath, `${JSON.stringify(persisted, null, 2)}\n`);
     const restartedModel = new ScriptedRendezvousModel({ action: 'move' });
     const restarted = new RendezvousController({
       dataDir: tempDir,
@@ -321,13 +337,63 @@ test('private memory survives restart, stays out of public state, and supports d
     assert.equal(restarted.state.agents.ada.privateMemory.receivedSheets[0].sequence, 1);
     assert.equal(restarted.state.agents.ada.privateMemory.sentMessages[0].sequence, 2);
     assert.equal(restarted.state.agents.ada.waitTurnsRemaining, 2);
+    assert.equal(restarted.state.agents.ada.lastThought.reasoning, 'I make a cooperative choice from what I remember.');
+    assert.equal(restarted.state.agents.ada.lastThought.mode, 'decision_wait');
 
     restarted.state.turn = 2;
     await restarted.tick();
     assert.equal(restarted.state.agents.ada.panoId, 'ada-start');
     assert.equal(restarted.state.agents.ada.lastDecision.mode, 'deliberate_wait');
+    assert.equal(restarted.state.agents.ada.lastThought.reasoning, 'I make a cooperative choice from what I remember.');
     assert.equal(restarted.state.agents.ada.waitTurnsRemaining, 1);
     assert.equal(restartedModel.calls.length, 0);
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a model fallback does not replace the last genuine agent thought', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-thought-fallback-test-'));
+  const model = new ScriptedRendezvousModel({
+    reasoning: 'Model unavailable; I choose the first public route.',
+    fallbackCause: 'model_unavailable'
+  });
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: model,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.status = 'running';
+    controller.running = true;
+    controller.state.scratchpad.owner = 'ada';
+    controller.state.agents.ada.lastThought = {
+      reasoning: 'I recognize the stone facade and choose the brighter crossing.',
+      turn: 0,
+      stepCount: 0,
+      mode: 'decision',
+      selectedLabel: 'brighter crossing',
+      createdAt: new Date().toISOString()
+    };
+
+    await controller.tick();
+
+    assert.equal(model.calls.length, 1);
+    assert.equal(controller.state.agents.ada.lastDecision.fallbackCause, 'model_unavailable');
+    assert.match(controller.state.agents.ada.lastDecision.reasoning, /Model unavailable/);
+    assert.equal(
+      controller.getPublicState().agents.ada.lastThought.reasoning,
+      'I recognize the stone facade and choose the brighter crossing.'
+    );
+    await controller.resumePendingDrawing();
+    await controller.shutdown();
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
     else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
