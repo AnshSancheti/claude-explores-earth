@@ -13,16 +13,12 @@ function cleanPrompt(value) {
     .slice(0, 2400);
 }
 
-function mimeForBuffer(buffer) {
-  if (buffer?.[0] === 0x89 && buffer?.[1] === 0x50) return 'image/png';
-  if (buffer?.[0] === 0xff && buffer?.[1] === 0xd8) return 'image/jpeg';
-  return 'image/jpeg';
-}
-
 export function scaffoldDrawingPrompt(drawingPrompt) {
   const authored = cleanPrompt(drawingPrompt);
   if (!authored) throw new Error('A sender-authored drawing prompt is required');
-  return `Create a handmade observational sketch on one plain, slightly warm sheet of paper. Follow the sender's visual instructions faithfully, including any symbolism or abstraction they choose. The result must look drawn by hand, with varied pencil, charcoal, crayon, or ink marks and recognizable forms rather than a route diagram or a set of bare geometric lines.
+  return `Create a handmade symbolic visual message on one plain, slightly warm sheet of paper. Translate the sender's intent into an expressive composition that communicates through metaphor, spatial relationships, simplified forms, invented symbols, repeated motifs, or other nonverbal visual language. Preserve what the sender is trying to say, but do not render a literal Street View reconstruction, photorealistic scene, or generic streetscape. If the sender asks for literal realism, abstract its meaningful features into a purposeful hand-drawn message instead.
+
+The result should feel like one friend drew it for another: intentional and interpretable, with varied pencil, charcoal, crayon, or ink marks. It may be sparse or dense, diagrammatic or pictorial, but it must not collapse into random overlapping lines.
 
 Hard constraint: the image must contain no readable words, letters, numbers, captions, labels, signatures, logos, street signs, or watermarks. If the request mentions written signage, represent it only as illegible abstract marks.
 
@@ -43,14 +39,13 @@ export class RendezvousImageService {
     this.maxAttempts = Math.max(1, parseIntOr(process.env.RENDEZVOUS_IMAGE_ATTEMPTS, 2));
   }
 
-  async generate({ drawingPrompt, referenceImages = [] }) {
+  async generate({ drawingPrompt }) {
     if (!this.apiKey) throw new Error('OPENAI_API_KEY is required for rendezvous drawings');
     const prompt = scaffoldDrawingPrompt(drawingPrompt);
-    const images = Array.isArray(referenceImages) ? referenceImages.filter(Buffer.isBuffer).slice(0, 4) : [];
     let lastError = null;
     for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
       try {
-        return await this.#request({ prompt, referenceImages: images });
+        return await this.#request({ prompt });
       } catch (error) {
         lastError = error;
         this.logger.warn?.(`Rendezvous image attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
@@ -60,41 +55,24 @@ export class RendezvousImageService {
     throw lastError || new Error('Rendezvous image generation failed');
   }
 
-  async #request({ prompt, referenceImages }) {
+  async #request({ prompt }) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const hasReferences = referenceImages.length > 0;
-      let body;
-      let headers = { Authorization: `Bearer ${this.apiKey}` };
-      let endpoint;
-      if (hasReferences) {
-        endpoint = `${IMAGE_API_ROOT}/images/edits`;
-        body = new FormData();
-        body.append('model', this.model);
-        body.append('prompt', prompt);
-        body.append('size', this.size);
-        body.append('quality', this.quality);
-        body.append('output_format', this.outputFormat);
-        body.append('background', 'opaque');
-        body.append('n', '1');
-        referenceImages.forEach((buffer, index) => {
-          const mime = mimeForBuffer(buffer);
-          body.append('image[]', new Blob([buffer], { type: mime }), `view-${index}.${mime === 'image/png' ? 'png' : 'jpg'}`);
-        });
-      } else {
-        endpoint = `${IMAGE_API_ROOT}/images/generations`;
-        headers = { ...headers, 'Content-Type': 'application/json' };
-        body = JSON.stringify({
-          model: this.model,
-          prompt,
-          size: this.size,
-          quality: this.quality,
-          output_format: this.outputFormat,
-          background: 'opaque',
-          n: 1
-        });
-      }
+      const endpoint = `${IMAGE_API_ROOT}/images/generations`;
+      const headers = {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json'
+      };
+      const body = JSON.stringify({
+        model: this.model,
+        prompt,
+        size: this.size,
+        quality: this.quality,
+        output_format: this.outputFormat,
+        background: 'opaque',
+        n: 1
+      });
 
       const response = await this.fetchImpl(endpoint, {
         method: 'POST',

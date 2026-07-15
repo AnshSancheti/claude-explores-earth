@@ -772,23 +772,18 @@ export class RendezvousController {
           modelFallbackCause = decision.fallbackCause || null;
           if (decision.drawingPrompt) {
             const pendingId = randomUUID();
-            const referenceImages = decision.referenceViewIndices
-              .map(index => screenshots[index])
-              .filter(Buffer.isBuffer);
-            await this.#persistPendingReferences(pendingId, referenceImages);
             this.state.scratchpad = queueRasterScratchpadMessage(scratchpad, {
               id: pendingId,
               agentId,
               turn: this.state.turn,
               drawingPrompt: decision.drawingPrompt,
-              referenceViewIndices: decision.referenceViewIndices,
               sourcePanoId: current.panoId
             });
             this.#recordEvent('scratchpad_queued', {
               id: pendingId,
               from: agentId,
               to: partner.id,
-              referenceCount: referenceImages.length
+              medium: 'symbolic_prompt_only'
             });
           }
         }
@@ -930,27 +925,6 @@ export class RendezvousController {
     };
   }
 
-  async #persistPendingReferences(pendingId, buffers) {
-    if (!Array.isArray(buffers) || buffers.length === 0) return;
-    const directory = this.#drawingDirectory();
-    await fsp.mkdir(directory, { recursive: true });
-    await Promise.all(buffers.map((buffer, index) =>
-      fsp.writeFile(path.join(directory, `${pendingId}-reference-${index}.jpg`), buffer)
-    ));
-  }
-
-  async #readPendingReferences(pendingId) {
-    const buffers = [];
-    for (let index = 0; index < 4; index += 1) {
-      try {
-        buffers.push(await fsp.readFile(path.join(this.#drawingDirectory(), `${pendingId}-reference-${index}.jpg`)));
-      } catch (error) {
-        if (error.code !== 'ENOENT') this.logger.warn?.(`Could not read drawing reference: ${error.message}`);
-      }
-    }
-    return buffers;
-  }
-
   async #removePendingReferences(pendingId) {
     await Promise.all(Array.from({ length: 4 }, (_, index) =>
       fsp.unlink(path.join(this.#drawingDirectory(), `${pendingId}-reference-${index}.jpg`)).catch(() => {})
@@ -966,10 +940,8 @@ export class RendezvousController {
 
     const work = (async () => {
       try {
-        const referenceImages = await this.#readPendingReferences(pending.id);
         const generated = await this.imageModel.generate({
-          drawingPrompt: pending.drawingPrompt,
-          referenceImages
+          drawingPrompt: pending.drawingPrompt
         });
         const directory = this.#drawingDirectory();
         await fsp.mkdir(directory, { recursive: true });

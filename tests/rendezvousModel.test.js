@@ -38,8 +38,7 @@ test('branch decision authors an unconstrained visual prompt without transcript 
                   selectedIndex: 1,
                   intendedHeading: 0,
                   reasoning: 'The northern opening feels useful.',
-                  drawingPrompt: 'Sketch the repeated arches as a fading rhythm with a lone yellow circle.',
-                  referenceViewIndices: [1]
+                  drawingPrompt: 'Sketch the repeated arches as a fading rhythm with a lone yellow circle.'
                 })
               }
             }]
@@ -53,10 +52,11 @@ test('branch decision authors an unconstrained visual prompt without transcript 
 
   assert.equal(decision.selectedIndex, 1);
   assert.match(decision.drawingPrompt, /repeated arches/);
-  assert.deepEqual(decision.referenceViewIndices, [1]);
   const serialized = JSON.stringify(request.messages);
   assert.match(serialized, /only information that crosses/);
   assert.match(serialized, /no readable text/);
+  assert.match(serialized, /Do not merely redraw the street/);
+  assert.doesNotMatch(serialized, /referenceViewIndices/);
   assert.doesNotMatch(serialized, /partnerPadText|ownPadText|distanceToFriend|-?\d+\.\d{4,}/);
 });
 
@@ -64,11 +64,9 @@ test('decision sanitizer reconciles an unambiguous intended heading', () => {
   const decision = sanitizeRendezvousDecision({
     selectedIndex: 0,
     intendedHeading: 2,
-    drawingPrompt: 'draw a doorway',
-    referenceViewIndices: [1, 1, 8]
+    drawingPrompt: 'draw a doorway'
   }, input().options);
   assert.equal(decision.selectedIndex, 1);
-  assert.deepEqual(decision.referenceViewIndices, [1]);
 });
 
 test('model is rejected outside a genuine branch', async () => {

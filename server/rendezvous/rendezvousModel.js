@@ -58,15 +58,11 @@ export function sanitizeRendezvousDecision(raw, options) {
       .sort((a, b) => a.delta - b.delta || a.index - b.index);
     if (selectedDelta > 12 && matches.length === 1) selectedIndex = matches[0].index;
   }
-  const referenceViewIndices = Array.isArray(raw?.referenceViewIndices)
-    ? [...new Set(raw.referenceViewIndices.map(Number).filter(index => Number.isInteger(index) && index >= 0 && index < optionCount))].slice(0, 4)
-    : [];
   return {
     selectedIndex,
     intendedHeading,
     reasoning: cleanString(raw?.reasoning, 700) || 'I choose the most promising unfamiliar public route.',
-    drawingPrompt: cleanString(raw?.drawingPrompt, 2400),
-    referenceViewIndices
+    drawingPrompt: cleanString(raw?.drawingPrompt, 2400)
   };
 }
 
@@ -77,7 +73,6 @@ function fallbackDecision(options, visitedPanos, cause) {
     intendedHeading: null,
     reasoning: 'I choose the least familiar public way forward and keep searching.',
     drawingPrompt: '',
-    referenceViewIndices: [],
     fallbackCause: cause
   };
 }
@@ -126,7 +121,7 @@ You can see your own Street View routes and one physical sheet last sent by your
 
 You are now at a real branching point. Choose one visible public route. Avoid indoor shops, private interiors, dead ends, and immediate loops. Google headings are compass bearings clockwise from north.
 
-Because you currently hold the sheet, you must also decide what picture to send to ${partnerName}. Author a free-form prompt for an image model. You control what the picture communicates: it may be observational, symbolic, spatial, literal, abstract, or use a visual convention that you develop together. The experiment is meant to reveal your own communication strategy, so do not merely fill a template. You may ask the image model to draw from any subset of the route images by listing their option indices as referenceViewIndices.
+Because you currently hold the sheet, you must also decide what visual message to send to ${partnerName}. Author a free-form prompt for an image model. Do not merely redraw the street or request a realistic copy of a route image; that would show what any camera already sees without communicating your interpretation. Decide what would actually help your friend find you, then encode it through symbolism, abstraction, metaphor, spatial relationships, simplified landmarks, recurring motifs, or a visual convention you develop together. The experiment is meant to reveal your own communication strategy, so do not fill a template and do not explain the message in prose.
 
 The resulting picture must contain no readable text, letters, numbers, labels, captions, signatures, logos, or watermarks. Express everything visually. Do not put those prohibitions into drawingPrompt; simply describe the picture you want.
 
@@ -135,8 +130,7 @@ Return only JSON:
   "selectedIndex": <0-${options.length - 1}>,
   "intendedHeading": <the numeric heading you intend, or null>,
   "reasoning": "one concise first-person field note",
-  "drawingPrompt": "your complete instructions to the image model",
-  "referenceViewIndices": [<zero or more option indices>]
+  "drawingPrompt": "your complete instructions for the symbolic visual message"
 }`;
 
     const userContent = [

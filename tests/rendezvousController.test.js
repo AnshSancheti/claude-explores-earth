@@ -130,8 +130,7 @@ class FakeRendezvousModel {
         ? input.options.findIndex(option => !input.agent.visitedPanos.includes(option.panoId))
         : 0,
       reasoning: `${input.agent.name} follows the clearest unfamiliar public route using only the sheet and the visible street.`,
-      drawingPrompt: `A loose observational sketch chosen by ${input.agent.name}`,
-      referenceViewIndices: [0],
+      drawingPrompt: `A symbolic visual message chosen by ${input.agent.name}`,
       fallbackCause: null
     };
   }
@@ -144,8 +143,7 @@ class FakeImageModel {
 
   async generate(input) {
     this.calls.push({
-      drawingPrompt: input.drawingPrompt,
-      referenceCount: input.referenceImages.length
+      drawingPrompt: input.drawingPrompt
     });
     return {
       buffer: Buffer.from(`fake-raster-${this.calls.length}`),

@@ -6,14 +6,16 @@ import {
 } from '../server/rendezvous/rendezvousImage.js';
 
 test('image scaffolding constrains the medium without authoring the clue', () => {
-  const prompt = scaffoldDrawingPrompt('A charcoal skyline reflected in three puddles.');
+  const prompt = scaffoldDrawingPrompt('A charcoal skyline reflected in three puddles like three possible futures.');
   assert.match(prompt, /Sender's drawing instructions/);
-  assert.match(prompt, /charcoal skyline reflected in three puddles/);
+  assert.match(prompt, /three possible futures/);
   assert.match(prompt, /no readable words, letters, numbers/);
+  assert.match(prompt, /symbolic visual message/);
+  assert.match(prompt, /do not render a literal Street View reconstruction/);
   assert.doesNotMatch(prompt, /Manhattan|north|south|find Theo/);
 });
 
-test('image service sends references to the edit endpoint and returns raster bytes', async () => {
+test('image service generates from the sender prompt without Street View attachments', async () => {
   const previousKey = process.env.OPENAI_API_KEY;
   process.env.OPENAI_API_KEY = 'test-key';
   let request;
@@ -32,13 +34,14 @@ test('image service sends references to the edit endpoint and returns raster byt
       logger: { warn() {} }
     });
     const result = await service.generate({
-      drawingPrompt: 'A loose pencil drawing of an arch.',
-      referenceImages: [Buffer.from([0xff, 0xd8, 0xff])]
+      drawingPrompt: 'A loose pencil arch enclosing two circles that nearly touch.'
     });
-    assert.match(request.url, /\/images\/edits$/);
-    assert.equal(request.options.body.get('model'), 'gpt-image-2');
-    assert.equal(request.options.body.get('size'), '1152x768');
-    assert.match(request.options.body.get('prompt'), /loose pencil drawing of an arch/);
+    assert.match(request.url, /\/images\/generations$/);
+    const body = JSON.parse(request.options.body);
+    assert.equal(body.model, 'gpt-image-2');
+    assert.equal(body.size, '1152x768');
+    assert.match(body.prompt, /two circles that nearly touch/);
+    assert.doesNotMatch(request.options.body, /image\[\]|reference/);
     assert.equal(result.buffer.toString(), 'raster');
     assert.equal(result.requestId, 'req-1');
   } finally {
