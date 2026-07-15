@@ -114,6 +114,64 @@ test('decision sanitizer bounds deliberate waiting and private memory fields', (
   assert.match(decision.drawingIntent, /stay/);
 });
 
+test('expired local patience removes waiting from the model decision', async () => {
+  let request;
+  let calls = 0;
+  const client = {
+    chat: {
+      completions: {
+        async create(value) {
+          request = value;
+          calls += 1;
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  action: 'move',
+                  selectedIndex: 1,
+                  reasoning: 'Holding this corner has taught me nothing new, so I will move.',
+                  observation: 'The northern public route remains open.',
+                  sheetInterpretation: 'The sheet may preserve our last shared convergence idea.',
+                  memoryUpdate: {
+                    journeySummary: 'I held one corner and now resume searching.',
+                    partnerBelief: 'Theo may also have paused while trying to coordinate.',
+                    visualVocabulary: 'The circle still suggests convergence.',
+                    jointPlan: 'Break a mutual pause by moving and showing the chosen route.'
+                  },
+                  drawingIntent: 'Show that I am leaving the anchor by the northern route.',
+                  drawingPrompt: 'A hand sketch of a still circle opening into one northbound path.'
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const decision = await service.decide(input({
+    allowWait: false,
+    consecutiveWaitDecisions: 2
+  }));
+
+  assert.equal(calls, 1);
+  assert.equal(decision.action, 'move');
+  const systemPrompt = request.messages[0].content;
+  assert.match(systemPrompt, /same branch 2 consecutive times/);
+  assert.match(systemPrompt, /Remaining here again is not available/);
+  assert.match(systemPrompt, /"action": "move" \| "retrace"/);
+  assert.doesNotMatch(systemPrompt, /"action": "move" \| "retrace" \| "wait"/);
+});
+
+test('decision sanitizer rejects waiting when local patience has expired', () => {
+  const decision = sanitizeRendezvousDecision({
+    action: 'wait',
+    waitTurns: 4
+  }, input().options, { allowWait: false });
+  assert.equal(decision.action, 'move');
+  assert.equal(decision.waitTurns, 0);
+});
+
 test('model is rejected outside a genuine branch', async () => {
   const service = new RendezvousModelService({ client: {}, logger: { warn() {} } });
   await assert.rejects(

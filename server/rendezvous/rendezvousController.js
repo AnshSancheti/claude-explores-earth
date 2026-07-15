@@ -99,6 +99,7 @@ const STREET_SEARCH_RADII_METERS = Object.freeze([18, 36, 72]);
 const STREET_SEARCH_BEARINGS = Object.freeze([0, 45, 90, 135, 180, 225, 270, 315]);
 const LEGACY_RENDEZVOUS_HINT_PATTERN = /rough wire|last telegram|telegrams said|telegram puts|somewhere around|nearest guidebook|wire before|meeting place|Bryant Park|Grand Central|Union Square|Washington Square|Columbus Circle/i;
 const MODEL_THOUGHT_MODES = new Set(['decision', 'decision_wait', 'retrace']);
+const DEFAULT_MAX_CONSECUTIVE_WAIT_DECISIONS = 2;
 
 function parseIntOr(value, fallback) {
   const parsed = parseInt(value, 10);
@@ -249,11 +250,34 @@ function recoverLastThought(agentId, storedThought, eventLog = []) {
   return null;
 }
 
+function recoverConsecutiveWaitDecisions(agentId, storedValue, eventLog = [], lastThought = null) {
+  if (Number.isFinite(Number(storedValue))) {
+    return Math.max(0, Math.floor(Number(storedValue)));
+  }
+  let stepCount = null;
+  let count = 0;
+  for (let index = eventLog.length - 1; index >= 0; index -= 1) {
+    const event = eventLog[index];
+    const payload = event?.payload || event?.data;
+    if (event?.type !== 'agent_step' || payload?.agentId !== agentId) continue;
+    if (stepCount === null) stepCount = Number(payload.stepCount);
+    if (Number(payload.stepCount) !== stepCount) break;
+    if (payload.mode === 'decision_wait' && !payload.fallbackCause) {
+      count += 1;
+    } else if (MODEL_THOUGHT_MODES.has(payload.mode)) {
+      break;
+    }
+  }
+  if (count > 0) return count;
+  return normalizeLastThought(lastThought)?.mode === 'decision_wait' ? 1 : 0;
+}
+
 function sanitizePublicAgent(agent) {
   const {
     privateMemory: _privateMemory,
     movementSinceDecision: _movementSinceDecision,
     waitTurnsRemaining: _waitTurnsRemaining,
+    consecutiveWaitDecisions: _consecutiveWaitDecisions,
     ...publicFields
   } = agent;
   const fallback = publicLegacyReason(agent);
@@ -339,6 +363,10 @@ export class RendezvousController {
 
     this.stepIntervalMs = parseIntOr(process.env.RENDEZVOUS_STEP_INTERVAL_MS, 1800);
     this.foundRadiusMeters = parseIntOr(process.env.RENDEZVOUS_FOUND_RADIUS_M, 125);
+    this.maxConsecutiveWaitDecisions = Math.max(
+      1,
+      parseIntOr(process.env.RENDEZVOUS_MAX_CONSECUTIVE_WAIT_DECISIONS, DEFAULT_MAX_CONSECUTIVE_WAIT_DECISIONS)
+    );
   }
 
   #emptyState() {
@@ -549,6 +577,7 @@ export class RendezvousController {
       const recentNotes = hasCausalScratchpad && Array.isArray(loadedAgent.recentNotes)
         ? loadedAgent.recentNotes
         : ['I remember only the public streets I have personally walked.'];
+      const lastThought = recoverLastThought(agentId, loadedAgent.lastThought, state.eventLog);
       state.agents[agentId] = {
         ...AGENTS[agentId],
         ...loadedAgent,
@@ -561,7 +590,13 @@ export class RendezvousController {
         privateMemory: normalizeAgentMemory(loadedAgent.privateMemory, { recentNotes }),
         movementSinceDecision: normalizeMovementMemory(loadedAgent.movementSinceDecision),
         waitTurnsRemaining: Math.min(6, Math.max(0, Math.floor(Number(loadedAgent.waitTurnsRemaining) || 0))),
-        lastThought: recoverLastThought(agentId, loadedAgent.lastThought, state.eventLog),
+        consecutiveWaitDecisions: recoverConsecutiveWaitDecisions(
+          agentId,
+          loadedAgent.consecutiveWaitDecisions,
+          state.eventLog,
+          lastThought
+        ),
+        lastThought,
         friendEstimate: null,
       };
     }
@@ -734,6 +769,7 @@ export class RendezvousController {
       }),
       movementSinceDecision: createMovementMemory(),
       waitTurnsRemaining: 0,
+      consecutiveWaitDecisions: 0,
       lastDecision: null,
       lastThought: null,
       friendEstimate: null,
@@ -859,6 +895,7 @@ export class RendezvousController {
             ? `${agent.name} waits at the choice until the drawing has finished crossing between them.`
             : `${agent.name} waits at the choice because ${partner.name} still holds the sheet.`;
         } else {
+          const allowWait = agent.consecutiveWaitDecisions < this.maxConsecutiveWaitDecisions;
           const [screenshots, scratchpadImage] = await Promise.all([
             this.#captureCandidateScreenshots(decisionPool),
             this.#readScratchpadImage(scratchpad)
@@ -883,8 +920,24 @@ export class RendezvousController {
             scratchpadMimeType: scratchpadImage.mimeType,
             sheetMessage: scratchpad.currentMessage,
             privateMemory: normalizeAgentMemory(agent.privateMemory, { recentNotes: agent.recentNotes }),
-            movementSinceDecision: normalizeMovementMemory(agent.movementSinceDecision)
+            movementSinceDecision: normalizeMovementMemory(agent.movementSinceDecision),
+            allowWait,
+            consecutiveWaitDecisions: agent.consecutiveWaitDecisions
           });
+          if (!allowWait && decision.action === 'wait') {
+            this.#recordEvent('wait_patience_expired', {
+              agentId,
+              agentName: agent.name,
+              panoId: current.panoId,
+              consecutiveWaitDecisions: agent.consecutiveWaitDecisions
+            });
+            decision.action = 'move';
+            decision.waitTurns = 0;
+            decision.reasoning = 'I have learned nothing new by holding this corner, so I choose a public route and keep searching.';
+            decision.drawingIntent = '';
+            decision.drawingPrompt = '';
+            decision.fallbackCause = 'wait_patience_expired';
+          }
           decisionReason = decision.reasoning;
           modelFallbackCause = decision.fallbackCause || null;
           if (!modelFallbackCause) {
@@ -900,6 +953,7 @@ export class RendezvousController {
 
           const requested = decisionPool[decision.selectedIndex] || decisionPool[0];
           if (decision.action === 'wait') {
+            agent.consecutiveWaitDecisions += 1;
             deliberateWait = true;
             waitingAtBranch = true;
             mode = 'decision_wait';
@@ -961,6 +1015,7 @@ export class RendezvousController {
         heading: agent.heading,
         label: selected.label
       });
+      agent.consecutiveWaitDecisions = 0;
       agent.status = 'searching';
       agent.path.push({
         ...agent.position,

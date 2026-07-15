@@ -126,6 +126,8 @@ class FakeRendezvousModel {
       options: input.options,
       privateMemory: input.privateMemory,
       movementSinceDecision: input.movementSinceDecision,
+      allowWait: input.allowWait,
+      consecutiveWaitDecisions: input.consecutiveWaitDecisions,
       sheetMessage: input.sheetMessage
     }));
     return {
@@ -308,6 +310,7 @@ test('private memory survives restart, stays out of public state, and supports d
     assert.equal(controller.state.agents.ada.lastThought.reasoning, 'I make a cooperative choice from what I remember.');
     assert.equal(controller.state.agents.ada.lastThought.mode, 'decision_wait');
     assert.equal(controller.state.agents.ada.waitTurnsRemaining, 2);
+    assert.equal(controller.state.agents.ada.consecutiveWaitDecisions, 1);
     assert.equal(controller.state.agents.ada.privateMemory.receivedSheets[0].sequence, 1);
     assert.match(controller.state.agents.ada.privateMemory.receivedSheets[0].interpretation, /convergence/);
     await controller.resumePendingDrawing();
@@ -318,6 +321,7 @@ test('private memory survives restart, stays out of public state, and supports d
     assert.equal(Object.hasOwn(publicState.agents.ada, 'privateMemory'), false);
     assert.equal(Object.hasOwn(publicState.agents.ada, 'movementSinceDecision'), false);
     assert.equal(Object.hasOwn(publicState.agents.ada, 'waitTurnsRemaining'), false);
+    assert.equal(Object.hasOwn(publicState.agents.ada, 'consecutiveWaitDecisions'), false);
     assert.doesNotMatch(JSON.stringify(publicState), /approaching a shared landmark|circle may indicate convergence/i);
 
     await controller.saveState();
@@ -337,6 +341,7 @@ test('private memory survives restart, stays out of public state, and supports d
     assert.equal(restarted.state.agents.ada.privateMemory.receivedSheets[0].sequence, 1);
     assert.equal(restarted.state.agents.ada.privateMemory.sentMessages[0].sequence, 2);
     assert.equal(restarted.state.agents.ada.waitTurnsRemaining, 2);
+    assert.equal(restarted.state.agents.ada.consecutiveWaitDecisions, 1);
     assert.equal(restarted.state.agents.ada.lastThought.reasoning, 'I make a cooperative choice from what I remember.');
     assert.equal(restarted.state.agents.ada.lastThought.mode, 'decision_wait');
 
@@ -347,6 +352,49 @@ test('private memory survives restart, stays out of public state, and supports d
     assert.equal(restarted.state.agents.ada.lastThought.reasoning, 'I make a cooperative choice from what I remember.');
     assert.equal(restarted.state.agents.ada.waitTurnsRemaining, 1);
     assert.equal(restartedModel.calls.length, 0);
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('repeated same-branch waiting quietly yields to movement without sending a contradictory drawing', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-wait-patience-test-'));
+  const model = new ScriptedRendezvousModel({
+    action: 'wait',
+    waitTurns: 4,
+    reasoning: 'I intend to remain at this corner.',
+    drawingIntent: 'Show that I am remaining here.',
+    drawingPrompt: 'A still figure anchored beneath an arch.'
+  });
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: model,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.status = 'running';
+    controller.running = true;
+    controller.state.scratchpad.owner = 'ada';
+    controller.state.agents.ada.consecutiveWaitDecisions = 2;
+
+    await controller.tick();
+
+    assert.equal(model.calls.length, 1);
+    assert.equal(model.calls[0].allowWait, false);
+    assert.equal(model.calls[0].consecutiveWaitDecisions, 2);
+    assert.equal(controller.state.agents.ada.panoId, 'ada-mid');
+    assert.equal(controller.state.agents.ada.stepCount, 1);
+    assert.equal(controller.state.agents.ada.consecutiveWaitDecisions, 0);
+    assert.equal(controller.state.agents.ada.lastDecision.fallbackCause, 'wait_patience_expired');
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.ok(controller.state.eventLog.some(event => event.type === 'wait_patience_expired'));
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
     else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;

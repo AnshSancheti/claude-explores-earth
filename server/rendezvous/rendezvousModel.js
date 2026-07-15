@@ -45,10 +45,11 @@ function cleanString(value, maxLength) {
     : '';
 }
 
-export function sanitizeRendezvousDecision(raw, options) {
+export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = {}) {
   const optionCount = Array.isArray(options) ? options.length : 0;
   const requestedAction = cleanString(raw?.action, 20).toLowerCase();
-  const action = ['move', 'retrace', 'wait'].includes(requestedAction) ? requestedAction : 'move';
+  const allowedActions = allowWait ? ['move', 'retrace', 'wait'] : ['move', 'retrace'];
+  const action = allowedActions.includes(requestedAction) ? requestedAction : 'move';
   let selectedIndex = Number.isInteger(Number(raw?.selectedIndex)) ? Number(raw.selectedIndex) : 0;
   selectedIndex = Math.min(Math.max(selectedIndex, 0), Math.max(0, optionCount - 1));
   const intendedHeading = normalizeHeading(raw?.intendedHeading);
@@ -127,7 +128,9 @@ export class RendezvousModelService {
     scratchpadMimeType = 'image/webp',
     sheetMessage = null,
     privateMemory = null,
-    movementSinceDecision = null
+    movementSinceDecision = null,
+    allowWait = true,
+    consecutiveWaitDecisions = 0
   }) {
     if (!Array.isArray(options) || options.length < 2) {
       throw new Error('Rendezvous model is only called at a genuine route branch');
@@ -144,6 +147,16 @@ export class RendezvousModelService {
       .map(note => `- ${cleanString(note, 300)}`)
       .join('\n') || '- No prior field notes.';
 
+    const actionGuidance = allowWait
+      ? `- move: continue through a promising unfamiliar public route;
+- retrace: deliberately choose an option marked walked before when returning toward a remembered place supports the joint plan;
+- wait: remain here for 1 to 6 of your own turns when anchoring your position is more useful than continued motion.`
+      : `- move: continue through a promising unfamiliar public route;
+- retrace: deliberately choose an option marked walked before when returning toward a remembered place supports the joint plan.
+
+You have already chosen to remain at this same branch ${Math.max(1, Math.floor(Number(consecutiveWaitDecisions) || 0))} consecutive times without gaining a new local observation. Your friend may also be waiting. Remaining here again is not available at this decision; choose move or retrace and communicate that choice visually.`;
+    const actionSchema = allowWait ? '"move" | "retrace" | "wait"' : '"move" | "retrace"';
+
     const systemPrompt = `You are ${agent.name}, one of two friends trying to meet after becoming separated on unfamiliar Manhattan streets. ${partnerName} is not a passive target: your friend is also moving, interpreting your drawings, and actively trying to meet you. You are building a shared strategy together.
 
 You can see your own Street View routes and one physical sheet last sent by your friend. That sheet image is the only information that crosses between you. You never receive ${partnerName}'s coordinates, path, distance, neighborhood, reasoning, prompt, transcript, or hidden state. Infer what you can from the image itself.
@@ -151,9 +164,7 @@ You can see your own Street View routes and one physical sheet last sent by your
 You have no global map or privileged knowledge of Manhattan. Your private memory below is your own fallible recollection, built only from streets you walked and sheets you previously saw. Use it for continuity, but revise beliefs when new observations disagree.
 
 You are now at a real branching point. Choose a cooperative action:
-- move: continue through a promising unfamiliar public route;
-- retrace: deliberately choose an option marked walked before when returning toward a remembered place supports the joint plan;
-- wait: remain here for 1 to 6 of your own turns when anchoring your position is more useful than continued motion.
+${actionGuidance}
 Avoid indoor shops, private interiors, dead ends, and accidental immediate loops. Google headings are compass bearings clockwise from north.
 
 Because you currently hold the sheet, decide what visual message to send to ${partnerName}. It should carry useful information, not merely look evocative. Ground it in at least one concrete thing you currently observe or genuinely remember, and show a useful relationship such as direction, sequence, repetition, convergence, contrast, or your intention to move, retrace, or wait. You control the mixture of recognizable observation and symbolism. Reuse an established visual convention when you believe your friend will understand it; do not fill a fixed template.
@@ -164,7 +175,7 @@ Interpret the received sheet explicitly, then return a complete revised private 
 
 Return only JSON:
 {
-  "action": "move" | "retrace" | "wait",
+  "action": ${actionSchema},
   "selectedIndex": <0-${options.length - 1}>,
   "intendedHeading": <the numeric heading you intend, or null>,
   "waitTurns": <1-6 when action is wait, otherwise 0>,
@@ -225,7 +236,10 @@ ${recentFieldNotes}`
         });
         const content = response?.choices?.[0]?.message?.content;
         const parsed = parseJsonContent(content);
-        const decision = sanitizeRendezvousDecision(parsed, options);
+        if (!allowWait && cleanString(parsed?.action, 20).toLowerCase() === 'wait') {
+          throw new Error('Rendezvous model chose waiting after local patience expired');
+        }
+        const decision = sanitizeRendezvousDecision(parsed, options, { allowWait });
         if (!decision.drawingPrompt) throw new Error('Rendezvous model omitted its drawing prompt');
         if (!decision.drawingIntent) throw new Error('Rendezvous model omitted its private drawing intent');
         if (!decision.memoryUpdate.journeySummary || !decision.memoryUpdate.jointPlan) {
