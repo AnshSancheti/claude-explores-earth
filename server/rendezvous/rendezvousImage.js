@@ -16,9 +16,9 @@ function cleanPrompt(value) {
 export function scaffoldDrawingPrompt(drawingPrompt) {
   const authored = cleanPrompt(drawingPrompt);
   if (!authored) throw new Error('A sender-authored drawing prompt is required');
-  return `Create a handmade symbolic visual message on one plain, slightly warm sheet of paper. Translate the sender's intent into an expressive composition that communicates through metaphor, spatial relationships, simplified forms, invented symbols, repeated motifs, or other nonverbal visual language. Preserve what the sender is trying to say, but do not render a literal Street View reconstruction, photorealistic scene, or generic streetscape. If the sender asks for literal realism, abstract its meaningful features into a purposeful hand-drawn message instead.
+  return `Create a clear handmade visual message on one plain, slightly warm sheet of paper. Follow the sender's chosen mixture of recognizable observation and symbolism. Preserve concrete landmarks or street features when they carry useful information, and preserve spatial relationships, repeated motifs, direction, sequence, or action when the sender uses them. The message should help one friend understand another, not become a literal camera reproduction, a generic streetscape, or purely decorative abstraction.
 
-The result should feel like one friend drew it for another: intentional and interpretable, with varied pencil, charcoal, crayon, or ink marks. It may be sparse or dense, diagrammatic or pictorial, but it must not collapse into random overlapping lines.
+The result should feel like one friend drew it for another: intentional, grounded, and interpretable, with varied pencil, charcoal, crayon, or ink marks. It may be sparse or dense, diagrammatic or pictorial, but it must not collapse into random overlapping lines.
 
 Hard constraint: the image must contain no readable words, letters, numbers, captions, labels, signatures, logos, street signs, or watermarks. If the request mentions written signage, represent it only as illegible abstract marks.
 

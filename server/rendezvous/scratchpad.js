@@ -78,6 +78,7 @@ function normalizePendingRasterMessage(raw) {
     to,
     turn: Math.max(0, Math.floor(Number(raw.turn) || 0)),
     drawingPrompt,
+    drawingIntent: cleanString(raw.drawingIntent, 700),
     referenceViewIndices: Array.isArray(raw.referenceViewIndices)
       ? [...new Set(raw.referenceViewIndices.map(Number).filter(Number.isInteger))].slice(0, 4)
       : [],
@@ -116,6 +117,7 @@ export function normalizeRasterScratchpad(raw, { turn = 0 } = {}) {
         turn: Math.max(0, Math.floor(Number(entry?.turn) || 0)),
         sequence: Math.max(0, Math.floor(Number(entry?.sequence) || 0)),
         drawingPrompt: cleanString(entry?.drawingPrompt, 2400),
+        drawingIntent: cleanString(entry?.drawingIntent, 700),
         referenceViewIndices: Array.isArray(entry?.referenceViewIndices)
           ? [...new Set(entry.referenceViewIndices.map(Number).filter(Number.isInteger))].slice(0, 4)
           : [],
@@ -149,6 +151,7 @@ export function queueRasterScratchpadMessage(scratchpad, {
   agentId,
   turn,
   drawingPrompt,
+  drawingIntent = '',
   referenceViewIndices = [],
   sourcePanoId = null,
   id = randomUUID()
@@ -161,6 +164,7 @@ export function queueRasterScratchpadMessage(scratchpad, {
     to: oppositeAgent(agentId),
     turn,
     drawingPrompt,
+    drawingIntent,
     referenceViewIndices,
     sourcePanoId,
     attempts: 0,

@@ -10,8 +10,9 @@ test('image scaffolding constrains the medium without authoring the clue', () =>
   assert.match(prompt, /Sender's drawing instructions/);
   assert.match(prompt, /three possible futures/);
   assert.match(prompt, /no readable words, letters, numbers/);
-  assert.match(prompt, /symbolic visual message/);
-  assert.match(prompt, /do not render a literal Street View reconstruction/);
+  assert.match(prompt, /recognizable observation and symbolism/);
+  assert.match(prompt, /not become a literal camera reproduction/);
+  assert.match(prompt, /not become.*purely decorative abstraction/);
   assert.doesNotMatch(prompt, /Manhattan|north|south|find Theo/);
 });
 

@@ -47,6 +47,8 @@ function cleanString(value, maxLength) {
 
 export function sanitizeRendezvousDecision(raw, options) {
   const optionCount = Array.isArray(options) ? options.length : 0;
+  const requestedAction = cleanString(raw?.action, 20).toLowerCase();
+  const action = ['move', 'retrace', 'wait'].includes(requestedAction) ? requestedAction : 'move';
   let selectedIndex = Number.isInteger(Number(raw?.selectedIndex)) ? Number(raw.selectedIndex) : 0;
   selectedIndex = Math.min(Math.max(selectedIndex, 0), Math.max(0, optionCount - 1));
   const intendedHeading = normalizeHeading(raw?.intendedHeading);
@@ -59,20 +61,37 @@ export function sanitizeRendezvousDecision(raw, options) {
     if (selectedDelta > 12 && matches.length === 1) selectedIndex = matches[0].index;
   }
   return {
+    action,
     selectedIndex,
     intendedHeading,
+    waitTurns: action === 'wait' ? Math.min(6, Math.max(1, Math.floor(Number(raw?.waitTurns) || 1))) : 0,
     reasoning: cleanString(raw?.reasoning, 700) || 'I choose the most promising unfamiliar public route.',
-    drawingPrompt: cleanString(raw?.drawingPrompt, 2400)
+    observation: cleanString(raw?.observation, 700),
+    sheetInterpretation: cleanString(raw?.sheetInterpretation, 700),
+    drawingIntent: cleanString(raw?.drawingIntent, 700),
+    drawingPrompt: cleanString(raw?.drawingPrompt, 2400),
+    memoryUpdate: {
+      journeySummary: cleanString(raw?.memoryUpdate?.journeySummary, 1200),
+      partnerBelief: cleanString(raw?.memoryUpdate?.partnerBelief, 1200),
+      visualVocabulary: cleanString(raw?.memoryUpdate?.visualVocabulary, 1200),
+      jointPlan: cleanString(raw?.memoryUpdate?.jointPlan, 1200)
+    }
   };
 }
 
 function fallbackDecision(options, visitedPanos, cause) {
   const unvisitedIndex = options.findIndex(option => !visitedPanos.includes(option.panoId));
   return {
+    action: 'move',
     selectedIndex: unvisitedIndex >= 0 ? unvisitedIndex : 0,
     intendedHeading: null,
+    waitTurns: 0,
     reasoning: 'I choose the least familiar public way forward and keep searching.',
+    observation: '',
+    sheetInterpretation: '',
+    drawingIntent: '',
     drawingPrompt: '',
+    memoryUpdate: {},
     fallbackCause: cause
   };
 }
@@ -99,44 +118,86 @@ export class RendezvousModelService {
     return this.client;
   }
 
-  async decide({ agent, partnerName, options, screenshots, scratchpadBuffer, scratchpadMimeType = 'image/webp' }) {
+  async decide({
+    agent,
+    partnerName,
+    options,
+    screenshots,
+    scratchpadBuffer,
+    scratchpadMimeType = 'image/webp',
+    sheetMessage = null,
+    privateMemory = null,
+    movementSinceDecision = null
+  }) {
     if (!Array.isArray(options) || options.length < 2) {
       throw new Error('Rendezvous model is only called at a genuine route branch');
     }
     const optionLines = options.map((option, index) => {
-      const visited = agent.visitedPanos?.includes(option.panoId) ? 'walked before' : 'unfamiliar';
+      const visited = option.visited || agent.visitedPanos?.includes(option.panoId) ? 'walked before; available for retracing' : 'unfamiliar';
       const label = option.label ? `; visible Street View route label: ${cleanString(option.label, 160)}` : '';
       const heading = Math.round(Number(option.heading) || 0);
       return `Option ${index}: heading ${heading} degrees (${compassDirection(heading)}); ${visited}${label}`;
     }).join('\n');
-    const privateMemory = (agent.recentNotes || [])
+    const recentFieldNotes = (agent.recentNotes || [])
       .filter(note => !/model (?:is|was) unavailable/i.test(note))
       .slice(-5)
       .map(note => `- ${cleanString(note, 300)}`)
       .join('\n') || '- No prior field notes.';
 
-    const systemPrompt = `You are ${agent.name}, one of two friends lost on different Manhattan street corners. Your sole goal is to physically find ${partnerName}.
+    const systemPrompt = `You are ${agent.name}, one of two friends trying to meet after becoming separated on unfamiliar Manhattan streets. ${partnerName} is not a passive target: your friend is also moving, interpreting your drawings, and actively trying to meet you. You are building a shared strategy together.
 
 You can see your own Street View routes and one physical sheet last sent by your friend. That sheet image is the only information that crosses between you. You never receive ${partnerName}'s coordinates, path, distance, neighborhood, reasoning, prompt, transcript, or hidden state. Infer what you can from the image itself.
 
-You are now at a real branching point. Choose one visible public route. Avoid indoor shops, private interiors, dead ends, and immediate loops. Google headings are compass bearings clockwise from north.
+You have no global map or privileged knowledge of Manhattan. Your private memory below is your own fallible recollection, built only from streets you walked and sheets you previously saw. Use it for continuity, but revise beliefs when new observations disagree.
 
-Because you currently hold the sheet, you must also decide what visual message to send to ${partnerName}. Author a free-form prompt for an image model. Do not merely redraw the street or request a realistic copy of a route image; that would show what any camera already sees without communicating your interpretation. Decide what would actually help your friend find you, then encode it through symbolism, abstraction, metaphor, spatial relationships, simplified landmarks, recurring motifs, or a visual convention you develop together. The experiment is meant to reveal your own communication strategy, so do not fill a template and do not explain the message in prose.
+You are now at a real branching point. Choose a cooperative action:
+- move: continue through a promising unfamiliar public route;
+- retrace: deliberately choose an option marked walked before when returning toward a remembered place supports the joint plan;
+- wait: remain here for 1 to 6 of your own turns when anchoring your position is more useful than continued motion.
+Avoid indoor shops, private interiors, dead ends, and accidental immediate loops. Google headings are compass bearings clockwise from north.
+
+Because you currently hold the sheet, decide what visual message to send to ${partnerName}. It should carry useful information, not merely look evocative. Ground it in at least one concrete thing you currently observe or genuinely remember, and show a useful relationship such as direction, sequence, repetition, convergence, contrast, or your intention to move, retrace, or wait. You control the mixture of recognizable observation and symbolism. Reuse an established visual convention when you believe your friend will understand it; do not fill a fixed template.
 
 The resulting picture must contain no readable text, letters, numbers, labels, captions, signatures, logos, or watermarks. Express everything visually. Do not put those prohibitions into drawingPrompt; simply describe the picture you want.
 
+Interpret the received sheet explicitly, then return a complete revised private memory. Keep each memory field concise and preserve useful older knowledge unless the new evidence changes it. drawingIntent is your private record of what the outgoing picture is meant to communicate; only drawingPrompt is sent to the image renderer.
+
 Return only JSON:
 {
+  "action": "move" | "retrace" | "wait",
   "selectedIndex": <0-${options.length - 1}>,
   "intendedHeading": <the numeric heading you intend, or null>,
+  "waitTurns": <1-6 when action is wait, otherwise 0>,
   "reasoning": "one concise first-person field note",
-  "drawingPrompt": "your complete instructions for the symbolic visual message"
+  "observation": "a grounded description of what you currently notice and want to remember",
+  "sheetInterpretation": "what you think the current drawing from your friend means, including uncertainty",
+  "memoryUpdate": {
+    "journeySummary": "your revised compact memory of where you have been",
+    "partnerBelief": "your revised belief about your friend's situation and strategy",
+    "visualVocabulary": "your revised interpretation of recurring visual symbols",
+    "jointPlan": "your current cooperative plan for meeting"
+  },
+  "drawingIntent": "what you want your friend to learn from the next drawing",
+  "drawingPrompt": "complete image instructions that visually encode that intent"
 }`;
 
     const userContent = [
       {
         type: 'text',
-        text: `Image 1 is the physical sheet exactly as you received it. The remaining images are your current route options 0 through ${options.length - 1}.\n\n${optionLines}\n\nYour private memory, unavailable to ${partnerName}:\n${privateMemory}`
+        text: `Image 1 is the physical sheet exactly as you received it. The remaining images are your current route options 0 through ${options.length - 1}.
+
+Current sheet metadata: ${sheetMessage ? `sequence ${sheetMessage.sequence}, sent by ${sheetMessage.from}` : 'blank first sheet'}
+
+${optionLines}
+
+Your persistent private memory, unavailable to ${partnerName}:
+${JSON.stringify(privateMemory || {}, null, 2)}
+
+Your own movement since your last successful branch decision:
+${JSON.stringify(movementSinceDecision || {}, null, 2)}
+
+Recent private field notes:
+${recentFieldNotes}`
       },
       {
         type: 'image_url',
@@ -166,11 +227,15 @@ Return only JSON:
         const parsed = parseJsonContent(content);
         const decision = sanitizeRendezvousDecision(parsed, options);
         if (!decision.drawingPrompt) throw new Error('Rendezvous model omitted its drawing prompt');
+        if (!decision.drawingIntent) throw new Error('Rendezvous model omitted its private drawing intent');
+        if (!decision.memoryUpdate.journeySummary || !decision.memoryUpdate.jointPlan) {
+          throw new Error('Rendezvous model omitted its private memory revision');
+        }
         return decision;
       } catch (error) {
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
-        if (/blank content|drawing prompt/i.test(error.message)) {
+        if (/blank content|drawing prompt|drawing intent|memory revision|json/i.test(error.message)) {
           tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 3200));
         }
       }

@@ -123,15 +123,56 @@ class FakeRendezvousModel {
     this.calls.push(structuredClone({
       agent: input.agent,
       partnerName: input.partnerName,
-      options: input.options
+      options: input.options,
+      privateMemory: input.privateMemory,
+      movementSinceDecision: input.movementSinceDecision,
+      sheetMessage: input.sheetMessage
     }));
     return {
+      action: 'move',
       selectedIndex: input.options.findIndex(option => !input.agent.visitedPanos.includes(option.panoId)) >= 0
         ? input.options.findIndex(option => !input.agent.visitedPanos.includes(option.panoId))
         : 0,
       reasoning: `${input.agent.name} follows the clearest unfamiliar public route using only the sheet and the visible street.`,
-      drawingPrompt: `A symbolic visual message chosen by ${input.agent.name}`,
+      observation: `${input.agent.name} sees a broad public route beside a stone facade.`,
+      sheetInterpretation: `${input.agent.name} thinks the current sheet suggests convergence.`,
+      memoryUpdate: {
+        journeySummary: `${input.agent.name} remembers the streets already walked and the current stone facade.`,
+        partnerBelief: `${input.partnerName} is also moving and trying to converge.`,
+        visualVocabulary: 'A circle may indicate convergence.',
+        jointPlan: 'Keep moving while exchanging grounded landmarks.'
+      },
+      drawingIntent: `${input.agent.name} intends to show a grounded route toward convergence.`,
+      drawingPrompt: `A grounded hand sketch chosen by ${input.agent.name}`,
       fallbackCause: null
+    };
+  }
+}
+
+class ScriptedRendezvousModel extends FakeRendezvousModel {
+  constructor(decision) {
+    super();
+    this.decision = decision;
+  }
+
+  async decide(input) {
+    await super.decide(input);
+    return {
+      action: 'move',
+      selectedIndex: 0,
+      reasoning: 'I make a cooperative choice from what I remember.',
+      observation: 'A grounded public landmark is visible at this branch.',
+      sheetInterpretation: 'The received drawing may indicate convergence near a landmark.',
+      memoryUpdate: {
+        journeySummary: 'I remember my route and the public landmark at this branch.',
+        partnerBelief: 'My friend is actively moving and trying to coordinate with me.',
+        visualVocabulary: 'A circle may indicate convergence near a landmark.',
+        jointPlan: 'Coordinate movement and deliberate waiting through the sheet.'
+      },
+      drawingIntent: 'Show the landmark, my chosen action, and a convergence cue.',
+      drawingPrompt: 'A hand-drawn landmark, one clear path, and two circles approaching.',
+      fallbackCause: null,
+      ...this.decision
     };
   }
 }
@@ -218,6 +259,135 @@ test('corridor movement is automatic and a nonholder waits at a real branch', as
     assert.equal(controller.state.agents.ada.panoId, 'target');
     assert.equal(controller.state.agents.ada.lastDecision.mode, 'auto');
     assert.equal(model.calls.length, 0);
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('private memory survives restart, stays out of public state, and supports deliberate waiting', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-memory-test-'));
+  const model = new ScriptedRendezvousModel({ action: 'wait', waitTurns: 3 });
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: model,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad.owner = 'theo';
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'incoming-memory-sheet',
+      agentId: 'theo',
+      turn: 0,
+      drawingIntent: 'Tell Ada that Theo is approaching a shared landmark.',
+      drawingPrompt: 'Two paths approaching one landmark.'
+    });
+    await controller.resumePendingDrawing();
+
+    controller.state.status = 'running';
+    controller.running = true;
+    await controller.tick();
+    assert.equal(controller.state.agents.ada.panoId, 'ada-start');
+    assert.equal(controller.state.agents.ada.lastDecision.mode, 'decision_wait');
+    assert.equal(controller.state.agents.ada.waitTurnsRemaining, 2);
+    assert.equal(controller.state.agents.ada.privateMemory.receivedSheets[0].sequence, 1);
+    assert.match(controller.state.agents.ada.privateMemory.receivedSheets[0].interpretation, /convergence/);
+    await controller.resumePendingDrawing();
+    assert.equal(controller.state.agents.ada.privateMemory.sentMessages[0].sequence, 2);
+    assert.match(controller.state.agents.ada.privateMemory.sentMessages[0].intent, /landmark/);
+
+    const publicState = controller.getPublicState();
+    assert.equal(Object.hasOwn(publicState.agents.ada, 'privateMemory'), false);
+    assert.equal(Object.hasOwn(publicState.agents.ada, 'movementSinceDecision'), false);
+    assert.equal(Object.hasOwn(publicState.agents.ada, 'waitTurnsRemaining'), false);
+    assert.doesNotMatch(JSON.stringify(publicState), /approaching a shared landmark|circle may indicate convergence/i);
+
+    await controller.saveState();
+    const restartedModel = new ScriptedRendezvousModel({ action: 'move' });
+    const restarted = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: restartedModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await restarted.loadState();
+    assert.equal(restarted.state.agents.ada.privateMemory.receivedSheets[0].sequence, 1);
+    assert.equal(restarted.state.agents.ada.privateMemory.sentMessages[0].sequence, 2);
+    assert.equal(restarted.state.agents.ada.waitTurnsRemaining, 2);
+
+    restarted.state.turn = 2;
+    await restarted.tick();
+    assert.equal(restarted.state.agents.ada.panoId, 'ada-start');
+    assert.equal(restarted.state.agents.ada.lastDecision.mode, 'deliberate_wait');
+    assert.equal(restarted.state.agents.ada.waitTurnsRemaining, 1);
+    assert.equal(restartedModel.calls.length, 0);
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a holder can deliberately retrace a walked route at a genuine branch', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-retrace-test-'));
+  const streetView = new FakeStreetView();
+  streetView.nodes.set('memory-hub', {
+    panoId: 'memory-hub',
+    position: { lat: 40.7600, lng: -73.9800 },
+    links: [
+      { pano: 'fresh-west', heading: 270, description: 'unfamiliar west route' },
+      { pano: 'fresh-east', heading: 90, description: 'unfamiliar east route' },
+      { pano: 'remembered-south', heading: 180, description: 'back toward the remembered arch' }
+    ]
+  });
+  streetView.nodes.set('fresh-west', {
+    panoId: 'fresh-west',
+    position: { lat: 40.7600, lng: -73.9810 },
+    links: [{ pano: 'memory-hub', heading: 90, description: 'back to the branch' }]
+  });
+  streetView.nodes.set('fresh-east', {
+    panoId: 'fresh-east',
+    position: { lat: 40.7600, lng: -73.9790 },
+    links: [{ pano: 'memory-hub', heading: 270, description: 'back to the branch' }]
+  });
+  streetView.nodes.set('remembered-south', {
+    panoId: 'remembered-south',
+    position: { lat: 40.7590, lng: -73.9800 },
+    links: [{ pano: 'memory-hub', heading: 0, description: 'return to the branch' }]
+  });
+  const model = new ScriptedRendezvousModel({ action: 'retrace', selectedIndex: 2 });
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView,
+      agentModel: model,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.status = 'running';
+    controller.running = true;
+    controller.state.agents.ada.panoId = 'memory-hub';
+    controller.state.agents.ada.position = { lat: 40.7600, lng: -73.9800 };
+    controller.state.agents.ada.path.push({ ...controller.state.agents.ada.position, panoId: 'memory-hub' });
+    controller.state.agents.ada.visitedPanos = ['remembered-south', 'memory-hub'];
+
+    await controller.tick();
+    assert.equal(model.calls.length, 1);
+    assert.equal(model.calls[0].options.length, 3);
+    assert.equal(model.calls[0].options[2].visited, true);
+    assert.equal(controller.state.agents.ada.panoId, 'remembered-south');
+    assert.equal(controller.state.agents.ada.lastDecision.mode, 'retrace');
+    await controller.resumePendingDrawing();
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
     else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
@@ -319,6 +489,58 @@ test('a live v4 run migrates in place with an exact rollback save and rasterized
     assert.ok(imagePath);
     assert.ok((await fsp.stat(imagePath)).size > 100);
   } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('an active run gains private memory with an exact pre-migration rollback save', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-memory-migration-test-'));
+  try {
+    const first = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await first.createRun();
+    first.state.status = 'paused';
+    first.state.turn = 88;
+    for (const agent of Object.values(first.state.agents)) {
+      delete agent.privateMemory;
+      delete agent.movementSinceDecision;
+      delete agent.waitTurnsRemaining;
+    }
+    const original = `${JSON.stringify(first.state, null, 2)}\n`;
+    await fsp.writeFile(path.join(tempDir, 'rendezvous-current.json'), original);
+
+    const migrated = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await migrated.loadState();
+
+    assert.equal(migrated.state.turn, 88);
+    assert.equal(migrated.state.agents.ada.privateMemory.version, 1);
+    assert.equal(migrated.state.agents.theo.privateMemory.version, 1);
+    assert.match(migrated.state.agents.ada.privateMemory.journeySummary, /unfamiliar Manhattan corner/);
+    assert.equal(
+      await fsp.readFile(
+        path.join(tempDir, 'rendezvous-runs', `${first.state.runId}-pre-memory-v1.json`),
+        'utf8'
+      ),
+      original
+    );
+    const persisted = JSON.parse(await fsp.readFile(path.join(tempDir, 'rendezvous-current.json'), 'utf8'));
+    assert.equal(persisted.agents.ada.privateMemory.version, 1);
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
 });
