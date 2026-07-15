@@ -1,14 +1,18 @@
 import path from 'path';
 import * as fsp from 'fs/promises';
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { StreetViewHeadless } from '../services/streetViewHeadless.js';
 import { calculateBearing } from '../utils/geoUtils.js';
 import { RendezvousModelService } from './rendezvousModel.js';
+import { RendezvousImageService } from './rendezvousImage.js';
 import {
-  appendScratchpadOperations,
-  createScratchpad,
-  currentScratchpadOperations,
+  commitRasterScratchpadMessage,
+  createRasterScratchpad,
+  failRasterScratchpadMessage,
   normalizeScratchpad,
+  normalizeRasterScratchpad,
+  publicRasterScratchpad,
+  queueRasterScratchpadMessage,
   renderScratchpad
 } from './scratchpad.js';
 
@@ -253,7 +257,8 @@ export class RendezvousController {
     dataDir,
     logger = console,
     streetView = null,
-    agentModel = null
+    agentModel = null,
+    imageModel = null
   } = {}) {
     this.emit = emit;
     this.logger = logger;
@@ -261,16 +266,17 @@ export class RendezvousController {
     this.savePath = path.join(dataDir, 'rendezvous-current.json');
     this.streetView = streetView || new StreetViewHeadless();
     this.agentModel = agentModel || new RendezvousModelService({ logger });
+    this.imageModel = imageModel || new RendezvousImageService({ logger });
     this.streetViewReady = false;
     this.panoramaCache = new Map();
     this.timer = null;
     this.running = false;
     this.stepInFlight = false;
+    this.drawingInFlight = null;
+    this.saveQueue = Promise.resolve();
     this.state = this.#emptyState();
 
     this.stepIntervalMs = parseIntOr(process.env.RENDEZVOUS_STEP_INTERVAL_MS, 1800);
-    this.padHandoffDelayTurns = parseIntOr(process.env.RENDEZVOUS_PAD_HANDOFF_DELAY_TURNS, 2);
-    this.padMaxHoldTurns = parseIntOr(process.env.RENDEZVOUS_PAD_MAX_HOLD_TURNS, 8);
     this.foundRadiusMeters = parseIntOr(process.env.RENDEZVOUS_FOUND_RADIUS_M, 125);
   }
 
@@ -313,7 +319,14 @@ export class RendezvousController {
     try {
       const raw = JSON.parse(await fsp.readFile(this.savePath, 'utf8'));
       if (raw?.mode === 'rendezvous' && raw?.runId) {
+        if (raw.status !== 'found' && Number(raw.scratchpad?.version) === 4) {
+          await this.#archivePreV5State(raw.runId);
+        }
         this.state = this.#normalizeLoadedState(raw);
+        if (this.state.status !== 'found' && Number(this.state.scratchpad?.version) === 4) {
+          await this.#migrateLegacyScratchpadToRaster();
+          await this.saveState();
+        }
       }
     } catch (error) {
       if (error.code !== 'ENOENT') {
@@ -323,11 +336,82 @@ export class RendezvousController {
     return this.getPublicState();
   }
 
+  async #archivePreV5State(runId) {
+    const safeRunId = String(runId).replace(/[^a-zA-Z0-9_-]/g, '');
+    if (!safeRunId) throw new Error('Cannot archive rendezvous state with an invalid run ID');
+    const archiveDir = path.join(this.dataDir, 'rendezvous-runs');
+    const archivePath = path.join(archiveDir, `${safeRunId}-pre-v5.json`);
+    await fsp.mkdir(archiveDir, { recursive: true });
+    try {
+      await fsp.access(archivePath);
+    } catch {
+      await fsp.copyFile(this.savePath, archivePath);
+    }
+  }
+
+  async #migrateLegacyScratchpadToRaster() {
+    if (Number(this.state.scratchpad?.version) !== 4 || !this.state.runId) return false;
+    const legacy = normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
+    const messageFrom = legacy.messageFrom === 'theo' ? 'theo' : legacy.messageFrom === 'ada' ? 'ada' : null;
+    const messageTo = messageFrom ? this.#partnerId(messageFrom) : null;
+    const owner = legacy.inTransit?.to === 'theo' || legacy.inTransit?.to === 'ada'
+      ? legacy.inTransit.to
+      : legacy.owner === 'theo' ? 'theo' : 'ada';
+    const raster = createRasterScratchpad({ owner, turn: this.state.turn });
+
+    if (messageFrom && messageTo) {
+      const messageId = `legacy-v4-${Math.max(1, legacy.sequence)}`;
+      const imageFile = `${messageId}.png`;
+      const directory = this.#drawingDirectory();
+      await fsp.mkdir(directory, { recursive: true });
+      const buffer = await renderScratchpad(legacy);
+      const destination = path.join(directory, imageFile);
+      const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+      await fsp.writeFile(temporary, buffer);
+      await fsp.rename(temporary, destination);
+      const imageSha256 = createHash('sha256').update(buffer).digest('hex');
+      raster.sequence = Math.max(1, legacy.sequence);
+      raster.currentMessage = {
+        id: messageId,
+        from: messageFrom,
+        to: messageTo,
+        turn: Math.max(0, Number(legacy.currentOperations?.at(-1)?.turn) || this.state.turn),
+        sequence: raster.sequence,
+        imageFile,
+        imageMimeType: 'image/png',
+        imageSha256,
+        createdAt: legacy.currentOperations?.at(-1)?.createdAt || legacy.updatedAt,
+        sentAt: legacy.updatedAt
+      };
+      raster.messageAudit = [{
+        ...raster.currentMessage,
+        drawingPrompt: '',
+        referenceViewIndices: [],
+        sourcePanoId: null,
+        imageModel: 'legacy-v4-renderer',
+        requestId: null,
+        status: 'migrated'
+      }];
+    }
+    raster.updatedAt = new Date().toISOString();
+    this.state.scratchpad = normalizeRasterScratchpad(raster, { turn: this.state.turn });
+    this.#recordEvent('scratchpad_migrated', {
+      fromVersion: 4,
+      toVersion: 5,
+      sequence: this.state.scratchpad.sequence,
+      owner: this.state.scratchpad.owner
+    });
+    return true;
+  }
+
   async saveState() {
-    await fsp.mkdir(path.dirname(this.savePath), { recursive: true });
-    const tempPath = `${this.savePath}.${process.pid}.${randomUUID()}.tmp`;
-    await fsp.writeFile(tempPath, `${JSON.stringify(this.state, null, 2)}\n`);
-    await fsp.rename(tempPath, this.savePath);
+    this.saveQueue = this.saveQueue.catch(() => {}).then(async () => {
+      await fsp.mkdir(path.dirname(this.savePath), { recursive: true });
+      const tempPath = `${this.savePath}.${process.pid}.${randomUUID()}.tmp`;
+      await fsp.writeFile(tempPath, `${JSON.stringify(this.state, null, 2)}\n`);
+      await fsp.rename(tempPath, this.savePath);
+    });
+    return this.saveQueue;
   }
 
   async #archiveCurrentState() {
@@ -415,14 +499,29 @@ export class RendezvousController {
       };
     }
 
+    const scratchpad = Number(this.state.scratchpad?.version) === 5
+      ? publicRasterScratchpad(this.state.scratchpad, {
+          imageUrlFor: message => `/api/rendezvous/drawings/${encodeURIComponent(this.state.runId)}/${encodeURIComponent(message.id)}`
+        })
+      : normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
     return {
       ...this.state,
       notebook: null,
-      scratchpad: normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn }),
+      scratchpad,
       agents,
       eventLog: (this.state.eventLog || []).map(event => sanitizePublicEvent(event)),
       telegrams: (this.state.telegrams || []).map(stripTelegramInternal)
     };
+  }
+
+  getDrawingPath(runId, messageId) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(String(runId)) || !/^[a-zA-Z0-9_-]+$/.test(String(messageId))) return null;
+    if (runId !== this.state.runId || Number(this.state.scratchpad?.version) !== 5) return null;
+    const message = normalizeRasterScratchpad(this.state.scratchpad).currentMessage;
+    if (!message || message.id !== messageId) return null;
+    const expected = path.resolve(this.dataDir, 'rendezvous-drawings', runId, message.imageFile);
+    const root = path.resolve(this.dataDir, 'rendezvous-drawings', runId);
+    return expected.startsWith(`${root}${path.sep}`) ? expected : null;
   }
 
   async start({ reset = false } = {}) {
@@ -442,6 +541,7 @@ export class RendezvousController {
       });
       await this.saveState();
       this.broadcastState();
+      void this.resumePendingDrawing();
       this.#scheduleNextTick(200);
     }
 
@@ -502,7 +602,7 @@ export class RendezvousController {
         theoDistanceToTarget: null
       },
       notebook: null,
-      scratchpad: createScratchpad({ owner: 'ada', turn: 0 }),
+      scratchpad: createRasterScratchpad({ owner: 'ada', turn: 0 }),
       agents,
       telegrams: [],
       eventLog: []
@@ -565,16 +665,15 @@ export class RendezvousController {
     if (this.stepInFlight || !this.running || this.state.status !== 'running') return this.getPublicState();
     this.stepInFlight = true;
     try {
-      this.#deliverScratchpad();
       const agentId = AGENT_ORDER[this.state.turn % AGENT_ORDER.length];
       await this.#stepAgent(agentId);
       this.state.turn += 1;
-      this.#deliverScratchpad();
       this.#updateMeetingMetrics();
       this.#checkFound();
       this.state.updatedAt = new Date().toISOString();
       await this.saveState();
       this.broadcastState();
+      void this.resumePendingDrawing();
       return this.getPublicState();
     } finally {
       this.stepInFlight = false;
@@ -586,15 +685,15 @@ export class RendezvousController {
     const partner = this.state.agents[this.#partnerId(agentId)];
     if (!agent || !partner) return;
 
-    agent.stepCount += 1;
     const current = await this.#navigateAndGetPanorama(agent.panoId);
     agent.panoId = current.panoId;
     agent.position = { lat: current.position.lat, lng: current.position.lng };
 
     let selected = null;
     let decisionReason = null;
-    let mode = 'search';
+    let mode = 'auto';
     let modelFallbackCause = null;
+    let waitingAtBranch = false;
 
     const localCandidates = await this.#candidatePanoramas(current.links || []);
     const unvisitedCandidates = localCandidates.filter(candidate =>
@@ -623,64 +722,80 @@ export class RendezvousController {
       }
     }
     if (candidates.length > 0) {
-      const scratchpad = normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
-      this.state.scratchpad = scratchpad;
-      const canEditPad = scratchpad.owner === agentId && !scratchpad.inTransit;
-      if (canEditPad) agent.padSeenSequence = scratchpad.sequence;
-      const throughSequence = Math.min(agent.padSeenSequence || 0, scratchpad.sequence);
-      const visiblePadOperations = currentScratchpadOperations(scratchpad, { throughSequence });
-      const partnerPadText = visiblePadOperations
-        .filter(operation => operation.author === partner.id)
-        .flatMap(operation => operation.type === 'sketch'
-          ? [operation.label, operation.secondaryLabel]
-          : [operation.text || operation.label])
-        .filter(Boolean)
-        .slice(-6);
-      const ownPadText = visiblePadOperations
-        .filter(operation => operation.author === agent.id)
-        .flatMap(operation => operation.type === 'sketch'
-          ? [operation.label, operation.secondaryLabel]
-          : [operation.text || operation.label])
-        .filter(Boolean)
-        .slice(-6);
-      const [screenshots, scratchpadBuffer] = await Promise.all([
-        this.#captureCandidateScreenshots(candidates),
-        renderScratchpad(scratchpad, { throughSequence })
-      ]);
-      const forcePass = canEditPad && this.state.turn - scratchpad.heldSinceTurn >= this.padMaxHoldTurns;
-      const decision = await this.agentModel.decide({
-        agent: {
-          id: agent.id,
-          name: agent.name,
-          style: agent.style,
-          visitedPanos: [...(agent.visitedPanos || [])],
-          recentNotes: [...(agent.recentNotes || [])],
-          recentMovement: (agent.path || []).length > 1
-            ? `You most recently moved ${compassDirection(agent.heading)} into this panorama.`
-            : 'You have not moved yet from your starting panorama.',
-          currentRouteLabel: agent.lastDecision?.selectedLabel || null
-        },
-        partnerName: partner.name,
-        options: candidates.map(candidate => ({
-          panoId: candidate.panoId,
-          heading: candidate.heading,
-          label: candidate.label
-        })),
-        screenshots,
-        scratchpadBuffer,
-        canEditPad,
-        forcePass,
-        ownPadText,
-        partnerPadText,
-        padStatus: this.#padStatusFor(agentId)
-      });
-      selected = candidates[decision.selectedIndex] || candidates[0];
-      decisionReason = decision.reasoning;
-      modelFallbackCause = decision.fallbackCause || null;
-      this.#applyScratchpadDecision(agentId, decision);
+      const unexplored = candidates.filter(candidate => !(agent.visitedPanos || []).includes(candidate.panoId));
+      const choicePool = unexplored.length > 0 ? unexplored : candidates;
+      if (choicePool.length === 1) {
+        selected = choicePool[0];
+        decisionReason = `${agent.name} follows the only unexplored public continuation.`;
+      } else {
+        mode = 'decision';
+        if (Number(this.state.scratchpad?.version) !== 5) {
+          await this.#migrateLegacyScratchpadToRaster();
+        }
+        if (Number(this.state.scratchpad?.version) !== 5) {
+          throw new Error('Rendezvous sheet must be migrated before resolving a branch');
+        }
+        const scratchpad = normalizeRasterScratchpad(this.state.scratchpad, { turn: this.state.turn });
+        this.state.scratchpad = scratchpad;
+        if (scratchpad.pendingMessage || scratchpad.owner !== agentId) {
+          waitingAtBranch = true;
+          mode = 'waiting_for_sheet';
+          agent.status = 'waiting';
+          decisionReason = scratchpad.pendingMessage
+            ? `${agent.name} waits at the choice until the drawing has finished crossing between them.`
+            : `${agent.name} waits at the choice because ${partner.name} still holds the sheet.`;
+        } else {
+          const [screenshots, scratchpadImage] = await Promise.all([
+            this.#captureCandidateScreenshots(choicePool),
+            this.#readScratchpadImage(scratchpad)
+          ]);
+          const decision = await this.agentModel.decide({
+            agent: {
+              id: agent.id,
+              name: agent.name,
+              style: agent.style,
+              visitedPanos: [...(agent.visitedPanos || [])],
+              recentNotes: [...(agent.recentNotes || [])]
+            },
+            partnerName: partner.name,
+            options: choicePool.map(candidate => ({
+              panoId: candidate.panoId,
+              heading: candidate.heading,
+              label: candidate.label
+            })),
+            screenshots,
+            scratchpadBuffer: scratchpadImage.buffer,
+            scratchpadMimeType: scratchpadImage.mimeType
+          });
+          selected = choicePool[decision.selectedIndex] || choicePool[0];
+          decisionReason = decision.reasoning;
+          modelFallbackCause = decision.fallbackCause || null;
+          if (decision.drawingPrompt) {
+            const pendingId = randomUUID();
+            const referenceImages = decision.referenceViewIndices
+              .map(index => screenshots[index])
+              .filter(Buffer.isBuffer);
+            await this.#persistPendingReferences(pendingId, referenceImages);
+            this.state.scratchpad = queueRasterScratchpadMessage(scratchpad, {
+              id: pendingId,
+              agentId,
+              turn: this.state.turn,
+              drawingPrompt: decision.drawingPrompt,
+              referenceViewIndices: decision.referenceViewIndices,
+              sourcePanoId: current.panoId
+            });
+            this.#recordEvent('scratchpad_queued', {
+              id: pendingId,
+              from: agentId,
+              to: partner.id,
+              referenceCount: referenceImages.length
+            });
+          }
+        }
+      }
     }
 
-    if (!selected) {
+    if (!selected && !waitingAtBranch) {
       const recovered = await this.#recoverFromBlockedPano(agent, current);
       if (recovered) {
         mode = 'recovering';
@@ -694,7 +809,7 @@ export class RendezvousController {
         agent.status = 'waiting';
         decisionReason = `${agent.name} cannot find a useful public turn here, so they hold position briefly and listen for the other trail.`;
       }
-    } else {
+    } else if (selected) {
       const previousPosition = { ...agent.position };
       const pano = await this.#navigateAndGetPanorama(selected.panoId);
       agent.panoId = pano.panoId;
@@ -708,6 +823,7 @@ export class RendezvousController {
       });
       agent.visitedPanos.push(agent.panoId);
       if (agent.visitedPanos.length > 120) agent.visitedPanos.shift();
+      agent.stepCount += 1;
       if (loopEscapePanoId && agent.panoId === loopEscapePanoId) {
         mode = 'loop_break';
         this.#recordEvent('loop_recovery', {
@@ -792,89 +908,135 @@ export class RendezvousController {
     return screenshots;
   }
 
-  #padStatusFor(agentId) {
-    const scratchpad = normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
-    if (scratchpad.inTransit) {
-      return scratchpad.inTransit.to === agentId
-        ? `in transit to you from ${AGENTS[scratchpad.inTransit.from]?.name || 'your friend'}`
-        : `in transit to ${AGENTS[scratchpad.inTransit.to]?.name || 'your friend'}`;
-    }
-    if (scratchpad.owner === agentId) return 'in your hands';
-    return `held by ${AGENTS[scratchpad.owner]?.name || 'your friend'}`;
+  #drawingDirectory() {
+    return path.join(this.dataDir, 'rendezvous-drawings', this.state.runId || 'unknown');
   }
 
-  #applyScratchpadDecision(agentId, decision) {
-    const scratchpad = normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
-    if (scratchpad.owner !== agentId || scratchpad.inTransit) return;
-
-    const { scratchpad: updated, accepted } = appendScratchpadOperations(
-      scratchpad,
-      decision.padOperations,
-      { agentId, turn: this.state.turn }
-    );
-    this.state.scratchpad = updated;
-    this.state.agents[agentId].padSeenSequence = updated.sequence;
-    if (accepted.length > 0) {
-      this.#recordEvent('scratchpad_drawn', {
-        agentId,
-        agentName: AGENTS[agentId].name,
-        operationIds: accepted.map(operation => operation.id),
-        fromSequence: accepted[0].sequence,
-        toSequence: accepted.at(-1).sequence
-      });
-      this.emit('rendezvous-scratchpad', {
-        kind: 'drawn',
-        agentId,
-        operations: accepted,
-        sequence: updated.sequence
-      });
+  async #readScratchpadImage(scratchpad) {
+    const message = normalizeRasterScratchpad(scratchpad).currentMessage;
+    if (message?.imageFile) {
+      try {
+        return {
+          buffer: await fsp.readFile(path.join(this.#drawingDirectory(), message.imageFile)),
+          mimeType: message.imageMimeType || 'image/webp'
+        };
+      } catch (error) {
+        this.logger.warn?.(`Could not read current rendezvous drawing: ${error.message}`);
+      }
     }
-
-    if (decision.passPad) this.#passScratchpad(agentId);
-  }
-
-  #passScratchpad(agentId) {
-    const scratchpad = normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
-    if (scratchpad.owner !== agentId || scratchpad.inTransit) return;
-    const recipientId = this.#partnerId(agentId);
-    scratchpad.owner = null;
-    scratchpad.inTransit = {
-      from: agentId,
-      to: recipientId,
-      sentTurn: this.state.turn,
-      deliverTurn: this.state.turn + this.padHandoffDelayTurns
+    return {
+      buffer: await renderScratchpad(createRasterScratchpad({ owner: scratchpad?.owner, turn: this.state.turn })),
+      mimeType: 'image/webp'
     };
-    scratchpad.updatedAt = new Date().toISOString();
-    this.state.scratchpad = scratchpad;
-    this.#recordEvent('scratchpad_passed', { ...scratchpad.inTransit, sequence: scratchpad.sequence });
-    this.emit('rendezvous-scratchpad', {
-      kind: 'passed',
-      ...scratchpad.inTransit,
-      sequence: scratchpad.sequence
-    });
   }
 
-  #deliverScratchpad() {
-    const scratchpad = normalizeScratchpad(this.state.scratchpad, { turn: this.state.turn });
-    const transit = scratchpad.inTransit;
-    if (!transit || transit.deliverTurn > this.state.turn) {
-      this.state.scratchpad = scratchpad;
-      return;
+  async #persistPendingReferences(pendingId, buffers) {
+    if (!Array.isArray(buffers) || buffers.length === 0) return;
+    const directory = this.#drawingDirectory();
+    await fsp.mkdir(directory, { recursive: true });
+    await Promise.all(buffers.map((buffer, index) =>
+      fsp.writeFile(path.join(directory, `${pendingId}-reference-${index}.jpg`), buffer)
+    ));
+  }
+
+  async #readPendingReferences(pendingId) {
+    const buffers = [];
+    for (let index = 0; index < 4; index += 1) {
+      try {
+        buffers.push(await fsp.readFile(path.join(this.#drawingDirectory(), `${pendingId}-reference-${index}.jpg`)));
+      } catch (error) {
+        if (error.code !== 'ENOENT') this.logger.warn?.(`Could not read drawing reference: ${error.message}`);
+      }
     }
-    scratchpad.owner = transit.to;
-    scratchpad.inTransit = null;
-    scratchpad.heldSinceTurn = this.state.turn;
-    scratchpad.updatedAt = new Date().toISOString();
-    this.state.scratchpad = scratchpad;
-    if (this.state.agents[transit.to]) {
-      this.state.agents[transit.to].padSeenSequence = scratchpad.sequence;
+    return buffers;
+  }
+
+  async #removePendingReferences(pendingId) {
+    await Promise.all(Array.from({ length: 4 }, (_, index) =>
+      fsp.unlink(path.join(this.#drawingDirectory(), `${pendingId}-reference-${index}.jpg`)).catch(() => {})
+    ));
+  }
+
+  async resumePendingDrawing() {
+    if (this.drawingInFlight) return this.drawingInFlight;
+    const pending = Number(this.state.scratchpad?.version) === 5
+      ? normalizeRasterScratchpad(this.state.scratchpad).pendingMessage
+      : null;
+    if (!pending) return null;
+
+    const work = (async () => {
+      try {
+        const referenceImages = await this.#readPendingReferences(pending.id);
+        const generated = await this.imageModel.generate({
+          drawingPrompt: pending.drawingPrompt,
+          referenceImages
+        });
+        const directory = this.#drawingDirectory();
+        await fsp.mkdir(directory, { recursive: true });
+        const imageFile = `${pending.id}.webp`;
+        const destination = path.join(directory, imageFile);
+        const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+        await fsp.writeFile(temporary, generated.buffer);
+        await fsp.rename(temporary, destination);
+
+        const currentPending = normalizeRasterScratchpad(this.state.scratchpad).pendingMessage;
+        if (!currentPending || currentPending.id !== pending.id) return null;
+        const imageSha256 = createHash('sha256').update(generated.buffer).digest('hex');
+        this.state.scratchpad = commitRasterScratchpadMessage(this.state.scratchpad, {
+          pendingId: pending.id,
+          imageFile,
+          imageMimeType: generated.mimeType,
+          imageSha256,
+          imageModel: generated.model,
+          requestId: generated.requestId
+        });
+        const sent = this.state.scratchpad.currentMessage;
+        if (this.state.agents[sent.to]) this.state.agents[sent.to].padSeenSequence = sent.sequence;
+        this.#recordEvent('scratchpad_sent', {
+          id: sent.id,
+          from: sent.from,
+          to: sent.to,
+          sequence: sent.sequence,
+          imageSha256
+        });
+        await this.saveState();
+        this.emit('rendezvous-scratchpad', {
+          kind: 'sent',
+          id: sent.id,
+          from: sent.from,
+          to: sent.to,
+          sequence: sent.sequence
+        });
+        this.broadcastState();
+        return sent;
+      } catch (error) {
+        const currentPending = normalizeRasterScratchpad(this.state.scratchpad).pendingMessage;
+        if (currentPending?.id === pending.id) {
+          this.state.scratchpad = failRasterScratchpadMessage(this.state.scratchpad, {
+            pendingId: pending.id,
+            error: error.message
+          });
+          this.#recordEvent('scratchpad_failed', {
+            id: pending.id,
+            from: pending.from,
+            to: pending.to,
+            error: error.message
+          });
+          await this.saveState();
+          this.broadcastState();
+        }
+        this.logger.warn?.(`Rendezvous drawing ${pending.id} failed: ${error.message}`);
+        return null;
+      } finally {
+        await this.#removePendingReferences(pending.id);
+      }
+    })();
+    this.drawingInFlight = work;
+    try {
+      return await work;
+    } finally {
+      if (this.drawingInFlight === work) this.drawingInFlight = null;
     }
-    this.#recordEvent('scratchpad_delivered', { ...transit, sequence: scratchpad.sequence });
-    this.emit('rendezvous-scratchpad', {
-      kind: 'delivered',
-      ...transit,
-      sequence: scratchpad.sequence
-    });
   }
 
   async #recoverFromBlockedPano(agent, current) {

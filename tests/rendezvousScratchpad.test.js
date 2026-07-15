@@ -2,13 +2,53 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   appendScratchpadOperations,
+  commitRasterScratchpadMessage,
+  createRasterScratchpad,
   createScratchpad,
   currentScratchpadOperations,
   normalizeScratchpad,
+  publicRasterScratchpad,
+  queueRasterScratchpadMessage,
   renderScratchpad,
   sketchOperationSvg,
   SCRATCHPAD_MAX_OPERATIONS
 } from '../server/rendezvous/scratchpad.js';
+
+test('raster sheet changes and transfers only after a durable image commit', () => {
+  const queued = queueRasterScratchpadMessage(createRasterScratchpad({ owner: 'ada' }), {
+    id: 'message-one',
+    agentId: 'ada',
+    turn: 4,
+    drawingPrompt: 'Draw two arches and a yellow circle.',
+    referenceViewIndices: [0],
+    sourcePanoId: 'ada-branch'
+  });
+  assert.equal(queued.owner, 'ada');
+  assert.equal(queued.currentMessage, null);
+  assert.equal(queued.pendingMessage.status, 'generating');
+
+  const committed = commitRasterScratchpadMessage(queued, {
+    pendingId: 'message-one',
+    imageFile: 'message-one.webp',
+    imageSha256: 'hash',
+    imageModel: 'gpt-image-2'
+  });
+  assert.equal(committed.owner, 'theo');
+  assert.equal(committed.pendingMessage, null);
+  assert.equal(committed.currentMessage.from, 'ada');
+  assert.equal(committed.currentMessage.to, 'theo');
+  assert.equal(committed.sequence, 1);
+
+  const publicSheet = publicRasterScratchpad(committed, {
+    imageUrlFor: message => `/drawings/${message.id}`
+  });
+  assert.equal(publicSheet.currentMessage.imageUrl, '/drawings/message-one');
+  assert.equal(Object.hasOwn(publicSheet, 'messageAudit'), false);
+  assert.equal(Object.hasOwn(publicSheet, 'pendingMessage'), false);
+  assert.equal(Object.hasOwn(publicSheet.currentMessage, 'imageFile'), false);
+  assert.equal(Object.hasOwn(publicSheet.currentMessage, 'imageSha256'), false);
+  assert.doesNotMatch(JSON.stringify(publicSheet), /arches|drawingPrompt|sourcePanoId/);
+});
 
 test('primitive model output is composed into one authored street sketch', async () => {
   const { scratchpad, accepted } = appendScratchpadOperations(createScratchpad(), [
@@ -136,5 +176,7 @@ test('frontend scratchpad renderer includes the scene composer and pencil treatm
   assert.match(source, /scratchpadSketchSvg/);
   assert.match(source, /rv-pencil/);
   assert.match(source, /trafficLight/);
-  assert.match(source, /latest note/);
+  assert.match(source, /rvScratchpadImage/);
+  assert.match(source, /currentMessage/);
+  assert.doesNotMatch(source, /latest note/);
 });

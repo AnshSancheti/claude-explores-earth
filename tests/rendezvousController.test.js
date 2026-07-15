@@ -7,6 +7,7 @@ import {
   RendezvousController,
   isShortPanoLoop
 } from '../server/rendezvous/rendezvousController.js';
+import { queueRasterScratchpadMessage } from '../server/rendezvous/scratchpad.js';
 
 function distance(pos1, pos2) {
   const lat1 = Number(pos1.lat);
@@ -122,28 +123,35 @@ class FakeRendezvousModel {
     this.calls.push(structuredClone({
       agent: input.agent,
       partnerName: input.partnerName,
-      options: input.options,
-      canEditPad: input.canEditPad,
-      forcePass: input.forcePass,
-      padStatus: input.padStatus,
-      ownPadText: input.ownPadText,
-      partnerPadText: input.partnerPadText
+      options: input.options
     }));
     return {
       selectedIndex: input.options.findIndex(option => !input.agent.visitedPanos.includes(option.panoId)) >= 0
         ? input.options.findIndex(option => !input.agent.visitedPanos.includes(option.panoId))
         : 0,
       reasoning: `${input.agent.name} follows the clearest unfamiliar public route using only the sheet and the visible street.`,
-      padOperations: input.canEditPad
-        ? [{
-            type: 'text',
-            text: `${input.agent.name}: broad crossing`,
-            at: { x: 0.12, y: input.agent.id === 'ada' ? 0.2 : 0.35 },
-            size: 28
-          }]
-        : [],
-      passPad: input.canEditPad,
+      drawingPrompt: `A loose observational sketch chosen by ${input.agent.name}`,
+      referenceViewIndices: [0],
       fallbackCause: null
+    };
+  }
+}
+
+class FakeImageModel {
+  constructor() {
+    this.calls = [];
+  }
+
+  async generate(input) {
+    this.calls.push({
+      drawingPrompt: input.drawingPrompt,
+      referenceCount: input.referenceImages.length
+    });
+    return {
+      buffer: Buffer.from(`fake-raster-${this.calls.length}`),
+      mimeType: 'image/webp',
+      model: 'fake-image',
+      requestId: `request-${this.calls.length}`
     };
   }
 }
@@ -179,18 +187,158 @@ test('isShortPanoLoop detects an active ABAB suffix after an older third pano', 
   assert.equal(isShortPanoLoop(['midtown', 'central', 'midtown', '4d', 'midtown', 'east']), false);
 });
 
+test('corridor movement is automatic and a nonholder waits at a real branch', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-protocol-test-'));
+  const model = new FakeRendezvousModel();
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: model,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.status = 'running';
+    controller.running = true;
+    controller.state.scratchpad.owner = 'theo';
+
+    await controller.tick();
+    assert.equal(controller.state.agents.ada.panoId, 'ada-start');
+    assert.equal(controller.state.agents.ada.stepCount, 0);
+    assert.equal(controller.state.agents.ada.lastDecision.mode, 'waiting_for_sheet');
+    assert.equal(model.calls.length, 0);
+
+    controller.state.turn = 0;
+    controller.state.agents.ada.panoId = 'ada-mid';
+    controller.state.agents.ada.position = { lat: 40.7559, lng: -73.9838 };
+    controller.state.agents.ada.path.push({ ...controller.state.agents.ada.position, panoId: 'ada-mid' });
+    controller.state.agents.ada.visitedPanos = ['ada-start', 'ada-mid'];
+    await controller.tick();
+    assert.equal(controller.state.agents.ada.panoId, 'target');
+    assert.equal(controller.state.agents.ada.lastDecision.mode, 'auto');
+    assert.equal(model.calls.length, 0);
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a persisted pending drawing resumes after controller restart', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-restart-test-'));
+  try {
+    const first = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await first.createRun();
+    first.state.scratchpad = queueRasterScratchpadMessage(first.state.scratchpad, {
+      id: 'restart-message',
+      agentId: 'ada',
+      turn: 3,
+      drawingPrompt: 'A soft graphite sketch of three receding arches.'
+    });
+    await first.saveState();
+
+    const imageModel = new FakeImageModel();
+    const restarted = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel,
+      logger: { warn() {}, error() {} }
+    });
+    await restarted.loadState();
+    await restarted.resumePendingDrawing();
+    assert.equal(restarted.state.scratchpad.pendingMessage, null);
+    assert.equal(restarted.state.scratchpad.currentMessage.id, 'restart-message');
+    assert.equal(restarted.state.scratchpad.owner, 'theo');
+    assert.equal(imageModel.calls.length, 1);
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a live v4 run migrates in place with an exact rollback save and rasterized current sheet', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-v4-migration-test-'));
+  const runId = 'active-v4-run';
+  const legacyState = {
+    mode: 'rendezvous',
+    runId,
+    status: 'paused',
+    turn: 42,
+    meeting: { goal: 'find_each_other', distanceMeters: 800 },
+    agents: {},
+    eventLog: [],
+    scratchpad: {
+      version: 4,
+      width: 768,
+      height: 512,
+      owner: 'theo',
+      inTransit: null,
+      sequence: 2,
+      heldSinceTurn: 40,
+      operations: [
+        { id: 'replace', type: 'replaceSheet', author: 'ada', sequence: 1, turn: 40 },
+        { id: 'sketch', type: 'sketch', author: 'ada', scene: 'landmark', details: ['tower'], label: '', secondaryLabel: '', movement: null, sequence: 2, turn: 40 }
+      ]
+    }
+  };
+  const original = `${JSON.stringify(legacyState, null, 2)}\n`;
+  await fsp.writeFile(path.join(tempDir, 'rendezvous-current.json'), original);
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.loadState();
+
+    assert.equal(controller.state.runId, runId);
+    assert.equal(controller.state.turn, 42);
+    assert.equal(controller.state.scratchpad.version, 5);
+    assert.equal(controller.state.scratchpad.owner, 'theo');
+    assert.equal(controller.state.scratchpad.currentMessage.from, 'ada');
+    assert.equal(controller.state.scratchpad.currentMessage.to, 'theo');
+    assert.equal(controller.state.eventLog.at(-1).type, 'scratchpad_migrated');
+    assert.equal(
+      await fsp.readFile(path.join(tempDir, 'rendezvous-runs', `${runId}-pre-v5.json`), 'utf8'),
+      original
+    );
+    const imagePath = controller.getDrawingPath(runId, controller.state.scratchpad.currentMessage.id);
+    assert.ok(imagePath);
+    assert.ok((await fsp.stat(imagePath)).size > 100);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('RendezvousController uses one causal drawing pad and can find the other agent', async () => {
   const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
   process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-test-'));
   const events = [];
   const model = new FakeRendezvousModel();
+  const imageModel = new FakeImageModel();
 
   try {
     const controller = new RendezvousController({
       dataDir: tempDir,
       streetView: new FakeStreetView(),
       agentModel: model,
+      imageModel,
       emit: (event, data) => events.push({ event, data }),
       logger: { warn() {}, error() {} }
     });
@@ -201,6 +349,7 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
 
     for (let i = 0; i < 6 && controller.state.status !== 'found'; i += 1) {
       await controller.tick();
+      await controller.resumePendingDrawing();
     }
 
     assert.equal(controller.state.status, 'found');
@@ -210,32 +359,23 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
         /only the sheet/.test(entry.data?.reasoning || '')
     ));
     assert.ok(controller.state.scratchpad);
-    assert.ok(controller.state.scratchpad.operations.length > 0);
-    assert.ok(events.some(entry => entry.event === 'rendezvous-scratchpad' && entry.data?.kind === 'drawn'));
-    assert.ok(events.some(entry => entry.event === 'rendezvous-scratchpad' && entry.data?.kind === 'delivered'));
-    assert.ok(controller.state.eventLog.some(entry => entry.type === 'scratchpad_drawn'));
-    assert.ok(controller.state.eventLog.some(entry => entry.type === 'scratchpad_passed'));
+    assert.ok(controller.state.scratchpad.currentMessage);
+    assert.ok(events.some(entry => entry.event === 'rendezvous-scratchpad' && entry.data?.kind === 'sent'));
+    assert.ok(controller.state.eventLog.some(entry => entry.type === 'scratchpad_queued'));
+    assert.ok(controller.state.eventLog.some(entry => entry.type === 'scratchpad_sent'));
+    assert.equal(imageModel.calls.length, model.calls.length);
     assert.ok(model.calls.length > 0);
     for (const call of model.calls) {
       assert.equal(Object.hasOwn(call.agent, 'position'), false);
       assert.equal(Object.hasOwn(call.agent, 'path'), false);
       assert.equal(Object.hasOwn(call, 'partner'), false);
       assert.equal(Object.hasOwn(call, 'distanceToFriend'), false);
-      assert.equal(typeof call.agent.recentMovement, 'string');
-      assert.doesNotMatch(call.agent.recentMovement, /-?\d+\.\d{3,}|partner|friend|distance/i);
       assert.equal(call.options.some(option => Object.hasOwn(option, 'distanceToFriend')), false);
       assert.equal(call.options.some(option => Object.hasOwn(option, 'position')), false);
-      assert.ok(Array.isArray(call.ownPadText));
-      assert.ok(Array.isArray(call.partnerPadText));
-      assert.equal(call.ownPadText.some(text => /-?\d+\.\d{3,}|distance|partner|friend/i.test(text)), false);
-      assert.equal(call.partnerPadText.some(text => /-?\d+\.\d{3,}|distance/i.test(text)), false);
-      assert.equal(call.ownPadText.some(text => !String(text).startsWith(call.agent.name)), false);
-      assert.equal(call.partnerPadText.some(text => String(text).startsWith(call.agent.name)), false);
+      assert.equal(Object.hasOwn(call, 'ownPadText'), false);
+      assert.equal(Object.hasOwn(call, 'partnerPadText'), false);
     }
-    assert.ok(model.calls.some(call =>
-      call.options.some(option => call.agent.visitedPanos.includes(option.panoId)) &&
-      call.options.some(option => !call.agent.visitedPanos.includes(option.panoId))
-    ), 'agents should retain a deliberate backtracking option before a loop is established');
+    assert.ok(model.calls.every(call => call.options.length >= 2));
 
     const publicState = controller.getPublicState();
     const completedRunId = publicState.runId;
@@ -245,12 +385,11 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
     assert.equal(publicState.meeting.adaDistanceToTarget, null);
     assert.equal(publicState.meeting.theoDistanceToTarget, null);
     assert.equal(publicState.notebook, null);
-    assert.equal(publicState.scratchpad.version, 4);
-    assert.ok(Array.isArray(publicState.scratchpad.operations));
-    assert.ok(Array.isArray(publicState.scratchpad.currentOperations));
-    assert.ok(publicState.scratchpad.currentOperations.length <= publicState.scratchpad.operations.length);
-    assert.equal(publicState.scratchpad.currentOperations.some(operation => operation.type === 'replaceMine'), false);
-    assert.equal(publicState.scratchpad.operations.some(operation => /-?\d+\.\d{3,}/.test(operation.text || '')), false);
+    assert.equal(publicState.scratchpad.version, 5);
+    assert.match(publicState.scratchpad.currentMessage.imageUrl, /^\/api\/rendezvous\/drawings\//);
+    assert.equal(Object.hasOwn(publicState.scratchpad, 'messageAudit'), false);
+    assert.equal(Object.hasOwn(publicState.scratchpad, 'pendingMessage'), false);
+    assert.doesNotMatch(JSON.stringify(publicState.scratchpad), /observational sketch chosen/i);
     assert.equal(publicState.eventLog.some(entry => entry.type === 'agent_step' && entry.payload.searchTargetName), false);
     assert.equal(publicState.eventLog.some(entry => Object.hasOwn(entry.payload || {}, 'targetName')), false);
     assert.equal(publicState.eventLog.some(entry => Object.hasOwn(entry.payload || {}, 'distanceToTarget')), false);
@@ -416,7 +555,7 @@ test('legacy rendezvous stays read-only until an explicit start archives it', as
     await controller.stop();
 
     assert.notEqual(controller.state.runId, legacyRunId);
-    assert.equal(controller.state.scratchpad.version, 4);
+    assert.equal(controller.state.scratchpad.version, 5);
     const archived = JSON.parse(await fsp.readFile(
       path.join(tempDir, 'rendezvous-runs', `${legacyRunId}.json`),
       'utf8'

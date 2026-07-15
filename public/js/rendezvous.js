@@ -561,7 +561,9 @@
 
     renderScratchpad() {
       const svg = document.getElementById('rvScratchpad');
+      const image = document.getElementById('rvScratchpadImage');
       const scratchpad = this.state?.scratchpad || {};
+      const rasterMessage = Number(scratchpad.version) >= 5 ? scratchpad.currentMessage : null;
       const operations = Array.isArray(scratchpad.currentOperations)
         ? scratchpad.currentOperations
         : (Array.isArray(scratchpad.operations) ? scratchpad.operations : []);
@@ -577,29 +579,28 @@
         operation,
         Number(operation.sequence || 0) > previousSequence
       )).join('');
-      if (svg) {
-        svg.innerHTML = `${defs}${ruledLines}${margin}${marks || '<text class="rv-pad-empty" x="384" y="270" text-anchor="middle">Nothing here yet.</text>'}`;
+      if (rasterMessage?.imageUrl && image) {
+        if (image.src !== new URL(rasterMessage.imageUrl, window.location.origin).href) {
+          image.src = rasterMessage.imageUrl;
+        }
+        image.alt = `Drawing from ${rasterMessage.from === 'theo' ? 'Theo' : 'Ada'} to ${rasterMessage.to === 'ada' ? 'Ada' : 'Theo'}`;
+        image.hidden = false;
+        if (svg) svg.hidden = true;
+      } else if (svg) {
+        if (image) image.hidden = true;
+        svg.hidden = false;
+        const emptyState = Number(scratchpad.version) >= 5
+          ? ''
+          : '<text class="rv-pad-empty" x="384" y="270" text-anchor="middle">Nothing here yet.</text>';
+        svg.innerHTML = `${defs}${ruledLines}${margin}${marks || emptyState}`;
       }
 
-      const status = document.getElementById('rvPadStatus');
       const sequenceLabel = document.getElementById('rvPadSequence');
-      const transit = scratchpad.inTransit;
-      if (status) {
-        const messageFrom = scratchpad.messageFrom === 'theo' ? 'Theo' : scratchpad.messageFrom === 'ada' ? 'Ada' : null;
-        const messageTo = scratchpad.messageTo === 'ada' ? 'Ada' : scratchpad.messageTo === 'theo' ? 'Theo' : null;
-        if (transit) {
-          const from = transit.from === 'theo' ? 'Theo' : 'Ada';
-          const to = transit.to === 'ada' ? 'Ada' : 'Theo';
-          status.textContent = `on its way from ${from} to ${to}`;
-        } else if (messageFrom && messageTo) {
-          status.textContent = `${messageFrom} to ${messageTo}`;
-        } else {
-          status.textContent = 'waiting for a note';
-        }
-      }
       if (sequenceLabel) {
-        const visibleCount = operations.length;
-        sequenceLabel.textContent = sequence > 0 && visibleCount > 0 ? 'latest note' : 'blank';
+        const from = scratchpad.messageFrom === 'theo' ? 'Theo' : scratchpad.messageFrom === 'ada' ? 'Ada' : null;
+        const to = scratchpad.messageTo === 'ada' ? 'Ada' : scratchpad.messageTo === 'theo' ? 'Theo' : null;
+        const owner = scratchpad.owner === 'theo' ? 'Theo' : 'Ada';
+        sequenceLabel.textContent = from && to ? `${from} → ${to}` : `${owner} holds it`;
       }
       this.lastScratchpadSequence = Math.max(previousSequence, sequence);
     }

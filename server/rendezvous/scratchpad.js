@@ -8,6 +8,10 @@ export const SCRATCHPAD_MAX_OPS_PER_TURN = 12;
 export const SCRATCHPAD_MAX_CURRENT_OPS_PER_AUTHOR = 9;
 export const SCRATCHPAD_MAX_CURRENT_TEXT_OPS_PER_AUTHOR = 3;
 export const SCRATCHPAD_LABEL_MAX_CHARS = 28;
+export const RASTER_SCRATCHPAD_VERSION = 5;
+export const RASTER_SCRATCHPAD_WIDTH = 1152;
+export const RASTER_SCRATCHPAD_HEIGHT = 768;
+export const RASTER_SCRATCHPAD_MAX_MESSAGES = 120;
 
 const SCRATCHPAD_VERSION = 4;
 const SKETCH_SCENES = new Set(['intersection', 'storefront', 'park', 'station', 'landmark']);
@@ -29,6 +33,228 @@ const AGENT_INK = Object.freeze({
   ada: '#24211d',
   theo: '#087fa8'
 });
+
+function normalizedAgentId(value, fallback = 'ada') {
+  return value === 'theo' ? 'theo' : value === 'ada' ? 'ada' : fallback;
+}
+
+function cleanString(value, maxLength = 4000) {
+  return typeof value === 'string'
+    ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').trim().slice(0, maxLength)
+    : '';
+}
+
+function normalizeRasterMessage(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const from = normalizedAgentId(raw.from, null);
+  const to = normalizedAgentId(raw.to, null);
+  const id = cleanString(raw.id, 120);
+  const imageFile = cleanString(raw.imageFile, 240);
+  if (!id || !from || !to || from === to || !/^[a-zA-Z0-9_.-]+$/.test(imageFile)) return null;
+  return {
+    id,
+    from,
+    to,
+    turn: Math.max(0, Math.floor(Number(raw.turn) || 0)),
+    sequence: Math.max(1, Math.floor(Number(raw.sequence) || 1)),
+    imageFile,
+    imageMimeType: cleanString(raw.imageMimeType, 80) || 'image/webp',
+    imageSha256: cleanString(raw.imageSha256, 128) || null,
+    createdAt: raw.createdAt || null,
+    sentAt: raw.sentAt || raw.createdAt || null
+  };
+}
+
+function normalizePendingRasterMessage(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const from = normalizedAgentId(raw.from, null);
+  const to = normalizedAgentId(raw.to, null);
+  const id = cleanString(raw.id, 120);
+  const drawingPrompt = cleanString(raw.drawingPrompt, 2400);
+  if (!id || !from || !to || from === to || !drawingPrompt) return null;
+  return {
+    id,
+    from,
+    to,
+    turn: Math.max(0, Math.floor(Number(raw.turn) || 0)),
+    drawingPrompt,
+    referenceViewIndices: Array.isArray(raw.referenceViewIndices)
+      ? [...new Set(raw.referenceViewIndices.map(Number).filter(Number.isInteger))].slice(0, 4)
+      : [],
+    sourcePanoId: cleanString(raw.sourcePanoId, 240) || null,
+    status: 'generating',
+    attempts: Math.max(0, Math.floor(Number(raw.attempts) || 0)),
+    createdAt: raw.createdAt || new Date().toISOString()
+  };
+}
+
+export function createRasterScratchpad({ owner = 'ada', turn = 0 } = {}) {
+  return {
+    version: RASTER_SCRATCHPAD_VERSION,
+    width: RASTER_SCRATCHPAD_WIDTH,
+    height: RASTER_SCRATCHPAD_HEIGHT,
+    owner: normalizedAgentId(owner),
+    sequence: 0,
+    heldSinceTurn: Math.max(0, Math.floor(Number(turn) || 0)),
+    currentMessage: null,
+    pendingMessage: null,
+    messageAudit: [],
+    updatedAt: new Date().toISOString()
+  };
+}
+
+export function normalizeRasterScratchpad(raw, { turn = 0 } = {}) {
+  const base = createRasterScratchpad({ owner: raw?.owner, turn });
+  if (!raw || Number(raw.version) !== RASTER_SCRATCHPAD_VERSION) return base;
+  const currentMessage = normalizeRasterMessage(raw.currentMessage);
+  const pendingMessage = normalizePendingRasterMessage(raw.pendingMessage);
+  const audit = Array.isArray(raw.messageAudit)
+    ? raw.messageAudit.slice(-RASTER_SCRATCHPAD_MAX_MESSAGES).map(entry => ({
+        id: cleanString(entry?.id, 120),
+        from: normalizedAgentId(entry?.from, null),
+        to: normalizedAgentId(entry?.to, null),
+        turn: Math.max(0, Math.floor(Number(entry?.turn) || 0)),
+        sequence: Math.max(0, Math.floor(Number(entry?.sequence) || 0)),
+        drawingPrompt: cleanString(entry?.drawingPrompt, 2400),
+        referenceViewIndices: Array.isArray(entry?.referenceViewIndices)
+          ? [...new Set(entry.referenceViewIndices.map(Number).filter(Number.isInteger))].slice(0, 4)
+          : [],
+        sourcePanoId: cleanString(entry?.sourcePanoId, 240) || null,
+        imageFile: cleanString(entry?.imageFile, 240) || null,
+        imageSha256: cleanString(entry?.imageSha256, 128) || null,
+        imageModel: cleanString(entry?.imageModel, 120) || null,
+        requestId: cleanString(entry?.requestId, 240) || null,
+        status: cleanString(entry?.status, 40) || 'sent',
+        error: cleanString(entry?.error, 500) || null,
+        createdAt: entry?.createdAt || null,
+        sentAt: entry?.sentAt || null
+      })).filter(entry => entry.id && entry.from && entry.to)
+    : [];
+  return {
+    ...base,
+    owner: normalizedAgentId(raw.owner),
+    sequence: Math.max(
+      Math.max(0, Math.floor(Number(raw.sequence) || 0)),
+      currentMessage?.sequence || 0
+    ),
+    heldSinceTurn: Math.max(0, Math.floor(Number(raw.heldSinceTurn) || turn)),
+    currentMessage,
+    pendingMessage,
+    messageAudit: audit,
+    updatedAt: raw.updatedAt || base.updatedAt
+  };
+}
+
+export function queueRasterScratchpadMessage(scratchpad, {
+  agentId,
+  turn,
+  drawingPrompt,
+  referenceViewIndices = [],
+  sourcePanoId = null,
+  id = randomUUID()
+}) {
+  const normalized = normalizeRasterScratchpad(scratchpad, { turn });
+  if (normalized.owner !== agentId || normalized.pendingMessage) return normalized;
+  normalized.pendingMessage = normalizePendingRasterMessage({
+    id,
+    from: agentId,
+    to: oppositeAgent(agentId),
+    turn,
+    drawingPrompt,
+    referenceViewIndices,
+    sourcePanoId,
+    attempts: 0,
+    createdAt: new Date().toISOString()
+  });
+  normalized.updatedAt = new Date().toISOString();
+  return normalized;
+}
+
+export function commitRasterScratchpadMessage(scratchpad, {
+  pendingId,
+  imageFile,
+  imageMimeType = 'image/webp',
+  imageSha256 = null,
+  imageModel = null,
+  requestId = null,
+  sentAt = new Date().toISOString()
+}) {
+  const normalized = normalizeRasterScratchpad(scratchpad);
+  const pending = normalized.pendingMessage;
+  if (!pending || pending.id !== pendingId) return normalized;
+  const sequence = normalized.sequence + 1;
+  const message = normalizeRasterMessage({
+    ...pending,
+    sequence,
+    imageFile,
+    imageMimeType,
+    imageSha256,
+    sentAt
+  });
+  if (!message) return normalized;
+  normalized.currentMessage = message;
+  normalized.pendingMessage = null;
+  normalized.sequence = sequence;
+  normalized.owner = pending.to;
+  normalized.heldSinceTurn = pending.turn;
+  normalized.messageAudit = [...normalized.messageAudit, {
+    ...pending,
+    sequence,
+    imageFile,
+    imageSha256,
+    imageModel,
+    requestId,
+    status: 'sent',
+    sentAt
+  }].slice(-RASTER_SCRATCHPAD_MAX_MESSAGES);
+  normalized.updatedAt = sentAt;
+  return normalized;
+}
+
+export function failRasterScratchpadMessage(scratchpad, { pendingId, error }) {
+  const normalized = normalizeRasterScratchpad(scratchpad);
+  const pending = normalized.pendingMessage;
+  if (!pending || pending.id !== pendingId) return normalized;
+  normalized.messageAudit = [...normalized.messageAudit, {
+    ...pending,
+    sequence: normalized.sequence,
+    status: 'failed',
+    error: cleanString(error, 500),
+    sentAt: null
+  }].slice(-RASTER_SCRATCHPAD_MAX_MESSAGES);
+  normalized.pendingMessage = null;
+  normalized.updatedAt = new Date().toISOString();
+  return normalized;
+}
+
+export function publicRasterScratchpad(scratchpad, { imageUrlFor = null } = {}) {
+  const normalized = normalizeRasterScratchpad(scratchpad);
+  const currentMessage = normalized.currentMessage
+    ? {
+        id: normalized.currentMessage.id,
+        from: normalized.currentMessage.from,
+        to: normalized.currentMessage.to,
+        turn: normalized.currentMessage.turn,
+        sequence: normalized.currentMessage.sequence,
+        createdAt: normalized.currentMessage.createdAt,
+        sentAt: normalized.currentMessage.sentAt,
+        imageUrl: typeof imageUrlFor === 'function' ? imageUrlFor(normalized.currentMessage) : null
+      }
+    : null;
+  return {
+    version: normalized.version,
+    width: normalized.width,
+    height: normalized.height,
+    owner: normalized.owner,
+    sequence: normalized.sequence,
+    heldSinceTurn: normalized.heldSinceTurn,
+    currentMessage,
+    messageFrom: currentMessage?.from || null,
+    messageTo: currentMessage?.to || null,
+    isGenerating: Boolean(normalized.pendingMessage),
+    updatedAt: normalized.updatedAt
+  };
+}
 
 function clamp(value, min, max, fallback = min) {
   const number = Number(value);
@@ -474,6 +700,9 @@ export function currentScratchpadOperations(scratchpad, { throughSequence = Infi
 }
 
 export function normalizeScratchpad(raw, { turn = 0 } = {}) {
+  if (Number(raw?.version) === RASTER_SCRATCHPAD_VERSION) {
+    return normalizeRasterScratchpad(raw, { turn });
+  }
   const base = createScratchpad({ turn });
   if (!raw || typeof raw !== 'object' || Number(raw.version) < 2) return base;
   const migratedFromVersion = Math.max(2, Math.floor(Number(raw.version) || 2));
@@ -768,6 +997,18 @@ function operationSvg(operation) {
 }
 
 export async function renderScratchpad(scratchpad, { throughSequence = Infinity } = {}) {
+  if (Number(scratchpad?.version) === RASTER_SCRATCHPAD_VERSION) {
+    const rules = Array.from({ length: 12 }, (_, index) => {
+      const y = 78 + index * 57;
+      return `<line x1="32" y1="${y}" x2="1120" y2="${y}" stroke="#48676f" stroke-opacity="0.08" stroke-width="1" />`;
+    }).join('');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${RASTER_SCRATCHPAD_WIDTH}" height="${RASTER_SCRATCHPAD_HEIGHT}" viewBox="0 0 ${RASTER_SCRATCHPAD_WIDTH} ${RASTER_SCRATCHPAD_HEIGHT}">
+      <rect width="100%" height="100%" fill="#f2ecdd" />
+      ${rules}
+      <line x1="86" y1="28" x2="86" y2="740" stroke="#b44d43" stroke-opacity="0.12" stroke-width="1" />
+    </svg>`;
+    return sharp(Buffer.from(svg)).webp({ quality: 88 }).toBuffer();
+  }
   const normalized = normalizeScratchpad(scratchpad);
   const rules = Array.from({ length: 12 }, (_, index) => {
     const y = 52 + index * 38;

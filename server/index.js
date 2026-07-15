@@ -1679,6 +1679,20 @@ app.get('/api/rendezvous/state', async (req, res) => {
   }
 });
 
+app.get('/api/rendezvous/drawings/:runId/:messageId', async (req, res) => {
+  try {
+    if (!rendezvous) return res.status(404).json({ error: 'rendezvous_unavailable' });
+    if (!rendezvous.state?.runId) await rendezvous.loadState();
+    const drawingPath = rendezvous.getDrawingPath(req.params.runId, req.params.messageId);
+    if (!drawingPath) return res.status(404).json({ error: 'drawing_not_found' });
+    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.sendFile(drawingPath);
+  } catch (error) {
+    console.warn(`Failed to read rendezvous drawing: ${error.message}`);
+    res.status(500).json({ error: 'rendezvous_drawing_failed' });
+  }
+});
+
 app.post('/api/rendezvous/start', async (req, res) => {
   try {
     if (!rendezvous) return res.status(404).json({ error: 'rendezvous_unavailable' });
