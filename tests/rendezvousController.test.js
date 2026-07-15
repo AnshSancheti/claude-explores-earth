@@ -437,6 +437,64 @@ test('a persisted pending drawing resumes after controller restart', async () =>
   }
 });
 
+test('drawing cleanup removes only raster files no longer referenced by durable state', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-drawing-cleanup-test-'));
+  try {
+    const first = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await first.createRun();
+    first.state.scratchpad = queueRasterScratchpadMessage(first.state.scratchpad, {
+      id: 'retained-first',
+      agentId: 'ada',
+      turn: 1,
+      drawingPrompt: 'A first retained drawing.'
+    });
+    await first.resumePendingDrawing();
+
+    const drawingDir = path.join(tempDir, 'rendezvous-drawings', first.state.runId);
+    await fsp.writeFile(path.join(drawingDir, 'orphaned.webp'), 'orphan');
+    await fsp.writeFile(path.join(drawingDir, 'orphaned.png'), 'orphan');
+    await fsp.writeFile(path.join(drawingDir, 'operator-note.txt'), 'keep non-raster files');
+    await first.saveState();
+
+    const restarted = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await restarted.loadState();
+    assert.equal(await fsp.readFile(path.join(drawingDir, 'retained-first.webp'), 'utf8'), 'fake-raster-1');
+    await assert.rejects(fsp.access(path.join(drawingDir, 'orphaned.webp')), { code: 'ENOENT' });
+    await assert.rejects(fsp.access(path.join(drawingDir, 'orphaned.png')), { code: 'ENOENT' });
+    assert.equal(await fsp.readFile(path.join(drawingDir, 'operator-note.txt'), 'utf8'), 'keep non-raster files');
+
+    await fsp.writeFile(path.join(drawingDir, 'post-load-orphan.webp'), 'orphan');
+    restarted.state.scratchpad = queueRasterScratchpadMessage(restarted.state.scratchpad, {
+      id: 'retained-second',
+      agentId: 'theo',
+      turn: 2,
+      drawingPrompt: 'A second retained drawing.'
+    });
+    await restarted.resumePendingDrawing();
+    assert.equal(await fsp.readFile(path.join(drawingDir, 'retained-first.webp'), 'utf8'), 'fake-raster-1');
+    assert.equal(await fsp.readFile(path.join(drawingDir, 'retained-second.webp'), 'utf8'), 'fake-raster-1');
+    await assert.rejects(fsp.access(path.join(drawingDir, 'post-load-orphan.webp')), { code: 'ENOENT' });
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a live v4 run migrates in place with an exact rollback save and rasterized current sheet', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-v4-migration-test-'));
   const runId = 'active-v4-run';

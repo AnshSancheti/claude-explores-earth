@@ -356,6 +356,7 @@ export class RendezvousController {
         this.logger.warn?.(`Failed to read rendezvous state: ${error.message}`);
       }
     }
+    await this.#pruneUnreferencedDrawingFiles();
     return this.getPublicState();
   }
 
@@ -1007,6 +1008,50 @@ export class RendezvousController {
     return path.join(this.dataDir, 'rendezvous-drawings', this.state.runId || 'unknown');
   }
 
+  async #pruneUnreferencedDrawingFiles() {
+    if (
+      Number(this.state.scratchpad?.version) !== 5 ||
+      !/^[a-zA-Z0-9_-]+$/.test(String(this.state.runId || ''))
+    ) {
+      return 0;
+    }
+
+    const scratchpad = normalizeRasterScratchpad(this.state.scratchpad, { turn: this.state.turn });
+    const referenced = new Set([
+      scratchpad.currentMessage?.imageFile,
+      ...scratchpad.messageAudit.map(message => message.imageFile)
+    ].filter(Boolean));
+
+    let entries;
+    try {
+      entries = await fsp.readdir(this.#drawingDirectory(), { withFileTypes: true });
+    } catch (error) {
+      if (error.code === 'ENOENT') return 0;
+      this.logger.warn?.(`Could not inspect rendezvous drawings for cleanup: ${error.message}`);
+      return 0;
+    }
+
+    let removed = 0;
+    await Promise.all(entries.map(async entry => {
+      if (
+        !entry.isFile() ||
+        !/\.(?:png|webp)$/i.test(entry.name) ||
+        referenced.has(entry.name)
+      ) {
+        return;
+      }
+      try {
+        await fsp.unlink(path.join(this.#drawingDirectory(), entry.name));
+        removed += 1;
+      } catch (error) {
+        if (error.code !== 'ENOENT') {
+          this.logger.warn?.(`Could not remove unreferenced rendezvous drawing ${entry.name}: ${error.message}`);
+        }
+      }
+    }));
+    return removed;
+  }
+
   async #readScratchpadImage(scratchpad) {
     const message = normalizeRasterScratchpad(scratchpad).currentMessage;
     if (message?.imageFile) {
@@ -1111,6 +1156,7 @@ export class RendezvousController {
         return null;
       } finally {
         await this.#removePendingReferences(pending.id);
+        await this.#pruneUnreferencedDrawingFiles();
       }
     })();
     this.drawingInFlight = work;
