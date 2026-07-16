@@ -4,6 +4,7 @@ import * as fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import {
+  isAgentPositionPathConsistent,
   RendezvousController,
   isShortPanoLoop
 } from '../server/rendezvous/rendezvousController.js';
@@ -223,9 +224,61 @@ class IndoorAdaStartStreetView extends FakeStreetView {
   }
 }
 
+class CrossContaminatedStreetView extends FakeStreetView {
+  async navigateAndGetPanorama(panoId) {
+    if (panoId === 'ada-start') return this.getPanorama('theo-start');
+    return super.navigateAndGetPanorama(panoId);
+  }
+}
+
 test('isShortPanoLoop detects an active ABAB suffix after an older third pano', () => {
   assert.equal(isShortPanoLoop(['midtown', 'central', 'midtown', '4d', 'midtown', '4d']), true);
   assert.equal(isShortPanoLoop(['midtown', 'central', 'midtown', '4d', 'midtown', 'east']), false);
+});
+
+test('path consistency rejects a current position copied from the other agent', () => {
+  assert.equal(isAgentPositionPathConsistent({
+    position: { lat: 40.902873, lng: -73.878663 },
+    path: [{ lat: 40.793088, lng: -73.957448 }]
+  }), false);
+  assert.equal(isAgentPositionPathConsistent({
+    position: { lat: 40.793089, lng: -73.957447 },
+    path: [{ lat: 40.793088, lng: -73.957448 }]
+  }), true);
+});
+
+test('a cross-agent Street View fallback cannot move or falsely complete the run', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-pano-drift-test-'));
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new CrossContaminatedStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.status = 'running';
+    controller.running = true;
+    const before = structuredClone(controller.state.agents.ada);
+
+    await assert.rejects(
+      controller.tick(),
+      /settled .*m from its expected position/
+    );
+
+    assert.equal(controller.state.status, 'running');
+    assert.equal(controller.state.turn, 0);
+    assert.deepEqual(controller.state.agents.ada.position, before.position);
+    assert.equal(controller.state.agents.ada.panoId, before.panoId);
+    assert.equal(controller.state.meeting.distanceMeters > 0, true);
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test('corridor movement is automatic and a nonholder waits at a real branch', async () => {

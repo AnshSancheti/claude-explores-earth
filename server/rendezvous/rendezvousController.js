@@ -100,6 +100,7 @@ const STREET_SEARCH_BEARINGS = Object.freeze([0, 45, 90, 135, 180, 225, 270, 315
 const LEGACY_RENDEZVOUS_HINT_PATTERN = /rough wire|last telegram|telegrams said|telegram puts|somewhere around|nearest guidebook|wire before|meeting place|Bryant Park|Grand Central|Union Square|Washington Square|Columbus Circle/i;
 const MODEL_THOUGHT_MODES = new Set(['decision', 'decision_wait', 'retrace']);
 const DEFAULT_MAX_CONSECUTIVE_WAIT_DECISIONS = 2;
+const MAX_PANORAMA_DRIFT_METERS = 250;
 
 function parseIntOr(value, fallback) {
   const parsed = parseInt(value, 10);
@@ -176,6 +177,12 @@ export function isShortPanoLoop(visitedPanos = []) {
   const unique = new Set(tail);
   if (unique.size <= 2) return true;
   return tail.length >= 6 && tail.slice(2).every((panoId, index) => panoId === tail[index]);
+}
+
+export function isAgentPositionPathConsistent(agent, maxDriftMeters = MAX_PANORAMA_DRIFT_METERS) {
+  const pathTail = Array.isArray(agent?.path) ? agent.path.at(-1) : null;
+  if (!agent?.position || !pathTail) return false;
+  return calculateDistance(agent.position, pathTail) <= maxDriftMeters;
 }
 
 function stripTelegramInternal(telegram) {
@@ -816,7 +823,7 @@ export class RendezvousController {
     const partner = this.state.agents[this.#partnerId(agentId)];
     if (!agent || !partner) return;
 
-    const current = await this.#navigateAndGetPanorama(agent.panoId);
+    const current = await this.#navigateAndGetPanorama(agent.panoId, agent.position);
     agent.panoId = current.panoId;
     agent.position = { lat: current.position.lat, lng: current.position.lng };
 
@@ -996,6 +1003,7 @@ export class RendezvousController {
         mode = 'recovering';
         selected = {
           panoId: recovered.panoId,
+          position: recovered.position,
           label: 'nearby outdoor Street View'
         };
         decisionReason = `${agent.name} was stranded in a Street View pano without public turns, so they step back to a nearby outdoor corner and keep searching for ${partner.name}.`;
@@ -1006,7 +1014,7 @@ export class RendezvousController {
       }
     } else if (selected) {
       const previousPosition = { ...agent.position };
-      const pano = await this.#navigateAndGetPanorama(selected.panoId);
+      const pano = await this.#navigateAndGetPanorama(selected.panoId, selected.position);
       agent.panoId = pano.panoId;
       agent.position = { lat: pano.position.lat, lng: pano.position.lng };
       agent.heading = calculateBearing(previousPosition, agent.position);
@@ -1370,6 +1378,14 @@ export class RendezvousController {
     const foundByDistance = distance <= this.foundRadiusMeters;
 
     if (!foundByDistance) return;
+    if (!isAgentPositionPathConsistent(ada) || !isAgentPositionPathConsistent(theo)) {
+      this.#recordEvent('found_position_rejected', {
+        distanceMeters: Math.round(distance),
+        adaPathDriftMeters: Math.round(calculateDistance(ada.position, ada.path?.at(-1))),
+        theoPathDriftMeters: Math.round(calculateDistance(theo.position, theo.path?.at(-1)))
+      });
+      return;
+    }
 
     this.state.status = 'found';
     this.running = false;
@@ -1406,9 +1422,16 @@ export class RendezvousController {
     return panorama;
   }
 
-  async #navigateAndGetPanorama(panoId) {
+  async #navigateAndGetPanorama(panoId, expectedPosition = null) {
     await this.ensureStreetView();
     const panorama = await this.streetView.navigateAndGetPanorama(panoId);
+    const expected = expectedPosition || this.panoramaCache.get(`pano:${panoId}`)?.position;
+    const driftMeters = expected ? calculateDistance(expected, panorama?.position) : 0;
+    if (expected && (!Number.isFinite(driftMeters) || driftMeters > MAX_PANORAMA_DRIFT_METERS)) {
+      throw new Error(
+        `Street View navigation for ${panoId} settled ${Math.round(driftMeters)}m from its expected position`
+      );
+    }
     this.panoramaCache.set(`pano:${panorama.panoId}`, panorama);
     return panorama;
   }

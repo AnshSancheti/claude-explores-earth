@@ -491,6 +491,9 @@
 
     updateMarker(agentId, agent) {
       const lngLat = [Number(agent.position.lng), Number(agent.position.lat)];
+      const foundOffset = this.state?.status === 'found'
+        ? [agentId === 'ada' ? -11 : 11, 0]
+        : [0, 0];
       if (!this.markers[agentId]) {
         const el = document.createElement('div');
         el.className = `rv-map-marker ${agentId}`;
@@ -502,12 +505,14 @@
           'border-radius:50%',
           'box-shadow:0 0 0 3px rgba(255,255,255,0.22)'
         ].join(';');
-        this.markers[agentId] = new maplibregl.Marker({ element: el })
+        this.markers[agentId] = new maplibregl.Marker({ element: el, offset: foundOffset })
           .setLngLat(lngLat)
           .setPopup(new maplibregl.Popup({ offset: 18 }).setText(agent.name || agentId))
           .addTo(this.map);
       } else {
-        this.markers[agentId].setLngLat(lngLat);
+        this.markers[agentId]
+          .setLngLat(lngLat)
+          .setOffset(foundOffset);
       }
     }
 
