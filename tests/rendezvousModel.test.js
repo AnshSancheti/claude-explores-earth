@@ -122,6 +122,49 @@ test('visual-channel geography guard rejects names and compass projection but pe
   assert.equal(containsUnsupportedSheetGeography('three iron arches beside a suspended globe lamp'), false);
 });
 
+test('a blank first sheet cannot become invented partner evidence', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  action: 'move',
+                  selectedIndex: 1,
+                  reasoning: 'I choose the opening with the most distinctive facade.',
+                  observation: 'Three iron arches sit beside one suspended globe lamp.',
+                  observedFeatures: ['three iron arches', 'one suspended globe lamp beside them'],
+                  sheetInterpretation: 'The blank sheet tells me Theo is on Prince St heading southeast.',
+                  sheetConfidence: 0.9,
+                  memoryUpdate: {
+                    currentPlan: 'Keep comparing uncommon facade arrangements.',
+                    partnerHypothesis: {
+                      key: 'invented-location',
+                      description: 'Theo is on Prince St.',
+                      confidence: 0.9,
+                      basisSequences: []
+                    }
+                  },
+                  drawingIntent: 'Show the uncommon arch-and-lamp arrangement.',
+                  drawingPrompt: 'Sketch three iron arches with one suspended globe lamp beside them.'
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const decision = await service.decide(input({ sheetMessage: null, visualHistory: [] }));
+
+  assert.equal(decision.sheetInterpretation, '');
+  assert.equal(decision.sheetConfidence, 0);
+  assert.equal(decision.memoryUpdate.partnerHypothesis.description, '');
+});
+
 test('decision sanitizer bounds deliberate waiting and private memory fields', () => {
   const decision = sanitizeRendezvousDecision({
     action: 'wait',

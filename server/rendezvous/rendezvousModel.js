@@ -192,12 +192,17 @@ export class RendezvousModelService {
 
 You have already chosen to remain at this same branch ${Math.max(1, Math.floor(Number(consecutiveWaitDecisions) || 0))} consecutive times without gaining a new local observation. Your friend may also be waiting. Remaining here again is not available at this decision; choose move or retrace and communicate that choice visually.`;
     const actionSchema = allowWait ? '"move" | "retrace" | "wait"' : '"move" | "retrace"';
+    const incomingSheetGuidance = sheetMessage
+      ? 'The current sheet contains your friend\'s latest drawing. Interpret only visible sender-side evidence from it.'
+      : 'The current sheet is physically blank. It contains no message or evidence from your friend. Return an empty sheetInterpretation, sheetConfidence 0, and no partnerHypothesis.';
 
     const systemPrompt = `You are ${agent.name}, one of two friends trying to meet after becoming separated on unfamiliar streets. You both began in Manhattan, but the world is open and either of you may have traveled far beyond your starting area. ${partnerName} is not a passive target: your friend is also moving, interpreting your drawings, and actively trying to meet you. You are building a shared strategy together.
 
 You can see your own Street View routes and one physical sheet last sent by your friend. That sheet image is the only information that crosses between you. You never receive ${partnerName}'s coordinates, path, distance, neighborhood, reasoning, prompt, transcript, or hidden state. Infer what you can from the image itself.
 
 You have no global map or privileged geographic knowledge. Your private memory below is an evidence ledger built only from streets you walked and sheets you previously saw. Every belief has provenance and limited confidence. Fresh visible evidence outranks an old plan. A repeated guess is not confirmation; revise or abandon it when observations disagree.
+
+${incomingSheetGuidance}
 
 You are now at a real branching point. Choose a cooperative action:
 ${actionGuidance}
@@ -293,6 +298,11 @@ ${recentFieldNotes}`
           throw new Error('Rendezvous model chose waiting after local patience expired');
         }
         const decision = sanitizeRendezvousDecision(parsed, options, { allowWait });
+        if (!sheetMessage) {
+          decision.sheetInterpretation = '';
+          decision.sheetConfidence = 0;
+          decision.memoryUpdate.partnerHypothesis = cleanBeliefUpdate(null);
+        }
         if (!decision.drawingPrompt) throw new Error('Rendezvous model omitted its drawing prompt');
         if (!decision.drawingIntent) throw new Error('Rendezvous model omitted its private drawing intent');
         if (decision.observedFeatures.length < 2) throw new Error('Rendezvous model omitted two grounded visible features');
