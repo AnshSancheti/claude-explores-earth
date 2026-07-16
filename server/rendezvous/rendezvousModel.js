@@ -45,6 +45,15 @@ function cleanString(value, maxLength) {
     : '';
 }
 
+const NAMED_ROUTE_PATTERN = /\b(?:[A-Z][A-Za-z'-]*|[EWNS]|\d+(?:st|nd|rd|th)?)(?:\s+(?:[A-Z0-9][A-Za-z0-9'-]*)){0,3}\s+(?:St(?:reet)?|Ave(?:nue)?|Rd|Road|Blvd|Boulevard|Pl|Place|Park|Plaza|Square)\b/;
+const NAMED_GEOGRAPHY_PATTERN = /\b(?:Manhattan|Brooklyn|Bronx|Queens|Staten Island|New York|NYC|Yonkers)\b/i;
+const SHARED_DIRECTION_PATTERN = /\b(?:north|south|east|west|northeast|northwest|southeast|southwest|northbound|southbound|eastbound|westbound)\b/i;
+
+export function containsUnsupportedSheetGeography(value) {
+  const text = String(value || '');
+  return NAMED_ROUTE_PATTERN.test(text) || NAMED_GEOGRAPHY_PATTERN.test(text) || SHARED_DIRECTION_PATTERN.test(text);
+}
+
 function cleanStringList(values, { limit = 5, maxLength = 180 } = {}) {
   return [...new Set((Array.isArray(values) ? values : [])
     .map(value => cleanString(value, maxLength))
@@ -194,11 +203,13 @@ You are now at a real branching point. Choose a cooperative action:
 ${actionGuidance}
 Avoid indoor shops, private interiors, dead ends, and accidental immediate loops. Google headings are compass bearings clockwise from north.
 
-Because you currently hold the sheet, decide what visual message to send to ${partnerName}. The drawing is evidence about the world around its sender, not a command that maps onto the recipient's private route options. Base it on at least two stable features visible in the current route images and preserve their spatial relationship. Examples include facade shape, awnings, scaffolding, road geometry, trees, towers, stairs, traffic lights, or distinctive street furniture. Symbols may support the observation, but they must not dominate it. Do not encode private option numbers, an imagined compass agreement, or a place name that is not visibly grounded. Reuse a visual convention only when the evidence ledger shows actual prior sheet sequences supporting it.
+Because you currently hold the sheet, decide what visual message to send to ${partnerName}. The drawing is evidence about the world around its sender, not a command that maps onto the recipient's private route options. Base it on at least two stable features visible in the current route images, including at least one discriminative feature when one is available, and preserve their spatial relationship. Examples include unusual facade geometry, a distinctive awning arrangement, scaffolding structure, road geometry, trees relative to buildings, towers, stairs, traffic lights, sculpture, or uncommon street furniture. Symbols may support the observation, but they must not dominate it. Do not encode private option numbers, an imagined compass agreement, or a place name. Reuse a visual convention only when the evidence ledger shows actual prior sheet sequences supporting it.
+
+Street names and geographic labels visible in your route-option images are private local navigation evidence for you alone. The no-text sheet cannot transmit them. Never put a named street, avenue, park, square, neighborhood, borough, city, compass heading, or option label into observedFeatures, drawingIntent, drawingPrompt, sheetInterpretation, conventionUpdate, or partnerHypothesis. You may mention a visible local label only in your private observation, reasoning, or currentPlan.
 
 The resulting picture must contain no readable text, letters, numbers, labels, captions, signatures, logos, or watermarks. Express everything visually. Do not put those prohibitions into drawingPrompt; simply describe the picture you want.
 
-Interpret the received sheet explicitly and state your confidence. Update only the current plan and at most one sourced visual convention and partner hypothesis. basisSequences must list real prior sent or received sheet sequence numbers from your evidence ledger. Unsupported beliefs will remain low confidence. drawingIntent is your private record of what the outgoing picture is meant to communicate; only drawingPrompt and the grounded visible features are sent to the image renderer.
+Interpret the received sheet explicitly and state your confidence. Describe only sender-side visual evidence actually present in the drawing. Any street label in your current route images belongs to your surroundings, not the sender's. Similar generic features such as trees, parked cars, or scaffolding are weak evidence; do not infer that you share a block or route unless multiple unusual features and their arrangement recur across reciprocal sheets. Update only the current plan and at most one sourced visual convention and partner hypothesis. basisSequences must list real prior sent or received sheet sequence numbers from your evidence ledger. Unsupported beliefs will remain low confidence. drawingIntent is your private record of what the outgoing picture is meant to communicate; only drawingPrompt and the grounded visible features are sent to the image renderer.
 
 Return only JSON:
 {
@@ -288,11 +299,22 @@ ${recentFieldNotes}`
         if (!decision.memoryUpdate.currentPlan) {
           throw new Error('Rendezvous model omitted its private memory revision');
         }
+        const unsupportedGeography = [
+          ...decision.observedFeatures,
+          decision.sheetInterpretation,
+          decision.drawingIntent,
+          decision.drawingPrompt,
+          decision.memoryUpdate.conventionUpdate.description,
+          decision.memoryUpdate.partnerHypothesis.description
+        ].find(containsUnsupportedSheetGeography);
+        if (unsupportedGeography) {
+          throw new Error(`Rendezvous model put unsupported named geography into the visual channel: ${unsupportedGeography.slice(0, 120)}`);
+        }
         return decision;
       } catch (error) {
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
-        if (/blank content|drawing prompt|drawing intent|memory revision|json/i.test(error.message)) {
+        if (/blank content|drawing prompt|drawing intent|memory revision|named geography|json/i.test(error.message)) {
           tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 3200));
         }
       }

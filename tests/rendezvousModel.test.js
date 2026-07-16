@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  containsUnsupportedSheetGeography,
   RendezvousModelService,
   sanitizeRendezvousDecision
 } from '../server/rendezvous/rendezvousModel.js';
@@ -72,7 +73,7 @@ test('branch decision revises private memory and authors a grounded visual messa
                       basisSequences: [7]
                     }
                   },
-                  drawingIntent: 'Show Theo that I am following arches north toward convergence.',
+                  drawingIntent: 'Show Theo the repeated arches beside the suspended traffic light.',
                   drawingPrompt: 'Sketch the repeated arches as a fading rhythm with a lone yellow circle.'
                 })
               }
@@ -112,6 +113,13 @@ test('decision sanitizer reconciles an unambiguous intended heading', () => {
     drawingPrompt: 'draw a doorway'
   }, input().options);
   assert.equal(decision.selectedIndex, 1);
+});
+
+test('visual-channel geography guard rejects names and compass projection but permits literal features', () => {
+  assert.equal(containsUnsupportedSheetGeography('the E 13th St corridor'), true);
+  assert.equal(containsUnsupportedSheetGeography('Prince St beside Manhattan'), true);
+  assert.equal(containsUnsupportedSheetGeography('continue southeast'), true);
+  assert.equal(containsUnsupportedSheetGeography('three iron arches beside a suspended globe lamp'), false);
 });
 
 test('decision sanitizer bounds deliberate waiting and private memory fields', () => {
@@ -161,8 +169,8 @@ test('expired local patience removes waiting from the model decision', async () 
                   memoryUpdate: {
                     currentPlan: 'Break a mutual pause by moving and showing the chosen route.'
                   },
-                  drawingIntent: 'Show that I am leaving the anchor by the northern route.',
-                  drawingPrompt: 'A hand sketch of a still circle opening into one northbound path.'
+                  drawingIntent: 'Show that I am leaving the anchor through the opening beside the stone facade.',
+                  drawingPrompt: 'A hand sketch of a still circle opening into one path beside a stone facade.'
                 })
               }
             }]
