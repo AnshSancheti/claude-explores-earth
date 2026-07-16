@@ -21,6 +21,7 @@ test('raster sheet changes and transfers only after a durable image commit', () 
     turn: 4,
     drawingIntent: 'Tell Theo to converge near the arches.',
     drawingPrompt: 'Draw two arches and a yellow circle.',
+    groundedFeatures: ['two stone arches', 'a round lamp between them'],
     referenceViewIndices: [0],
     sourcePanoId: 'ada-branch'
   });
@@ -40,6 +41,7 @@ test('raster sheet changes and transfers only after a durable image commit', () 
   assert.equal(committed.currentMessage.to, 'theo');
   assert.equal(committed.sequence, 1);
   assert.match(committed.messageAudit[0].drawingIntent, /converge/);
+  assert.deepEqual(committed.messageAudit[0].groundedFeatures, ['two stone arches', 'a round lamp between them']);
 
   const publicSheet = publicRasterScratchpad(committed, {
     imageUrlFor: message => `/drawings/${message.id}`
@@ -49,7 +51,7 @@ test('raster sheet changes and transfers only after a durable image commit', () 
   assert.equal(Object.hasOwn(publicSheet, 'pendingMessage'), false);
   assert.equal(Object.hasOwn(publicSheet.currentMessage, 'imageFile'), false);
   assert.equal(Object.hasOwn(publicSheet.currentMessage, 'imageSha256'), false);
-  assert.doesNotMatch(JSON.stringify(publicSheet), /arches|converge|drawingPrompt|drawingIntent|sourcePanoId/);
+  assert.doesNotMatch(JSON.stringify(publicSheet), /arches|converge|drawingPrompt|drawingIntent|groundedFeatures|sourcePanoId/);
 });
 
 test('primitive model output is composed into one authored street sketch', async () => {

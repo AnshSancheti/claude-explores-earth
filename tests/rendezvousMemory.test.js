@@ -10,29 +10,40 @@ import {
   recordSentMessage
 } from '../server/rendezvous/rendezvousMemory.js';
 
-test('legacy agents gain a private memory grounded in their own recent notes', () => {
-  const memory = normalizeAgentMemory(null, {
+test('legacy agents gain a provenance memory grounded in low-confidence recollection', () => {
+  const memory = normalizeAgentMemory({
+    version: 1,
+    journeySummary: 'I once believed I was following stone arches.',
+    jointPlan: 'Test the old arch belief against fresh evidence.'
+  }, {
     recentNotes: ['I passed brick arches.', 'I kept north along a broad avenue.']
   });
-  assert.equal(memory.version, 1);
-  assert.match(memory.journeySummary, /brick arches/);
-  assert.match(memory.journeySummary, /broad avenue/);
+  assert.equal(memory.version, 2);
+  assert.match(memory.ownObservations.at(-1).description, /Legacy recollection/);
+  assert.match(memory.ownObservations.at(-1).description, /brick arches/);
+  assert.match(memory.currentPlan, /local evidence/);
+  assert.doesNotMatch(memory.currentPlan, /arch belief/);
   assert.equal(memory.receivedSheets.length, 0);
   assert.equal(memory.sentMessages.length, 0);
 });
 
-test('memory revision retains beliefs and upserts one interpretation per received sheet', () => {
+test('memory revision records sourced evidence and caps unsupported confidence', () => {
   let memory = createAgentMemory();
   memory = applyMemoryRevision(memory, {
-    journeySummary: 'I walked north past three matching arches.',
-    partnerBelief: 'Theo may be approaching a shared landmark.',
-    visualVocabulary: 'A yellow circle probably means converge.',
-    jointPlan: 'Repeat the circle while holding near the arches.'
+    currentPlan: 'Test the circle hypothesis against the next drawing.',
+    conventionUpdate: {
+      key: 'yellow-circle',
+      description: 'A yellow circle may indicate convergence.',
+      confidence: 0.95,
+      basisSequences: [4, 999]
+    }
   }, {
     turn: 12,
     sheetMessage: { sequence: 4, from: 'theo' },
     sheetInterpretation: 'A yellow circle between two paths may mean converge.',
+    sheetConfidence: 0.4,
     observation: 'Three stone arches stand beside a broad northbound street.',
+    sourcePanoId: 'pano-12',
     updatedAt: '2026-07-15T12:00:00.000Z'
   });
   memory = applyMemoryRevision(memory, {}, {
@@ -45,8 +56,11 @@ test('memory revision retains beliefs and upserts one interpretation per receive
   assert.equal(memory.receivedSheets.length, 1);
   assert.equal(memory.receivedSheets[0].sequence, 4);
   assert.match(memory.receivedSheets[0].interpretation, /place to wait/);
-  assert.match(memory.visualVocabulary, /yellow circle/);
-  assert.equal(memory.recentObservations.length, 1);
+  assert.match(memory.currentPlan, /Test the circle/);
+  assert.equal(memory.visualConventions[0].confidence, 0.45);
+  assert.deepEqual(memory.visualConventions[0].basisSequences, [4]);
+  assert.equal(memory.ownObservations.length, 1);
+  assert.equal(memory.ownObservations[0].sourcePanoId, 'pano-12');
 });
 
 test('sent intentions are recorded only as bounded durable episodes', () => {
@@ -57,12 +71,14 @@ test('sent intentions are recorded only as bounded durable episodes', () => {
       sequence,
       to: 'theo',
       intent: `Intent ${sequence}`,
+      groundedFeatures: [`Facade ${sequence}`, 'traffic light'],
       createdAt: `2026-07-15T12:${String(sequence).padStart(2, '0')}:00.000Z`
     });
   }
-  assert.equal(memory.sentMessages.length, 8);
-  assert.equal(memory.sentMessages[0].sequence, 13);
+  assert.equal(memory.sentMessages.length, 10);
+  assert.equal(memory.sentMessages[0].sequence, 11);
   assert.equal(memory.sentMessages.at(-1).intent, 'Intent 20');
+  assert.deepEqual(memory.sentMessages.at(-1).groundedFeatures, ['Facade 20', 'traffic light']);
 });
 
 test('movement memory preserves compact dead reckoning without coordinates', () => {

@@ -21,11 +21,17 @@ function input(overrides = {}) {
     screenshots: [Buffer.from('west'), Buffer.from('north')],
     scratchpadBuffer: Buffer.from('sheet'),
     sheetMessage: { sequence: 7, from: 'theo', to: 'ada' },
+    visualHistory: [{
+      sequence: 5,
+      direction: 'sent',
+      mimeType: 'image/webp',
+      buffer: Buffer.from('older-sheet')
+    }],
     privateMemory: {
-      journeySummary: 'I followed a row of stone arches.',
-      partnerBelief: 'Theo may be using circles for meeting points.',
-      visualVocabulary: 'A yellow circle may mean wait or converge.',
-      jointPlan: 'Test the circle convention at the next branch.'
+      version: 2,
+      currentPlan: 'Test the circle convention at the next branch.',
+      ownObservations: [{ description: 'I followed a row of stone arches.' }],
+      visualConventions: [{ key: 'yellow-circle', description: 'A yellow circle may mean wait or converge.', confidence: 0.35, basisSequences: [5] }]
     },
     movementSinceDecision: { steps: 4, distanceMeters: 90, headings: [0, 10], routeLabels: [] },
     ...overrides
@@ -48,12 +54,23 @@ test('branch decision revises private memory and authors a grounded visual messa
                   intendedHeading: 0,
                   reasoning: 'The northern opening feels useful.',
                   observation: 'Repeated stone arches line the northern opening.',
+                  observedFeatures: ['three repeated stone arches', 'a suspended traffic light beside them'],
                   sheetInterpretation: 'Theo may be asking me to converge on a bright circular landmark.',
+                  sheetConfidence: 0.4,
                   memoryUpdate: {
-                    journeySummary: 'I followed stone arches and then moved roughly north.',
-                    partnerBelief: 'Theo is also trying to converge on a memorable public place.',
-                    visualVocabulary: 'A yellow circle probably means converge; arches identify my route.',
-                    jointPlan: 'Move north while repeating the circle and arch convention.'
+                    currentPlan: 'Move through the arch-lined opening while testing the circle hypothesis.',
+                    conventionUpdate: {
+                      key: 'yellow-circle',
+                      description: 'A yellow circle may suggest convergence.',
+                      confidence: 0.5,
+                      basisSequences: [5, 7]
+                    },
+                    partnerHypothesis: {
+                      key: 'seeking-landmark',
+                      description: 'Theo may be looking for a visually memorable public place.',
+                      confidence: 0.35,
+                      basisSequences: [7]
+                    }
                   },
                   drawingIntent: 'Show Theo that I am following arches north toward convergence.',
                   drawingPrompt: 'Sketch the repeated arches as a fading rhythm with a lone yellow circle.'
@@ -72,13 +89,17 @@ test('branch decision revises private memory and authors a grounded visual messa
   assert.equal(decision.action, 'move');
   assert.match(decision.drawingPrompt, /repeated arches/);
   assert.match(decision.sheetInterpretation, /converge/);
-  assert.match(decision.memoryUpdate.visualVocabulary, /yellow circle/);
+  assert.match(decision.memoryUpdate.conventionUpdate.description, /yellow circle/);
+  assert.equal(decision.observedFeatures.length, 2);
   const serialized = JSON.stringify(request.messages);
   assert.match(serialized, /only information that crosses/);
   assert.match(serialized, /no readable text/);
-  assert.match(serialized, /not merely look evocative/);
+  assert.match(serialized, /Symbols may support the observation, but they must not dominate it/);
   assert.match(serialized, /not a passive target/);
+  assert.match(serialized, /evidence about the world around its sender/);
   assert.match(serialized, /row of stone arches/);
+  assert.match(request.messages[1].content[0].text, /History image 1: sheet sequence 5/);
+  assert.equal(request.messages[1].content.length, 5);
   assert.match(request.messages[1].content[0].text, /"distanceMeters": 90/);
   assert.doesNotMatch(serialized, /referenceViewIndices/);
   assert.doesNotMatch(serialized, /partnerPadText|ownPadText|distanceToFriend|-?\d+\.\d{4,}/);
@@ -99,18 +120,22 @@ test('decision sanitizer bounds deliberate waiting and private memory fields', (
     waitTurns: 99,
     selectedIndex: 0,
     sheetInterpretation: 'The blue line may mean Theo is approaching.',
+    observedFeatures: ['one stone arch', 'a traffic light beside the arch'],
     drawingIntent: 'I will stay beside the arch.',
     memoryUpdate: {
-      journeySummary: 'I reached an arch after a long northbound walk.',
-      partnerBelief: 'Theo is moving too.',
-      visualVocabulary: 'Blue line means approach.',
-      jointPlan: 'Wait here.'
+      currentPlan: 'Wait here.',
+      conventionUpdate: {
+        key: 'blue-line',
+        description: 'A blue line may mean approach.',
+        confidence: 0.4,
+        basisSequences: [7]
+      }
     },
     drawingPrompt: 'A still figure beneath one arch and an approaching blue line.'
   }, input().options);
   assert.equal(decision.action, 'wait');
   assert.equal(decision.waitTurns, 6);
-  assert.equal(decision.memoryUpdate.jointPlan, 'Wait here.');
+  assert.equal(decision.memoryUpdate.currentPlan, 'Wait here.');
   assert.match(decision.drawingIntent, /stay/);
 });
 
@@ -131,12 +156,10 @@ test('expired local patience removes waiting from the model decision', async () 
                   selectedIndex: 1,
                   reasoning: 'Holding this corner has taught me nothing new, so I will move.',
                   observation: 'The northern public route remains open.',
+                  observedFeatures: ['a broad road opening', 'a stone facade on its corner'],
                   sheetInterpretation: 'The sheet may preserve our last shared convergence idea.',
                   memoryUpdate: {
-                    journeySummary: 'I held one corner and now resume searching.',
-                    partnerBelief: 'Theo may also have paused while trying to coordinate.',
-                    visualVocabulary: 'The circle still suggests convergence.',
-                    jointPlan: 'Break a mutual pause by moving and showing the chosen route.'
+                    currentPlan: 'Break a mutual pause by moving and showing the chosen route.'
                   },
                   drawingIntent: 'Show that I am leaving the anchor by the northern route.',
                   drawingPrompt: 'A hand sketch of a still circle opening into one northbound path.'

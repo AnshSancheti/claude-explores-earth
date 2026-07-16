@@ -6,14 +6,24 @@ import {
 } from '../server/rendezvous/rendezvousImage.js';
 
 test('image scaffolding constrains the medium without authoring the clue', () => {
-  const prompt = scaffoldDrawingPrompt('A charcoal skyline reflected in three puddles like three possible futures.');
+  const prompt = scaffoldDrawingPrompt(
+    'A charcoal skyline reflected in three puddles like three possible futures.',
+    ['three shallow curbside puddles', 'a narrow tower reflected in them']
+  );
   assert.match(prompt, /Sender's drawing instructions/);
   assert.match(prompt, /three possible futures/);
   assert.match(prompt, /no readable words, letters, numbers/);
-  assert.match(prompt, /recognizable observation and symbolism/);
+  assert.match(prompt, /stable visible features/);
   assert.match(prompt, /not become a literal camera reproduction/);
   assert.match(prompt, /not become.*purely decorative abstraction/);
   assert.doesNotMatch(prompt, /Manhattan|north|south|find Theo/);
+});
+
+test('image scaffolding refuses an ungrounded route diagram', () => {
+  assert.throws(
+    () => scaffoldDrawingPrompt('A blue arrow pointing forward.', ['one road']),
+    /two grounded visible features/
+  );
 });
 
 test('image service generates from the sender prompt without Street View attachments', async () => {
@@ -35,13 +45,15 @@ test('image service generates from the sender prompt without Street View attachm
       logger: { warn() {} }
     });
     const result = await service.generate({
-      drawingPrompt: 'A loose pencil arch enclosing two circles that nearly touch.'
+      drawingPrompt: 'A loose pencil arch enclosing two circles that nearly touch.',
+      groundedFeatures: ['a broad stone arch', 'two globe lamps beside it']
     });
     assert.match(request.url, /\/images\/generations$/);
     const body = JSON.parse(request.options.body);
     assert.equal(body.model, 'gpt-image-2');
     assert.equal(body.size, '1152x768');
     assert.match(body.prompt, /two circles that nearly touch/);
+    assert.match(body.prompt, /two globe lamps/);
     assert.doesNotMatch(request.options.body, /image\[\]|reference/);
     assert.equal(result.buffer.toString(), 'raster');
     assert.equal(result.requestId, 'req-1');

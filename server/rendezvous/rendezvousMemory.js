@@ -1,14 +1,15 @@
-export const RENDEZVOUS_MEMORY_VERSION = 1;
+export const RENDEZVOUS_MEMORY_VERSION = 2;
 
-const MAX_SUMMARY_CHARS = 900;
-const MAX_EPISODE_CHARS = 500;
-const MAX_RECEIVED_SHEETS = 8;
-const MAX_SENT_MESSAGES = 8;
-const MAX_OBSERVATIONS = 12;
+const MAX_TEXT_CHARS = 700;
+const MAX_RECEIVED_SHEETS = 10;
+const MAX_SENT_MESSAGES = 10;
+const MAX_OBSERVATIONS = 14;
+const MAX_CONVENTIONS = 8;
+const MAX_HYPOTHESES = 6;
 const MAX_ODOMETRY_HEADINGS = 16;
 const MAX_ODOMETRY_LABELS = 8;
 
-function cleanString(value, maxLength = MAX_SUMMARY_CHARS) {
+function cleanString(value, maxLength = MAX_TEXT_CHARS) {
   return typeof value === 'string'
     ? value.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, maxLength)
     : '';
@@ -19,110 +20,208 @@ function positiveInt(value, fallback = 0) {
   return Number.isFinite(number) && number >= 0 ? number : fallback;
 }
 
-function normalizeEpisode(entry, kind) {
-  if (!entry || typeof entry !== 'object') return null;
-  const common = {
-    turn: positiveInt(entry.turn),
-    sequence: positiveInt(entry.sequence),
-    createdAt: entry.createdAt || null
-  };
-  if (kind === 'received') {
-    const interpretation = cleanString(entry.interpretation, MAX_EPISODE_CHARS);
-    if (!interpretation || common.sequence < 1) return null;
-    return { ...common, from: entry.from === 'ada' || entry.from === 'theo' ? entry.from : null, interpretation };
-  }
-  if (kind === 'sent') {
-    const intent = cleanString(entry.intent, MAX_EPISODE_CHARS);
-    if (!intent || common.sequence < 1) return null;
-    return { ...common, to: entry.to === 'ada' || entry.to === 'theo' ? entry.to : null, intent };
-  }
-  const observation = cleanString(entry.observation, MAX_EPISODE_CHARS);
-  if (!observation) return null;
-  return { turn: common.turn, observation, createdAt: common.createdAt };
+function confidence(value, fallback = 0.35) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.min(1, Math.max(0, number)) : fallback;
 }
 
-function boundedEpisodes(entries, kind, limit) {
-  return (Array.isArray(entries) ? entries : [])
-    .map(entry => normalizeEpisode(entry, kind))
-    .filter(Boolean)
+function cleanList(values, { limit = 8, itemLength = 220 } = {}) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map(value => cleanString(value, itemLength))
+    .filter(Boolean))]
     .slice(-limit);
 }
 
+function knownSequences(memory) {
+  return new Set([
+    ...(memory.receivedSheets || []).map(entry => entry.sequence),
+    ...(memory.sentMessages || []).map(entry => entry.sequence)
+  ].filter(sequence => sequence > 0));
+}
+
+function normalizeObservation(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const description = cleanString(entry.description || entry.observation, 500);
+  if (!description) return null;
+  return {
+    turn: positiveInt(entry.turn),
+    description,
+    sourcePanoId: cleanString(entry.sourcePanoId, 240) || null,
+    createdAt: entry.createdAt || null
+  };
+}
+
+function normalizeReceived(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const interpretation = cleanString(entry.interpretation, 500);
+  const sequence = positiveInt(entry.sequence);
+  if (!interpretation || sequence < 1) return null;
+  return {
+    turn: positiveInt(entry.turn),
+    sequence,
+    from: entry.from === 'ada' || entry.from === 'theo' ? entry.from : null,
+    interpretation,
+    confidence: confidence(entry.confidence),
+    createdAt: entry.createdAt || null
+  };
+}
+
+function normalizeSent(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const intent = cleanString(entry.intent, 500);
+  const sequence = positiveInt(entry.sequence);
+  if (!intent || sequence < 1) return null;
+  return {
+    turn: positiveInt(entry.turn),
+    sequence,
+    to: entry.to === 'ada' || entry.to === 'theo' ? entry.to : null,
+    intent,
+    groundedFeatures: cleanList(entry.groundedFeatures, { limit: 5, itemLength: 180 }),
+    createdAt: entry.createdAt || null
+  };
+}
+
+function normalizeBelief(entry, kind) {
+  if (!entry || typeof entry !== 'object') return null;
+  const key = cleanString(entry.key, 80).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  const description = cleanString(entry.description || entry.hypothesis, 500);
+  if (!key || !description) return null;
+  return {
+    key,
+    description,
+    confidence: confidence(entry.confidence, 0.25),
+    basisSequences: [...new Set((Array.isArray(entry.basisSequences) ? entry.basisSequences : [])
+      .map(positiveInt)
+      .filter(sequence => sequence > 0))]
+      .slice(-8),
+    updatedTurn: positiveInt(entry.updatedTurn),
+    kind
+  };
+}
+
+function bounded(entries, normalize, limit) {
+  return (Array.isArray(entries) ? entries : []).map(normalize).filter(Boolean).slice(-limit);
+}
+
+function migrateLegacyMemory(raw, recentNotes) {
+  const remembered = [
+    cleanString(raw?.journeySummary, 300),
+    cleanString(raw?.partnerBelief, 300),
+    cleanString(raw?.visualVocabulary, 300),
+    cleanString(raw?.jointPlan, 300),
+    ...cleanList(recentNotes, { limit: 4, itemLength: 240 })
+  ].filter(Boolean).join(' ');
+  const memory = createAgentMemory();
+  if (remembered) {
+    memory.ownObservations.push({
+      turn: positiveInt(raw?.updatedTurn),
+      description: `Legacy recollection, not yet reverified: ${remembered}`.slice(0, 500),
+      sourcePanoId: null,
+      createdAt: raw?.updatedAt || null
+    });
+  }
+  memory.receivedSheets = bounded(raw?.receivedSheets, normalizeReceived, MAX_RECEIVED_SHEETS);
+  memory.sentMessages = bounded(raw?.sentMessages, normalizeSent, MAX_SENT_MESSAGES);
+  return memory;
+}
+
 export function createAgentMemory({ recentNotes = [] } = {}) {
-  const rememberedNotes = (Array.isArray(recentNotes) ? recentNotes : [])
-    .map(note => cleanString(note, 300))
-    .filter(Boolean)
-    .slice(-4)
-    .join(' ');
+  const initial = cleanList(recentNotes, { limit: 4, itemLength: 240 }).join(' ');
   return {
     version: RENDEZVOUS_MEMORY_VERSION,
-    journeySummary: rememberedNotes || 'I began on an unfamiliar street corner and know only what I have personally observed.',
-    partnerBelief: 'My friend is also moving through this unfamiliar city and trying to meet me.',
-    visualVocabulary: 'We have not established a reliable shared visual language yet.',
-    jointPlan: 'Observe carefully, communicate useful grounded clues, and adapt to what my friend sends back.',
+    currentPlan: 'Keep gathering local evidence and revise uncertain beliefs when a drawing or street contradicts them.',
+    ownObservations: initial ? [{
+      turn: 0,
+      description: initial,
+      sourcePanoId: null,
+      createdAt: null
+    }] : [],
     receivedSheets: [],
     sentMessages: [],
-    recentObservations: [],
+    visualConventions: [],
+    partnerHypotheses: [],
     updatedTurn: 0,
     updatedAt: null
   };
 }
 
 export function normalizeAgentMemory(raw, { recentNotes = [] } = {}) {
-  const base = createAgentMemory({ recentNotes });
-  if (!raw || Number(raw.version) !== RENDEZVOUS_MEMORY_VERSION) return base;
+  if (!raw || Number(raw.version) !== RENDEZVOUS_MEMORY_VERSION) {
+    return migrateLegacyMemory(raw, recentNotes);
+  }
+  const base = createAgentMemory({ recentNotes: [] });
   return {
     ...base,
-    journeySummary: cleanString(raw.journeySummary) || base.journeySummary,
-    partnerBelief: cleanString(raw.partnerBelief) || base.partnerBelief,
-    visualVocabulary: cleanString(raw.visualVocabulary) || base.visualVocabulary,
-    jointPlan: cleanString(raw.jointPlan) || base.jointPlan,
-    receivedSheets: boundedEpisodes(raw.receivedSheets, 'received', MAX_RECEIVED_SHEETS),
-    sentMessages: boundedEpisodes(raw.sentMessages, 'sent', MAX_SENT_MESSAGES),
-    recentObservations: boundedEpisodes(raw.recentObservations, 'observation', MAX_OBSERVATIONS),
+    currentPlan: cleanString(raw.currentPlan, 500) || base.currentPlan,
+    ownObservations: bounded(raw.ownObservations, normalizeObservation, MAX_OBSERVATIONS),
+    receivedSheets: bounded(raw.receivedSheets, normalizeReceived, MAX_RECEIVED_SHEETS),
+    sentMessages: bounded(raw.sentMessages, normalizeSent, MAX_SENT_MESSAGES),
+    visualConventions: bounded(raw.visualConventions, entry => normalizeBelief(entry, 'convention'), MAX_CONVENTIONS),
+    partnerHypotheses: bounded(raw.partnerHypotheses, entry => normalizeBelief(entry, 'hypothesis'), MAX_HYPOTHESES),
     updatedTurn: positiveInt(raw.updatedTurn),
     updatedAt: raw.updatedAt || null
   };
+}
+
+function mergeBelief(memory, collectionName, update, turn) {
+  const kind = collectionName === 'visualConventions' ? 'convention' : 'hypothesis';
+  const candidate = normalizeBelief({ ...update, updatedTurn: turn }, kind);
+  if (!candidate) return;
+
+  const known = knownSequences(memory);
+  candidate.basisSequences = candidate.basisSequences.filter(sequence => known.has(sequence));
+  const evidenceCount = candidate.basisSequences.length;
+  const evidenceCap = evidenceCount >= 3 ? 0.85 : evidenceCount === 2 ? 0.65 : evidenceCount === 1 ? 0.45 : 0.25;
+  candidate.confidence = Math.min(candidate.confidence, evidenceCap);
+
+  const existing = memory[collectionName].find(entry => entry.key === candidate.key);
+  if (existing) {
+    candidate.basisSequences = [...new Set([...existing.basisSequences, ...candidate.basisSequences])].slice(-8);
+    const combinedCap = candidate.basisSequences.length >= 3 ? 0.85 : candidate.basisSequences.length === 2 ? 0.65 : 0.45;
+    candidate.confidence = Math.min(Math.max(existing.confidence, candidate.confidence), combinedCap);
+  }
+  memory[collectionName] = [
+    ...memory[collectionName].filter(entry => entry.key !== candidate.key),
+    candidate
+  ].slice(collectionName === 'visualConventions' ? -MAX_CONVENTIONS : -MAX_HYPOTHESES);
 }
 
 export function applyMemoryRevision(memory, revision, {
   turn = 0,
   sheetMessage = null,
   sheetInterpretation = '',
+  sheetConfidence = 0.35,
   observation = '',
+  sourcePanoId = null,
   updatedAt = new Date().toISOString()
 } = {}) {
   const normalized = normalizeAgentMemory(memory);
   const update = revision && typeof revision === 'object' ? revision : {};
-  for (const key of ['journeySummary', 'partnerBelief', 'visualVocabulary', 'jointPlan']) {
-    const value = cleanString(update[key]);
-    if (value) normalized[key] = value;
-  }
+  const currentPlan = cleanString(update.currentPlan, 500);
+  if (currentPlan) normalized.currentPlan = currentPlan;
 
-  const interpreted = cleanString(sheetInterpretation, MAX_EPISODE_CHARS);
   const sequence = positiveInt(sheetMessage?.sequence);
+  const interpreted = cleanString(sheetInterpretation, 500);
   if (interpreted && sequence > 0) {
-    const entry = normalizeEpisode({
+    const entry = normalizeReceived({
       turn,
       sequence,
       from: sheetMessage?.from,
       interpretation: interpreted,
+      confidence: sheetConfidence,
       createdAt: updatedAt
-    }, 'received');
+    });
     normalized.receivedSheets = [
       ...normalized.receivedSheets.filter(item => item.sequence !== sequence),
       entry
     ].filter(Boolean).slice(-MAX_RECEIVED_SHEETS);
   }
 
-  const observed = cleanString(observation, MAX_EPISODE_CHARS);
-  if (observed) {
-    normalized.recentObservations = [...normalized.recentObservations, {
-      turn: positiveInt(turn),
-      observation: observed,
-      createdAt: updatedAt
-    }].slice(-MAX_OBSERVATIONS);
-  }
+  const observed = normalizeObservation({ turn, description: observation, sourcePanoId, createdAt: updatedAt });
+  if (observed) normalized.ownObservations = [...normalized.ownObservations, observed].slice(-MAX_OBSERVATIONS);
+
+  mergeBelief(normalized, 'visualConventions', update.conventionUpdate, turn);
+  mergeBelief(normalized, 'partnerHypotheses', update.partnerHypothesis, turn);
   normalized.updatedTurn = positiveInt(turn);
   normalized.updatedAt = updatedAt;
   return normalized;
@@ -133,10 +232,11 @@ export function recordSentMessage(memory, {
   sequence = 0,
   to = null,
   intent = '',
+  groundedFeatures = [],
   createdAt = new Date().toISOString()
 } = {}) {
   const normalized = normalizeAgentMemory(memory);
-  const entry = normalizeEpisode({ turn, sequence, to, intent, createdAt }, 'sent');
+  const entry = normalizeSent({ turn, sequence, to, intent, groundedFeatures, createdAt });
   if (!entry) return normalized;
   normalized.sentMessages = [
     ...normalized.sentMessages.filter(item => item.sequence !== entry.sequence),
@@ -148,12 +248,7 @@ export function recordSentMessage(memory, {
 }
 
 export function createMovementMemory() {
-  return {
-    steps: 0,
-    distanceMeters: 0,
-    headings: [],
-    routeLabels: []
-  };
+  return { steps: 0, distanceMeters: 0, headings: [], routeLabels: [] };
 }
 
 export function normalizeMovementMemory(raw) {
@@ -167,10 +262,7 @@ export function normalizeMovementMemory(raw) {
       .filter(Number.isFinite)
       .map(value => ((value % 360) + 360) % 360)
       .slice(-MAX_ODOMETRY_HEADINGS),
-    routeLabels: [...new Set((Array.isArray(raw.routeLabels) ? raw.routeLabels : [])
-      .map(label => cleanString(label, 120))
-      .filter(Boolean))]
-      .slice(-MAX_ODOMETRY_LABELS)
+    routeLabels: cleanList(raw.routeLabels, { limit: MAX_ODOMETRY_LABELS, itemLength: 120 })
   };
 }
 
@@ -184,9 +276,6 @@ export function recordMovement(memory, { distanceMeters = 0, heading = null, lab
       .slice(-MAX_ODOMETRY_HEADINGS);
   }
   const cleanLabel = cleanString(label, 120);
-  if (cleanLabel) {
-    normalized.routeLabels = [...new Set([...normalized.routeLabels, cleanLabel])]
-      .slice(-MAX_ODOMETRY_LABELS);
-  }
+  if (cleanLabel) normalized.routeLabels = [...new Set([...normalized.routeLabels, cleanLabel])].slice(-MAX_ODOMETRY_LABELS);
   return normalized;
 }

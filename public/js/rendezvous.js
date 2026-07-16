@@ -229,6 +229,10 @@
         this.showFound(payload);
       });
 
+      this.socket.on('rendezvous-lost', (payload) => {
+        this.showToast(payload?.reason || 'The search ended without a meeting.', 'error');
+      });
+
       this.socket.on('rendezvous-error', (payload) => {
         this.showToast(payload?.message || 'Rendezvous error', 'error');
       });

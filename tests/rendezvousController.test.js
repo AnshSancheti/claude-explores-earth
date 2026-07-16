@@ -4,6 +4,7 @@ import * as fsp from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import {
+  areAgentsStreetViewAdjacent,
   isAgentPositionPathConsistent,
   RendezvousController,
   isShortPanoLoop
@@ -129,7 +130,12 @@ class FakeRendezvousModel {
       movementSinceDecision: input.movementSinceDecision,
       allowWait: input.allowWait,
       consecutiveWaitDecisions: input.consecutiveWaitDecisions,
-      sheetMessage: input.sheetMessage
+      sheetMessage: input.sheetMessage,
+      visualHistory: input.visualHistory.map(item => ({
+        sequence: item.sequence,
+        direction: item.direction,
+        content: item.buffer.toString()
+      }))
     }));
     return {
       action: 'move',
@@ -138,12 +144,17 @@ class FakeRendezvousModel {
         : 0,
       reasoning: `${input.agent.name} follows the clearest unfamiliar public route using only the sheet and the visible street.`,
       observation: `${input.agent.name} sees a broad public route beside a stone facade.`,
+      observedFeatures: ['a broad public road', 'a stone facade beside it'],
       sheetInterpretation: `${input.agent.name} thinks the current sheet suggests convergence.`,
+      sheetConfidence: 0.35,
       memoryUpdate: {
-        journeySummary: `${input.agent.name} remembers the streets already walked and the current stone facade.`,
-        partnerBelief: `${input.partnerName} is also moving and trying to converge.`,
-        visualVocabulary: 'A circle may indicate convergence.',
-        jointPlan: 'Keep moving while exchanging grounded landmarks.'
+        currentPlan: 'Keep moving while exchanging grounded landmarks.',
+        conventionUpdate: {
+          key: 'circle',
+          description: 'A circle may indicate convergence.',
+          confidence: 0.35,
+          basisSequences: input.sheetMessage?.sequence ? [input.sheetMessage.sequence] : []
+        }
       },
       drawingIntent: `${input.agent.name} intends to show a grounded route toward convergence.`,
       drawingPrompt: `A grounded hand sketch chosen by ${input.agent.name}`,
@@ -165,12 +176,11 @@ class ScriptedRendezvousModel extends FakeRendezvousModel {
       selectedIndex: 0,
       reasoning: 'I make a cooperative choice from what I remember.',
       observation: 'A grounded public landmark is visible at this branch.',
+      observedFeatures: ['a grounded public landmark', 'a traffic light beside it'],
       sheetInterpretation: 'The received drawing may indicate convergence near a landmark.',
+      sheetConfidence: 0.35,
       memoryUpdate: {
-        journeySummary: 'I remember my route and the public landmark at this branch.',
-        partnerBelief: 'My friend is actively moving and trying to coordinate with me.',
-        visualVocabulary: 'A circle may indicate convergence near a landmark.',
-        jointPlan: 'Coordinate movement and deliberate waiting through the sheet.'
+        currentPlan: 'Coordinate movement and deliberate waiting through the sheet.'
       },
       drawingIntent: 'Show the landmark, my chosen action, and a convergence cue.',
       drawingPrompt: 'A hand-drawn landmark, one clear path, and two circles approaching.',
@@ -187,7 +197,8 @@ class FakeImageModel {
 
   async generate(input) {
     this.calls.push({
-      drawingPrompt: input.drawingPrompt
+      drawingPrompt: input.drawingPrompt,
+      groundedFeatures: input.groundedFeatures
     });
     return {
       buffer: Buffer.from(`fake-raster-${this.calls.length}`),
@@ -245,6 +256,17 @@ test('path consistency rejects a current position copied from the other agent', 
     position: { lat: 40.793089, lng: -73.957447 },
     path: [{ lat: 40.793088, lng: -73.957448 }]
   }), true);
+});
+
+test('meeting connectivity requires the same or directly linked Street View pano', () => {
+  assert.equal(areAgentsStreetViewAdjacent(
+    { panoId: 'a', neighborPanoIds: ['b'] },
+    { panoId: 'b', neighborPanoIds: [] }
+  ), true);
+  assert.equal(areAgentsStreetViewAdjacent(
+    { panoId: 'a', neighborPanoIds: ['c'] },
+    { panoId: 'b', neighborPanoIds: ['d'] }
+  ), false);
 });
 
 test('a cross-agent Street View fallback cannot move or falsely complete the run', async () => {
@@ -751,18 +773,18 @@ test('an active run gains private memory with an exact pre-migration rollback sa
     await migrated.loadState();
 
     assert.equal(migrated.state.turn, 88);
-    assert.equal(migrated.state.agents.ada.privateMemory.version, 1);
-    assert.equal(migrated.state.agents.theo.privateMemory.version, 1);
-    assert.match(migrated.state.agents.ada.privateMemory.journeySummary, /unfamiliar Manhattan corner/);
+    assert.equal(migrated.state.agents.ada.privateMemory.version, 2);
+    assert.equal(migrated.state.agents.theo.privateMemory.version, 2);
+    assert.match(migrated.state.agents.ada.privateMemory.ownObservations.at(-1).description, /unfamiliar Manhattan corner/);
     assert.equal(
       await fsp.readFile(
-        path.join(tempDir, 'rendezvous-runs', `${first.state.runId}-pre-memory-v1.json`),
+        path.join(tempDir, 'rendezvous-runs', `${first.state.runId}-pre-memory-v2.json`),
         'utf8'
       ),
       original
     );
     const persisted = JSON.parse(await fsp.readFile(path.join(tempDir, 'rendezvous-current.json'), 'utf8'));
-    assert.equal(persisted.agents.ada.privateMemory.version, 1);
+    assert.equal(persisted.agents.ada.privateMemory.version, 2);
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
     else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
@@ -810,6 +832,7 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
     assert.ok(controller.state.eventLog.some(entry => entry.type === 'scratchpad_sent'));
     assert.equal(imageModel.calls.length, model.calls.length);
     assert.ok(model.calls.length > 0);
+    assert.ok(imageModel.calls.every(call => call.groundedFeatures.length >= 2));
     for (const call of model.calls) {
       assert.equal(Object.hasOwn(call.agent, 'position'), false);
       assert.equal(Object.hasOwn(call.agent, 'path'), false);
@@ -916,6 +939,97 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
     } else {
       process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
     }
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('an agent receives prior sent and received drawings as private visual history', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-visual-history-test-'));
+  const model = new FakeRendezvousModel();
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: model,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'ada-history',
+      agentId: 'ada',
+      turn: 0,
+      drawingIntent: 'First grounded clue.',
+      drawingPrompt: 'Sketch the stone facade and its hanging traffic light.',
+      groundedFeatures: ['a stone facade', 'a hanging traffic light']
+    });
+    await controller.resumePendingDrawing();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'theo-current',
+      agentId: 'theo',
+      turn: 1,
+      drawingIntent: 'Return a grounded clue.',
+      drawingPrompt: 'Sketch the broad road and the row of globe lamps.',
+      groundedFeatures: ['a broad road', 'a row of globe lamps']
+    });
+    await controller.resumePendingDrawing();
+    controller.state.status = 'running';
+    controller.running = true;
+
+    await controller.tick();
+    await controller.resumePendingDrawing();
+
+    assert.equal(model.calls.length, 1);
+    assert.deepEqual(model.calls[0].visualHistory, [{
+      sequence: 1,
+      direction: 'sent',
+      content: 'fake-raster-1'
+    }]);
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a run ends honestly after its persisted branch-decision budget', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  const previousBudget = process.env.RENDEZVOUS_MAX_BRANCH_DECISIONS;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  process.env.RENDEZVOUS_MAX_BRANCH_DECISIONS = '2';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-budget-test-'));
+  const events = [];
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel: new FakeImageModel(),
+      emit: (event, data) => events.push({ event, data }),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.status = 'running';
+    controller.running = true;
+
+    await controller.tick();
+    await controller.resumePendingDrawing();
+    await controller.tick();
+    await controller.resumePendingDrawing();
+
+    assert.equal(controller.state.status, 'lost');
+    assert.equal(controller.running, false);
+    assert.match(controller.state.lostReason, /2-decision search budget/);
+    assert.ok(events.some(entry => entry.event === 'rendezvous-lost'));
+    assert.ok(controller.state.eventLog.some(entry => entry.type === 'rendezvous_lost'));
+    assert.equal(controller.getPublicState().agents.ada.branchDecisionCount, undefined);
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    if (previousBudget === undefined) delete process.env.RENDEZVOUS_MAX_BRANCH_DECISIONS;
+    else process.env.RENDEZVOUS_MAX_BRANCH_DECISIONS = previousBudget;
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
 });

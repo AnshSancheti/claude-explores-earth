@@ -2248,13 +2248,15 @@ server.listen(PORT, HOST, async () => {
       await rendezvous.loadState();
       if (
         RENDEZVOUS_AUTO_START &&
-        rendezvous.state.status !== 'found' &&
+        !['found', 'lost'].includes(rendezvous.state.status) &&
         (!rendezvous.state.runId || Number(rendezvous.state.scratchpad?.version) >= 2)
       ) {
         await rendezvous.start();
         console.log('▶️  Rendezvous run auto-started');
       } else if (rendezvous.state.status === 'found') {
         console.log('✅ Rendezvous run already has a found state; preserving it');
+      } else if (rendezvous.state.status === 'lost') {
+        console.log('Rendezvous run exhausted its search budget; preserving the failed run');
       } else if (
         RENDEZVOUS_AUTO_START &&
         rendezvous.state.runId &&

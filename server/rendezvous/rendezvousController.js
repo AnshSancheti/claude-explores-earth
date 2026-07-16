@@ -6,6 +6,7 @@ import { calculateBearing } from '../utils/geoUtils.js';
 import { RendezvousModelService } from './rendezvousModel.js';
 import { RendezvousImageService } from './rendezvousImage.js';
 import {
+  RENDEZVOUS_MEMORY_VERSION,
   applyMemoryRevision,
   createAgentMemory,
   createMovementMemory,
@@ -101,6 +102,7 @@ const LEGACY_RENDEZVOUS_HINT_PATTERN = /rough wire|last telegram|telegrams said|
 const MODEL_THOUGHT_MODES = new Set(['decision', 'decision_wait', 'retrace']);
 const DEFAULT_MAX_CONSECUTIVE_WAIT_DECISIONS = 2;
 const MAX_PANORAMA_DRIFT_METERS = 250;
+const DEFAULT_MAX_BRANCH_DECISIONS = 120;
 
 function parseIntOr(value, fallback) {
   const parsed = parseInt(value, 10);
@@ -183,6 +185,13 @@ export function isAgentPositionPathConsistent(agent, maxDriftMeters = MAX_PANORA
   const pathTail = Array.isArray(agent?.path) ? agent.path.at(-1) : null;
   if (!agent?.position || !pathTail) return false;
   return calculateDistance(agent.position, pathTail) <= maxDriftMeters;
+}
+
+export function areAgentsStreetViewAdjacent(first, second) {
+  if (!first?.panoId || !second?.panoId) return false;
+  if (first.panoId === second.panoId) return true;
+  return (first.neighborPanoIds || []).includes(second.panoId) ||
+    (second.neighborPanoIds || []).includes(first.panoId);
 }
 
 function stripTelegramInternal(telegram) {
@@ -285,6 +294,9 @@ function sanitizePublicAgent(agent) {
     movementSinceDecision: _movementSinceDecision,
     waitTurnsRemaining: _waitTurnsRemaining,
     consecutiveWaitDecisions: _consecutiveWaitDecisions,
+    branchDecisionCount: _branchDecisionCount,
+    neighborPanoIds: _neighborPanoIds,
+    sheetBlockedPanoId: _sheetBlockedPanoId,
     ...publicFields
   } = agent;
   const fallback = publicLegacyReason(agent);
@@ -369,7 +381,14 @@ export class RendezvousController {
     this.state = this.#emptyState();
 
     this.stepIntervalMs = parseIntOr(process.env.RENDEZVOUS_STEP_INTERVAL_MS, 1800);
-    this.foundRadiusMeters = parseIntOr(process.env.RENDEZVOUS_FOUND_RADIUS_M, 125);
+    this.foundRadiusMeters = Math.min(
+      50,
+      Math.max(5, parseIntOr(process.env.RENDEZVOUS_FOUND_RADIUS_M, 35))
+    );
+    this.maxBranchDecisions = Math.max(
+      2,
+      parseIntOr(process.env.RENDEZVOUS_MAX_BRANCH_DECISIONS, DEFAULT_MAX_BRANCH_DECISIONS)
+    );
     this.maxConsecutiveWaitDecisions = Math.max(
       1,
       parseIntOr(process.env.RENDEZVOUS_MAX_CONSECUTIVE_WAIT_DECISIONS, DEFAULT_MAX_CONSECUTIVE_WAIT_DECISIONS)
@@ -388,6 +407,8 @@ export class RendezvousController {
       updatedAt: null,
       foundAt: null,
       foundReason: null,
+      lostAt: null,
+      lostReason: null,
       meeting: {
         goal: 'find_each_other',
         target: null,
@@ -416,7 +437,7 @@ export class RendezvousController {
       const raw = JSON.parse(await fsp.readFile(this.savePath, 'utf8'));
       if (raw?.mode === 'rendezvous' && raw?.runId) {
         const needsMemoryMigration = raw.status !== 'found' && AGENT_ORDER.some(agentId =>
-          raw.agents?.[agentId] && Number(raw.agents[agentId].privateMemory?.version) !== 1
+          raw.agents?.[agentId] && Number(raw.agents[agentId].privateMemory?.version) !== RENDEZVOUS_MEMORY_VERSION
         );
         if (raw.status !== 'found' && Number(raw.scratchpad?.version) === 4) {
           await this.#archivePreV5State(raw.runId);
@@ -458,7 +479,7 @@ export class RendezvousController {
     const safeRunId = String(runId).replace(/[^a-zA-Z0-9_-]/g, '');
     if (!safeRunId) throw new Error('Cannot archive rendezvous state with an invalid run ID');
     const archiveDir = path.join(this.dataDir, 'rendezvous-runs');
-    const archivePath = path.join(archiveDir, `${safeRunId}-pre-memory-v1.json`);
+    const archivePath = path.join(archiveDir, `${safeRunId}-pre-memory-v${RENDEZVOUS_MEMORY_VERSION}.json`);
     await fsp.mkdir(archiveDir, { recursive: true });
     try {
       await fsp.access(archivePath);
@@ -603,6 +624,13 @@ export class RendezvousController {
           state.eventLog,
           lastThought
         ),
+        branchDecisionCount: Math.max(0, Math.floor(Number(loadedAgent.branchDecisionCount) || 0)),
+        neighborPanoIds: Array.isArray(loadedAgent.neighborPanoIds)
+          ? [...new Set(loadedAgent.neighborPanoIds.filter(Boolean))].slice(0, 16)
+          : [],
+        sheetBlockedPanoId: typeof loadedAgent.sheetBlockedPanoId === 'string'
+          ? loadedAgent.sheetBlockedPanoId
+          : null,
         lastThought,
         friendEstimate: null,
       };
@@ -657,7 +685,7 @@ export class RendezvousController {
 
   async start({ reset = false } = {}) {
     const hasCausalScratchpad = Number(this.state.scratchpad?.version) >= 2;
-    if (reset || !this.state.runId || this.state.status === 'found' || !hasCausalScratchpad) {
+    if (reset || !this.state.runId || ['found', 'lost'].includes(this.state.status) || !hasCausalScratchpad) {
       await this.createRun();
     } else if (!this.state.runId) {
       await this.loadState();
@@ -777,6 +805,9 @@ export class RendezvousController {
       movementSinceDecision: createMovementMemory(),
       waitTurnsRemaining: 0,
       consecutiveWaitDecisions: 0,
+      branchDecisionCount: 0,
+      neighborPanoIds: (pano.links || []).map(link => link?.pano).filter(Boolean).slice(0, 16),
+      sheetBlockedPanoId: null,
       lastDecision: null,
       lastThought: null,
       friendEstimate: null,
@@ -808,6 +839,7 @@ export class RendezvousController {
       this.state.turn += 1;
       this.#updateMeetingMetrics();
       this.#checkFound();
+      this.#checkExhausted();
       this.state.updatedAt = new Date().toISOString();
       await this.saveState();
       this.broadcastState();
@@ -823,9 +855,23 @@ export class RendezvousController {
     const partner = this.state.agents[this.#partnerId(agentId)];
     if (!agent || !partner) return;
 
+    const activeSheet = Number(this.state.scratchpad?.version) === 5
+      ? normalizeRasterScratchpad(this.state.scratchpad, { turn: this.state.turn })
+      : null;
+    if (
+      agent.sheetBlockedPanoId === agent.panoId &&
+      activeSheet &&
+      (activeSheet.pendingMessage || activeSheet.owner !== agentId)
+    ) {
+      agent.status = 'waiting';
+      return;
+    }
+    agent.sheetBlockedPanoId = null;
+
     const current = await this.#navigateAndGetPanorama(agent.panoId, agent.position);
     agent.panoId = current.panoId;
     agent.position = { lat: current.position.lat, lng: current.position.lng };
+    agent.neighborPanoIds = (current.links || []).map(link => link?.pano).filter(Boolean).slice(0, 16);
 
     let selected = null;
     let decisionReason = null;
@@ -898,15 +944,18 @@ export class RendezvousController {
           waitingAtBranch = true;
           mode = 'waiting_for_sheet';
           agent.status = 'waiting';
+          agent.sheetBlockedPanoId = agent.panoId;
           decisionReason = scratchpad.pendingMessage
             ? `${agent.name} waits at the choice until the drawing has finished crossing between them.`
             : `${agent.name} waits at the choice because ${partner.name} still holds the sheet.`;
         } else {
           const allowWait = agent.consecutiveWaitDecisions < this.maxConsecutiveWaitDecisions;
-          const [screenshots, scratchpadImage] = await Promise.all([
+          const [screenshots, scratchpadImage, visualHistory] = await Promise.all([
             this.#captureCandidateScreenshots(decisionPool),
-            this.#readScratchpadImage(scratchpad)
+            this.#readScratchpadImage(scratchpad),
+            this.#readVisualHistory(agentId, scratchpad)
           ]);
+          agent.branchDecisionCount += 1;
           const decision = await this.agentModel.decide({
             agent: {
               id: agent.id,
@@ -926,6 +975,7 @@ export class RendezvousController {
             scratchpadBuffer: scratchpadImage.buffer,
             scratchpadMimeType: scratchpadImage.mimeType,
             sheetMessage: scratchpad.currentMessage,
+            visualHistory,
             privateMemory: normalizeAgentMemory(agent.privateMemory, { recentNotes: agent.recentNotes }),
             movementSinceDecision: normalizeMovementMemory(agent.movementSinceDecision),
             allowWait,
@@ -953,7 +1003,9 @@ export class RendezvousController {
               turn: this.state.turn,
               sheetMessage: scratchpad.currentMessage,
               sheetInterpretation: decision.sheetInterpretation,
-              observation: decision.observation
+              sheetConfidence: decision.sheetConfidence,
+              observation: decision.observation,
+              sourcePanoId: current.panoId
             });
             agent.movementSinceDecision = createMovementMemory();
           }
@@ -984,6 +1036,7 @@ export class RendezvousController {
               turn: this.state.turn,
               drawingPrompt: decision.drawingPrompt,
               drawingIntent: decision.drawingIntent,
+              groundedFeatures: decision.observedFeatures,
               sourcePanoId: current.panoId
             });
             this.#recordEvent('scratchpad_queued', {
@@ -1017,6 +1070,7 @@ export class RendezvousController {
       const pano = await this.#navigateAndGetPanorama(selected.panoId, selected.position);
       agent.panoId = pano.panoId;
       agent.position = { lat: pano.position.lat, lng: pano.position.lng };
+      agent.neighborPanoIds = (pano.links || []).map(link => link?.pano).filter(Boolean).slice(0, 16);
       agent.heading = calculateBearing(previousPosition, agent.position);
       agent.movementSinceDecision = recordMovement(agent.movementSinceDecision, {
         distanceMeters: calculateDistance(previousPosition, agent.position),
@@ -1024,6 +1078,7 @@ export class RendezvousController {
         label: selected.label
       });
       agent.consecutiveWaitDecisions = 0;
+      agent.sheetBlockedPanoId = null;
       agent.status = 'searching';
       agent.path.push({
         ...agent.position,
@@ -1193,6 +1248,33 @@ export class RendezvousController {
     };
   }
 
+  async #readVisualHistory(agentId, scratchpad, limit = 4) {
+    const normalized = normalizeRasterScratchpad(scratchpad);
+    const currentId = normalized.currentMessage?.id || null;
+    const messages = normalized.messageAudit
+      .filter(message =>
+        message.status === 'sent' &&
+        message.imageFile &&
+        message.id !== currentId &&
+        (message.from === agentId || message.to === agentId)
+      )
+      .slice(-limit);
+    const history = [];
+    for (const message of messages) {
+      try {
+        history.push({
+          sequence: message.sequence,
+          direction: message.from === agentId ? 'sent' : 'received',
+          mimeType: message.imageMimeType || (message.imageFile.endsWith('.png') ? 'image/png' : 'image/webp'),
+          buffer: await fsp.readFile(path.join(this.#drawingDirectory(), message.imageFile))
+        });
+      } catch (error) {
+        this.logger.warn?.(`Could not read rendezvous visual history ${message.id}: ${error.message}`);
+      }
+    }
+    return history;
+  }
+
   async #removePendingReferences(pendingId) {
     await Promise.all(Array.from({ length: 4 }, (_, index) =>
       fsp.unlink(path.join(this.#drawingDirectory(), `${pendingId}-reference-${index}.jpg`)).catch(() => {})
@@ -1209,7 +1291,8 @@ export class RendezvousController {
     const work = (async () => {
       try {
         const generated = await this.imageModel.generate({
-          drawingPrompt: pending.drawingPrompt
+          drawingPrompt: pending.drawingPrompt,
+          groundedFeatures: pending.groundedFeatures
         });
         const directory = this.#drawingDirectory();
         await fsp.mkdir(directory, { recursive: true });
@@ -1238,6 +1321,7 @@ export class RendezvousController {
             sequence: sent.sequence,
             to: sent.to,
             intent: pending.drawingIntent,
+            groundedFeatures: pending.groundedFeatures,
             createdAt: sent.sentAt
           });
         }
@@ -1386,6 +1470,14 @@ export class RendezvousController {
       });
       return;
     }
+    if (!areAgentsStreetViewAdjacent(ada, theo)) {
+      this.#recordEvent('found_connectivity_rejected', {
+        distanceMeters: Math.round(distance),
+        adaPanoId: ada.panoId,
+        theoPanoId: theo.panoId
+      });
+      return;
+    }
 
     this.state.status = 'found';
     this.running = false;
@@ -1394,7 +1486,7 @@ export class RendezvousController {
       this.timer = null;
     }
     this.state.foundAt = new Date().toISOString();
-    this.state.foundReason = `${AGENTS.ada.name} and ${AGENTS.theo.name} came within ${Math.round(distance)}m of each other.`;
+    this.state.foundReason = `${AGENTS.ada.name} and ${AGENTS.theo.name} reached the same connected Street View place, ${Math.round(distance)}m apart.`;
     this.state.agents.ada.status = 'found';
     this.state.agents.theo.status = 'found';
     const payload = {
@@ -1405,6 +1497,31 @@ export class RendezvousController {
     };
     this.#recordEvent('rendezvous_found', payload);
     this.emit('rendezvous-found', payload);
+  }
+
+  #checkExhausted() {
+    if (this.state.status !== 'running') return;
+    const branchDecisions = AGENT_ORDER.reduce((total, agentId) =>
+      total + Math.max(0, Number(this.state.agents[agentId]?.branchDecisionCount) || 0), 0);
+    if (branchDecisions < this.maxBranchDecisions) return;
+
+    this.state.status = 'lost';
+    this.running = false;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.state.lostAt = new Date().toISOString();
+    this.state.lostReason = `The friends used their ${this.maxBranchDecisions}-decision search budget without finding each other.`;
+    for (const agentId of AGENT_ORDER) this.state.agents[agentId].status = 'lost';
+    const payload = {
+      runId: this.state.runId,
+      turn: this.state.turn,
+      branchDecisions,
+      reason: this.state.lostReason
+    };
+    this.#recordEvent('rendezvous_lost', payload);
+    this.emit('rendezvous-lost', payload);
   }
 
   async #getPanorama(positionOrPanoId) {

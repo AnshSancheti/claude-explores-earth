@@ -44,6 +44,13 @@ function cleanString(value, maxLength = 4000) {
     : '';
 }
 
+function cleanStringList(values, { limit = 5, maxLength = 180 } = {}) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map(value => cleanString(value, maxLength).replace(/\s+/g, ' '))
+    .filter(Boolean))]
+    .slice(0, limit);
+}
+
 function normalizeRasterMessage(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const from = normalizedAgentId(raw.from, null);
@@ -79,6 +86,7 @@ function normalizePendingRasterMessage(raw) {
     turn: Math.max(0, Math.floor(Number(raw.turn) || 0)),
     drawingPrompt,
     drawingIntent: cleanString(raw.drawingIntent, 700),
+    groundedFeatures: cleanStringList(raw.groundedFeatures),
     referenceViewIndices: Array.isArray(raw.referenceViewIndices)
       ? [...new Set(raw.referenceViewIndices.map(Number).filter(Number.isInteger))].slice(0, 4)
       : [],
@@ -118,11 +126,13 @@ export function normalizeRasterScratchpad(raw, { turn = 0 } = {}) {
         sequence: Math.max(0, Math.floor(Number(entry?.sequence) || 0)),
         drawingPrompt: cleanString(entry?.drawingPrompt, 2400),
         drawingIntent: cleanString(entry?.drawingIntent, 700),
+        groundedFeatures: cleanStringList(entry?.groundedFeatures),
         referenceViewIndices: Array.isArray(entry?.referenceViewIndices)
           ? [...new Set(entry.referenceViewIndices.map(Number).filter(Number.isInteger))].slice(0, 4)
           : [],
         sourcePanoId: cleanString(entry?.sourcePanoId, 240) || null,
         imageFile: cleanString(entry?.imageFile, 240) || null,
+        imageMimeType: cleanString(entry?.imageMimeType, 80) || null,
         imageSha256: cleanString(entry?.imageSha256, 128) || null,
         imageModel: cleanString(entry?.imageModel, 120) || null,
         requestId: cleanString(entry?.requestId, 240) || null,
@@ -152,6 +162,7 @@ export function queueRasterScratchpadMessage(scratchpad, {
   turn,
   drawingPrompt,
   drawingIntent = '',
+  groundedFeatures = [],
   referenceViewIndices = [],
   sourcePanoId = null,
   id = randomUUID()
@@ -165,6 +176,7 @@ export function queueRasterScratchpadMessage(scratchpad, {
     turn,
     drawingPrompt,
     drawingIntent,
+    groundedFeatures,
     referenceViewIndices,
     sourcePanoId,
     attempts: 0,
@@ -205,6 +217,7 @@ export function commitRasterScratchpadMessage(scratchpad, {
     ...pending,
     sequence,
     imageFile,
+    imageMimeType,
     imageSha256,
     imageModel,
     requestId,

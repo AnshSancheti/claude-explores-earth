@@ -45,6 +45,26 @@ function cleanString(value, maxLength) {
     : '';
 }
 
+function cleanStringList(values, { limit = 5, maxLength = 180 } = {}) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map(value => cleanString(value, maxLength))
+    .filter(Boolean))]
+    .slice(0, limit);
+}
+
+function cleanBeliefUpdate(raw) {
+  const numericConfidence = Number(raw?.confidence);
+  return {
+    key: cleanString(raw?.key, 80),
+    description: cleanString(raw?.description, 500),
+    confidence: Number.isFinite(numericConfidence) ? Math.min(1, Math.max(0, numericConfidence)) : 0,
+    basisSequences: [...new Set((Array.isArray(raw?.basisSequences) ? raw.basisSequences : [])
+      .map(value => Math.floor(Number(value)))
+      .filter(value => Number.isFinite(value) && value > 0))]
+      .slice(-8)
+  };
+}
+
 export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = {}) {
   const optionCount = Array.isArray(options) ? options.length : 0;
   const requestedAction = cleanString(raw?.action, 20).toLowerCase();
@@ -61,6 +81,7 @@ export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = 
       .sort((a, b) => a.delta - b.delta || a.index - b.index);
     if (selectedDelta > 12 && matches.length === 1) selectedIndex = matches[0].index;
   }
+  const numericSheetConfidence = Number(raw?.sheetConfidence);
   return {
     action,
     selectedIndex,
@@ -68,14 +89,17 @@ export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = 
     waitTurns: action === 'wait' ? Math.min(6, Math.max(1, Math.floor(Number(raw?.waitTurns) || 1))) : 0,
     reasoning: cleanString(raw?.reasoning, 700) || 'I choose the most promising unfamiliar public route.',
     observation: cleanString(raw?.observation, 700),
+    observedFeatures: cleanStringList(raw?.observedFeatures),
     sheetInterpretation: cleanString(raw?.sheetInterpretation, 700),
+    sheetConfidence: Number.isFinite(numericSheetConfidence)
+      ? Math.min(1, Math.max(0, numericSheetConfidence))
+      : 0.35,
     drawingIntent: cleanString(raw?.drawingIntent, 700),
     drawingPrompt: cleanString(raw?.drawingPrompt, 2400),
     memoryUpdate: {
-      journeySummary: cleanString(raw?.memoryUpdate?.journeySummary, 1200),
-      partnerBelief: cleanString(raw?.memoryUpdate?.partnerBelief, 1200),
-      visualVocabulary: cleanString(raw?.memoryUpdate?.visualVocabulary, 1200),
-      jointPlan: cleanString(raw?.memoryUpdate?.jointPlan, 1200)
+      currentPlan: cleanString(raw?.memoryUpdate?.currentPlan, 500),
+      conventionUpdate: cleanBeliefUpdate(raw?.memoryUpdate?.conventionUpdate),
+      partnerHypothesis: cleanBeliefUpdate(raw?.memoryUpdate?.partnerHypothesis)
     }
   };
 }
@@ -89,7 +113,9 @@ function fallbackDecision(options, visitedPanos, cause) {
     waitTurns: 0,
     reasoning: 'I choose the least familiar public way forward and keep searching.',
     observation: '',
+    observedFeatures: [],
     sheetInterpretation: '',
+    sheetConfidence: 0,
     drawingIntent: '',
     drawingPrompt: '',
     memoryUpdate: {},
@@ -127,6 +153,7 @@ export class RendezvousModelService {
     scratchpadBuffer,
     scratchpadMimeType = 'image/webp',
     sheetMessage = null,
+    visualHistory = [],
     privateMemory = null,
     movementSinceDecision = null,
     allowWait = true,
@@ -157,21 +184,21 @@ export class RendezvousModelService {
 You have already chosen to remain at this same branch ${Math.max(1, Math.floor(Number(consecutiveWaitDecisions) || 0))} consecutive times without gaining a new local observation. Your friend may also be waiting. Remaining here again is not available at this decision; choose move or retrace and communicate that choice visually.`;
     const actionSchema = allowWait ? '"move" | "retrace" | "wait"' : '"move" | "retrace"';
 
-    const systemPrompt = `You are ${agent.name}, one of two friends trying to meet after becoming separated on unfamiliar Manhattan streets. ${partnerName} is not a passive target: your friend is also moving, interpreting your drawings, and actively trying to meet you. You are building a shared strategy together.
+    const systemPrompt = `You are ${agent.name}, one of two friends trying to meet after becoming separated on unfamiliar streets. You both began in Manhattan, but the world is open and either of you may have traveled far beyond your starting area. ${partnerName} is not a passive target: your friend is also moving, interpreting your drawings, and actively trying to meet you. You are building a shared strategy together.
 
 You can see your own Street View routes and one physical sheet last sent by your friend. That sheet image is the only information that crosses between you. You never receive ${partnerName}'s coordinates, path, distance, neighborhood, reasoning, prompt, transcript, or hidden state. Infer what you can from the image itself.
 
-You have no global map or privileged knowledge of Manhattan. Your private memory below is your own fallible recollection, built only from streets you walked and sheets you previously saw. Use it for continuity, but revise beliefs when new observations disagree.
+You have no global map or privileged geographic knowledge. Your private memory below is an evidence ledger built only from streets you walked and sheets you previously saw. Every belief has provenance and limited confidence. Fresh visible evidence outranks an old plan. A repeated guess is not confirmation; revise or abandon it when observations disagree.
 
 You are now at a real branching point. Choose a cooperative action:
 ${actionGuidance}
 Avoid indoor shops, private interiors, dead ends, and accidental immediate loops. Google headings are compass bearings clockwise from north.
 
-Because you currently hold the sheet, decide what visual message to send to ${partnerName}. It should carry useful information, not merely look evocative. Ground it in at least one concrete thing you currently observe or genuinely remember, and show a useful relationship such as direction, sequence, repetition, convergence, contrast, or your intention to move, retrace, or wait. You control the mixture of recognizable observation and symbolism. Reuse an established visual convention when you believe your friend will understand it; do not fill a fixed template.
+Because you currently hold the sheet, decide what visual message to send to ${partnerName}. The drawing is evidence about the world around its sender, not a command that maps onto the recipient's private route options. Base it on at least two stable features visible in the current route images and preserve their spatial relationship. Examples include facade shape, awnings, scaffolding, road geometry, trees, towers, stairs, traffic lights, or distinctive street furniture. Symbols may support the observation, but they must not dominate it. Do not encode private option numbers, an imagined compass agreement, or a place name that is not visibly grounded. Reuse a visual convention only when the evidence ledger shows actual prior sheet sequences supporting it.
 
 The resulting picture must contain no readable text, letters, numbers, labels, captions, signatures, logos, or watermarks. Express everything visually. Do not put those prohibitions into drawingPrompt; simply describe the picture you want.
 
-Interpret the received sheet explicitly, then return a complete revised private memory. Keep each memory field concise and preserve useful older knowledge unless the new evidence changes it. drawingIntent is your private record of what the outgoing picture is meant to communicate; only drawingPrompt is sent to the image renderer.
+Interpret the received sheet explicitly and state your confidence. Update only the current plan and at most one sourced visual convention and partner hypothesis. basisSequences must list real prior sent or received sheet sequence numbers from your evidence ledger. Unsupported beliefs will remain low confidence. drawingIntent is your private record of what the outgoing picture is meant to communicate; only drawingPrompt and the grounded visible features are sent to the image renderer.
 
 Return only JSON:
 {
@@ -181,21 +208,32 @@ Return only JSON:
   "waitTurns": <1-6 when action is wait, otherwise 0>,
   "reasoning": "one concise first-person field note",
   "observation": "a grounded description of what you currently notice and want to remember",
+  "observedFeatures": ["stable visible feature one", "stable visible feature two"],
   "sheetInterpretation": "what you think the current drawing from your friend means, including uncertainty",
+  "sheetConfidence": <0.0-1.0>,
   "memoryUpdate": {
-    "journeySummary": "your revised compact memory of where you have been",
-    "partnerBelief": "your revised belief about your friend's situation and strategy",
-    "visualVocabulary": "your revised interpretation of recurring visual symbols",
-    "jointPlan": "your current cooperative plan for meeting"
+    "currentPlan": "your current cooperative next strategy, revised by fresh evidence",
+    "conventionUpdate": {"key": "short-stable-key", "description": "a visual convention hypothesis", "confidence": <0.0-1.0>, "basisSequences": [<real sequence numbers>]},
+    "partnerHypothesis": {"key": "short-stable-key", "description": "a hypothesis about your friend's situation", "confidence": <0.0-1.0>, "basisSequences": [<real sequence numbers>]}
   },
   "drawingIntent": "what you want your friend to learn from the next drawing",
-  "drawingPrompt": "complete image instructions that visually encode that intent"
+  "drawingPrompt": "complete instructions for an observational sketch that visually encodes that intent without text"
 }`;
+
+    const history = (Array.isArray(visualHistory) ? visualHistory : []).slice(-4);
+    const historyLines = history.length > 0
+      ? history.map((item, index) =>
+          `History image ${index + 1}: sheet sequence ${item.sequence}; ${item.direction === 'sent' ? 'you sent it' : 'you received it'}.`
+        ).join('\n')
+      : 'No earlier sheet images are available.';
 
     const userContent = [
       {
         type: 'text',
-        text: `Image 1 is the physical sheet exactly as you received it. The remaining images are your current route options 0 through ${options.length - 1}.
+        text: `Image 1 is the physical sheet exactly as you received it. Next come ${history.length} earlier sheet images in chronological order, followed by your current route images for options 0 through ${options.length - 1}.
+
+Visual history:
+${historyLines}
 
 Current sheet metadata: ${sheetMessage ? `sequence ${sheetMessage.sequence}, sent by ${sheetMessage.from}` : 'blank first sheet'}
 
@@ -214,6 +252,10 @@ ${recentFieldNotes}`
         type: 'image_url',
         image_url: { url: `data:${scratchpadMimeType};base64,${scratchpadBuffer.toString('base64')}`, detail: 'high' }
       },
+      ...history.map(item => ({
+        type: 'image_url',
+        image_url: { url: `data:${item.mimeType || 'image/webp'};base64,${item.buffer.toString('base64')}`, detail: 'low' }
+      })),
       ...screenshots.map(buffer => ({
         type: 'image_url',
         image_url: { url: `data:image/jpeg;base64,${buffer.toString('base64')}`, detail: 'low' }
@@ -242,7 +284,8 @@ ${recentFieldNotes}`
         const decision = sanitizeRendezvousDecision(parsed, options, { allowWait });
         if (!decision.drawingPrompt) throw new Error('Rendezvous model omitted its drawing prompt');
         if (!decision.drawingIntent) throw new Error('Rendezvous model omitted its private drawing intent');
-        if (!decision.memoryUpdate.journeySummary || !decision.memoryUpdate.jointPlan) {
+        if (decision.observedFeatures.length < 2) throw new Error('Rendezvous model omitted two grounded visible features');
+        if (!decision.memoryUpdate.currentPlan) {
           throw new Error('Rendezvous model omitted its private memory revision');
         }
         return decision;
