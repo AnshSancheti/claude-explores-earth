@@ -8,6 +8,7 @@ import {
   currentScratchpadOperations,
   normalizeScratchpad,
   publicRasterScratchpad,
+  publicRasterScratchpadHistory,
   queueRasterScratchpadMessage,
   renderScratchpad,
   sketchOperationSvg,
@@ -23,7 +24,34 @@ test('raster sheet changes and transfers only after a durable image commit', () 
     drawingPrompt: 'Draw two arches and a yellow circle.',
     groundedFeatures: ['two stone arches', 'a round lamp between them'],
     referenceViewIndices: [0],
-    sourcePanoId: 'ada-branch'
+    sourcePanoId: 'ada-branch',
+    snapshot: {
+      turn: 4,
+      status: 'running',
+      distanceMeters: 820,
+      capturedAt: '2026-07-16T12:00:00.000Z',
+      agents: {
+        ada: {
+          name: 'Ada',
+          panoId: 'ada-branch',
+          position: { lat: 40.74, lng: -73.99 },
+          heading: 90,
+          stepCount: 3,
+          pathLength: 4,
+          status: 'searching',
+          lastThought: { reasoning: 'I will mark the arches.', turn: 4, stepCount: 3 }
+        },
+        theo: {
+          name: 'Theo',
+          panoId: 'theo-road',
+          position: { lat: 40.75, lng: -73.98 },
+          heading: 180,
+          stepCount: 2,
+          pathLength: 3,
+          status: 'searching'
+        }
+      }
+    }
   });
   assert.equal(queued.owner, 'ada');
   assert.equal(queued.currentMessage, null);
@@ -52,6 +80,15 @@ test('raster sheet changes and transfers only after a durable image commit', () 
   assert.equal(Object.hasOwn(publicSheet.currentMessage, 'imageFile'), false);
   assert.equal(Object.hasOwn(publicSheet.currentMessage, 'imageSha256'), false);
   assert.doesNotMatch(JSON.stringify(publicSheet), /arches|converge|drawingPrompt|drawingIntent|groundedFeatures|sourcePanoId/);
+
+  const history = publicRasterScratchpadHistory(committed, {
+    imageUrlFor: message => `/drawings/${message.id}`
+  });
+  assert.equal(history.items.length, 1);
+  assert.equal(history.items[0].snapshot.agents.ada.panoId, 'ada-branch');
+  assert.equal(history.items[0].snapshot.agents.ada.pathLength, 4);
+  assert.equal(history.items[0].snapshot.agents.ada.lastThought.reasoning, 'I will mark the arches.');
+  assert.doesNotMatch(JSON.stringify(history), /drawingPrompt|drawingIntent|groundedFeatures/);
 });
 
 test('primitive model output is composed into one authored street sketch', async () => {

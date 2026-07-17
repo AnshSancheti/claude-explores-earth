@@ -11,7 +11,7 @@ export const SCRATCHPAD_LABEL_MAX_CHARS = 28;
 export const RASTER_SCRATCHPAD_VERSION = 5;
 export const RASTER_SCRATCHPAD_WIDTH = 1152;
 export const RASTER_SCRATCHPAD_HEIGHT = 768;
-export const RASTER_SCRATCHPAD_MAX_MESSAGES = 120;
+export const RASTER_SCRATCHPAD_MAX_MESSAGES = 160;
 
 const SCRATCHPAD_VERSION = 4;
 const SKETCH_SCENES = new Set(['intersection', 'storefront', 'park', 'station', 'landmark']);
@@ -51,6 +51,56 @@ function cleanStringList(values, { limit = 5, maxLength = 180 } = {}) {
     .slice(0, limit);
 }
 
+function normalizeSnapshotPosition(raw) {
+  const lat = Number(raw?.lat);
+  const lng = Number(raw?.lng);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
+function normalizeSnapshotThought(raw) {
+  const reasoning = cleanString(raw?.reasoning, 700);
+  if (!reasoning) return null;
+  return {
+    reasoning,
+    turn: Math.max(0, Math.floor(Number(raw?.turn) || 0)),
+    stepCount: Math.max(0, Math.floor(Number(raw?.stepCount) || 0)),
+    mode: cleanString(raw?.mode, 40) || 'decision',
+    selectedLabel: cleanString(raw?.selectedLabel, 160) || null,
+    createdAt: raw?.createdAt || null
+  };
+}
+
+export function normalizeRasterSnapshot(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const agents = {};
+  for (const agentId of ['ada', 'theo']) {
+    const agent = raw.agents?.[agentId];
+    const position = normalizeSnapshotPosition(agent?.position);
+    const panoId = cleanString(agent?.panoId, 240);
+    if (!agent || !position || !panoId) return null;
+    agents[agentId] = {
+      name: cleanString(agent.name, 80) || (agentId === 'ada' ? 'Ada' : 'Theo'),
+      panoId,
+      position,
+      heading: Number.isFinite(Number(agent.heading)) ? Number(agent.heading) : 0,
+      stepCount: Math.max(0, Math.floor(Number(agent.stepCount) || 0)),
+      pathLength: Math.max(1, Math.floor(Number(agent.pathLength) || 1)),
+      status: cleanString(agent.status, 40) || 'searching',
+      lastThought: normalizeSnapshotThought(agent.lastThought)
+    };
+  }
+  const distanceMeters = Number(raw.distanceMeters);
+  return {
+    turn: Math.max(0, Math.floor(Number(raw.turn) || 0)),
+    status: cleanString(raw.status, 40) || 'running',
+    distanceMeters: Number.isFinite(distanceMeters) ? Math.max(0, distanceMeters) : null,
+    capturedAt: raw.capturedAt || null,
+    approximate: raw.approximate === true,
+    agents
+  };
+}
+
 function normalizeRasterMessage(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const from = normalizedAgentId(raw.from, null);
@@ -67,6 +117,7 @@ function normalizeRasterMessage(raw) {
     imageFile,
     imageMimeType: cleanString(raw.imageMimeType, 80) || 'image/webp',
     imageSha256: cleanString(raw.imageSha256, 128) || null,
+    snapshot: normalizeRasterSnapshot(raw.snapshot),
     createdAt: raw.createdAt || null,
     sentAt: raw.sentAt || raw.createdAt || null
   };
@@ -91,6 +142,7 @@ function normalizePendingRasterMessage(raw) {
       ? [...new Set(raw.referenceViewIndices.map(Number).filter(Number.isInteger))].slice(0, 4)
       : [],
     sourcePanoId: cleanString(raw.sourcePanoId, 240) || null,
+    snapshot: normalizeRasterSnapshot(raw.snapshot),
     status: 'generating',
     attempts: Math.max(0, Math.floor(Number(raw.attempts) || 0)),
     createdAt: raw.createdAt || new Date().toISOString()
@@ -134,6 +186,7 @@ export function normalizeRasterScratchpad(raw, { turn = 0 } = {}) {
         imageFile: cleanString(entry?.imageFile, 240) || null,
         imageMimeType: cleanString(entry?.imageMimeType, 80) || null,
         imageSha256: cleanString(entry?.imageSha256, 128) || null,
+        snapshot: normalizeRasterSnapshot(entry?.snapshot),
         imageModel: cleanString(entry?.imageModel, 120) || null,
         requestId: cleanString(entry?.requestId, 240) || null,
         status: cleanString(entry?.status, 40) || 'sent',
@@ -165,6 +218,7 @@ export function queueRasterScratchpadMessage(scratchpad, {
   groundedFeatures = [],
   referenceViewIndices = [],
   sourcePanoId = null,
+  snapshot = null,
   id = randomUUID()
 }) {
   const normalized = normalizeRasterScratchpad(scratchpad, { turn });
@@ -179,6 +233,7 @@ export function queueRasterScratchpadMessage(scratchpad, {
     groundedFeatures,
     referenceViewIndices,
     sourcePanoId,
+    snapshot,
     attempts: 0,
     createdAt: new Date().toISOString()
   });
@@ -270,6 +325,32 @@ export function publicRasterScratchpad(scratchpad, { imageUrlFor = null } = {}) 
     messageTo: currentMessage?.to || null,
     isGenerating: Boolean(normalized.pendingMessage),
     updatedAt: normalized.updatedAt
+  };
+}
+
+export function publicRasterScratchpadHistory(scratchpad, {
+  imageUrlFor = null,
+  snapshotFor = null
+} = {}) {
+  const normalized = normalizeRasterScratchpad(scratchpad);
+  const messages = normalized.messageAudit
+    .filter(message => message.status === 'sent' && message.imageFile)
+    .map(message => ({
+      id: message.id,
+      from: message.from,
+      to: message.to,
+      turn: message.turn,
+      sequence: message.sequence,
+      createdAt: message.createdAt,
+      sentAt: message.sentAt,
+      imageUrl: typeof imageUrlFor === 'function' ? imageUrlFor(message) : null,
+      snapshot: message.snapshot || (typeof snapshotFor === 'function' ? snapshotFor(message) : null)
+    }))
+    .filter(message => message.snapshot)
+    .sort((a, b) => a.sequence - b.sequence);
+  return {
+    sequence: normalized.sequence,
+    items: messages
   };
 }
 

@@ -1679,6 +1679,18 @@ app.get('/api/rendezvous/state', async (req, res) => {
   }
 });
 
+app.get('/api/rendezvous/history', async (req, res) => {
+  try {
+    if (!rendezvous) return res.status(404).json({ error: 'rendezvous_unavailable' });
+    if (!rendezvous.state?.runId) await rendezvous.loadState();
+    res.set('Cache-Control', 'no-cache');
+    res.json(rendezvous.getPublicHistory());
+  } catch (error) {
+    console.warn(`Failed to read rendezvous history: ${error.message}`);
+    res.status(500).json({ error: 'rendezvous_history_failed', message: error.message });
+  }
+});
+
 app.get('/api/rendezvous/drawings/:runId/:messageId', async (req, res) => {
   try {
     if (!rendezvous) return res.status(404).json({ error: 'rendezvous_unavailable' });

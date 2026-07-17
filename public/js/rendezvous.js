@@ -183,6 +183,12 @@
       this.pendingStreetState = null;
       this.mobileView = 'ada';
       this.lastScratchpadSequence = 0;
+      this.liveState = null;
+      this.historyItems = [];
+      this.historyIndex = null;
+      this.historyRunId = null;
+      this.historySequence = -1;
+      this.historyRequest = null;
     }
 
     initialize() {
@@ -252,6 +258,18 @@
         }
       });
       document.getElementById('rvFitBtn')?.addEventListener('click', () => this.fitMap());
+      document.getElementById('rvHistoryPrev')?.addEventListener('click', () => this.showEarlierSheet());
+      document.getElementById('rvHistoryNext')?.addEventListener('click', () => this.showLaterSheet());
+      document.getElementById('rvHistoryLive')?.addEventListener('click', () => this.returnToLive());
+      document.getElementById('rvHistoryControls')?.addEventListener('keydown', event => {
+        if (event.key === 'ArrowLeft') {
+          event.preventDefault();
+          this.showEarlierSheet();
+        } else if (event.key === 'ArrowRight') {
+          event.preventDefault();
+          this.showLaterSheet();
+        }
+      });
       this.setupMobileTabs();
     }
 
@@ -375,6 +393,24 @@
     }
 
     applyState(state) {
+      const runChanged = this.historyRunId && this.historyRunId !== state.runId;
+      this.liveState = state;
+      if (runChanged) {
+        this.historyItems = [];
+        this.historyIndex = null;
+        this.historySequence = -1;
+      }
+      this.historyRunId = state.runId || null;
+      const sequence = Number(state.scratchpad?.sequence || 0);
+      if (sequence !== this.historySequence) void this.loadHistory();
+      if (this.historyIndex !== null) {
+        this.renderHistoryControls();
+        return;
+      }
+      this.renderState(state);
+    }
+
+    renderState(state, { fit = false } = {}) {
       this.state = state;
       this.renderHeader();
       this.renderAgents();
@@ -386,18 +422,141 @@
       } else {
         this.pendingStreetState = state;
       }
+      this.renderHistoryControls();
+      if (fit) window.setTimeout(() => this.fitMap(), 80);
+    }
+
+    async loadHistory() {
+      if (!this.liveState?.runId || this.historyRequest) return this.historyRequest;
+      const requestedRunId = this.liveState.runId;
+      let loaded = false;
+      this.historyRequest = fetch('/api/rendezvous/history', { cache: 'no-cache' })
+        .then(response => {
+          if (!response.ok) throw new Error(`History request failed (${response.status})`);
+          return response.json();
+        })
+        .then(history => {
+          if (history.runId !== requestedRunId || this.liveState?.runId !== requestedRunId) return;
+          loaded = true;
+          const selectedId = this.historyIndex === null ? null : this.historyItems[this.historyIndex]?.id;
+          this.historyItems = Array.isArray(history.items) ? history.items : [];
+          this.historySequence = Number(history.sequence || 0);
+          if (selectedId) {
+            const nextIndex = this.historyItems.findIndex(item => item.id === selectedId);
+            this.historyIndex = nextIndex >= 0 ? nextIndex : null;
+          }
+          if (this.historyIndex !== null) this.renderSelectedHistory();
+          else this.renderHistoryControls();
+        })
+        .catch(error => console.warn('Could not load sheet history:', error.message))
+        .finally(() => {
+          this.historyRequest = null;
+          if (loaded && Number(this.liveState?.scratchpad?.sequence || 0) !== this.historySequence) {
+            void this.loadHistory();
+          }
+        });
+      return this.historyRequest;
+    }
+
+    showEarlierSheet() {
+      if (!this.historyItems.length) return;
+      this.historyIndex = this.historyIndex === null
+        ? this.historyItems.length - 1
+        : Math.max(0, this.historyIndex - 1);
+      this.renderSelectedHistory();
+    }
+
+    showLaterSheet() {
+      if (this.historyIndex === null) return;
+      if (this.historyIndex >= this.historyItems.length - 1) {
+        this.returnToLive();
+        return;
+      }
+      this.historyIndex += 1;
+      this.renderSelectedHistory();
+    }
+
+    returnToLive() {
+      if (!this.liveState) return;
+      this.historyIndex = null;
+      this.renderState(this.liveState, { fit: true });
+    }
+
+    renderSelectedHistory() {
+      const item = this.historyItems[this.historyIndex];
+      if (!item?.snapshot || !this.liveState) {
+        this.returnToLive();
+        return;
+      }
+      this.renderState(this.buildHistoricalState(item), { fit: true });
+      this.prefetchHistoryNeighbors();
+    }
+
+    buildHistoricalState(item) {
+      const snapshot = item.snapshot;
+      const agents = {};
+      for (const agentId of AGENT_IDS) {
+        const liveAgent = this.liveState.agents?.[agentId] || {};
+        const savedAgent = snapshot.agents?.[agentId] || {};
+        agents[agentId] = {
+          ...liveAgent,
+          ...savedAgent,
+          path: (liveAgent.path || []).slice(0, Math.max(1, Number(savedAgent.pathLength) || 1)),
+          lastThought: savedAgent.lastThought || null,
+          lastDecision: null,
+          recentNotes: []
+        };
+      }
+      return {
+        ...this.liveState,
+        status: snapshot.status || this.liveState.status,
+        turn: snapshot.turn,
+        meeting: {
+          ...this.liveState.meeting,
+          distanceMeters: snapshot.distanceMeters
+        },
+        agents,
+        scratchpad: {
+          ...this.liveState.scratchpad,
+          owner: item.to,
+          sequence: item.sequence,
+          messageFrom: item.from,
+          messageTo: item.to,
+          currentMessage: item
+        }
+      };
+    }
+
+    renderHistoryControls() {
+      const previous = document.getElementById('rvHistoryPrev');
+      const next = document.getElementById('rvHistoryNext');
+      const live = document.getElementById('rvHistoryLive');
+      const browsing = this.historyIndex !== null;
+      if (previous) previous.disabled = browsing ? this.historyIndex <= 0 : this.historyItems.length === 0;
+      if (next) next.disabled = !browsing;
+      if (live) live.hidden = !browsing;
+    }
+
+    prefetchHistoryNeighbors() {
+      for (const index of [this.historyIndex - 1, this.historyIndex + 1]) {
+        const imageUrl = this.historyItems[index]?.imageUrl;
+        if (imageUrl) new Image().src = imageUrl;
+      }
     }
 
     renderHeader() {
       const state = this.state || {};
-      document.getElementById('rvStatus').textContent = formatStatus(state.status);
+      document.getElementById('rvStatus').textContent = this.historyIndex !== null
+        ? 'history'
+        : formatStatus(state.status);
       document.getElementById('rvDistance').textContent = formatDistance(state.meeting?.distanceMeters);
       document.getElementById('rvTurn').textContent = Number(state.turn || 0).toLocaleString();
 
       const startBtn = document.getElementById('rvStartBtn');
       const stopBtn = document.getElementById('rvStopBtn');
-      if (startBtn) startBtn.disabled = state.status === 'running';
-      if (stopBtn) stopBtn.disabled = state.status !== 'running';
+      const liveStatus = this.liveState?.status || state.status;
+      if (startBtn) startBtn.disabled = liveStatus === 'running';
+      if (stopBtn) stopBtn.disabled = liveStatus !== 'running';
     }
 
     renderAgents() {
@@ -418,6 +577,7 @@
     }
 
     renderStreetViews(state) {
+      const historical = this.historyIndex !== null;
       for (const agentId of AGENT_IDS) {
         const agent = state?.agents?.[agentId];
         if (!agent?.panoId) continue;
@@ -430,7 +590,8 @@
             pov: { heading: Number(agent.heading) || 0, pitch: 0 },
             zoom: 1,
             addressControl: false,
-            linksControl: true,
+            clickToGo: !historical,
+            linksControl: !historical,
             panControl: false,
             enableCloseButton: false,
             fullscreenControl: false,
@@ -440,8 +601,14 @@
             showRoadLabels: true,
             imageDateControl: false
           });
-        } else if (this.panoramas[agentId].getPano() !== agent.panoId) {
-          this.panoramas[agentId].setPano(agent.panoId);
+        } else {
+          this.panoramas[agentId].setOptions({
+            clickToGo: !historical,
+            linksControl: !historical
+          });
+          if (this.panoramas[agentId].getPano() !== agent.panoId) {
+            this.panoramas[agentId].setPano(agent.panoId);
+          }
         }
 
         if (Number.isFinite(Number(agent.heading))) {
@@ -606,7 +773,9 @@
         const from = scratchpad.messageFrom === 'theo' ? 'Theo' : scratchpad.messageFrom === 'ada' ? 'Ada' : null;
         const to = scratchpad.messageTo === 'ada' ? 'Ada' : scratchpad.messageTo === 'theo' ? 'Theo' : null;
         const owner = scratchpad.owner === 'theo' ? 'Theo' : 'Ada';
-        sequenceLabel.textContent = from && to ? `${from} → ${to}` : `${owner} holds it`;
+        sequenceLabel.textContent = this.historyIndex !== null
+          ? `${from} → ${to} · ${this.historyIndex + 1} of ${this.historyItems.length}`
+          : (from && to ? `${from} → ${to}` : `${owner} holds it`);
       }
       this.lastScratchpadSequence = Math.max(previousSequence, sequence);
     }

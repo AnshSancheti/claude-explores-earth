@@ -53,7 +53,12 @@
         <section class="rv-scratchpad-section" data-mobile-panel="pad">
           <div class="rv-pad-heading">
             <h2>The sheet</h2>
-            <span id="rvPadSequence">Ada holds it</span>
+            <div id="rvHistoryControls" class="rv-history-controls" aria-label="Sheet history">
+              <button id="rvHistoryPrev" class="rv-history-button" type="button" title="Earlier sheet" aria-label="Earlier sheet" disabled><i data-lucide="chevron-left"></i></button>
+              <span id="rvPadSequence">Ada holds it</span>
+              <button id="rvHistoryNext" class="rv-history-button" type="button" title="Later sheet" aria-label="Later sheet" disabled><i data-lucide="chevron-right"></i></button>
+              <button id="rvHistoryLive" class="rv-history-button rv-history-live" type="button" title="Return to live" aria-label="Return to live" hidden><i data-lucide="radio"></i></button>
+            </div>
           </div>
           <div id="rvPaper" class="rv-paper" aria-label="Latest sketched note">
             <img id="rvScratchpadImage" alt="" hidden>

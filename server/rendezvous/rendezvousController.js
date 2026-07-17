@@ -22,6 +22,7 @@ import {
   normalizeScratchpad,
   normalizeRasterScratchpad,
   publicRasterScratchpad,
+  publicRasterScratchpadHistory,
   queueRasterScratchpadMessage,
   renderScratchpad
 } from './scratchpad.js';
@@ -677,11 +678,95 @@ export class RendezvousController {
   getDrawingPath(runId, messageId) {
     if (!/^[a-zA-Z0-9_-]+$/.test(String(runId)) || !/^[a-zA-Z0-9_-]+$/.test(String(messageId))) return null;
     if (runId !== this.state.runId || Number(this.state.scratchpad?.version) !== 5) return null;
-    const message = normalizeRasterScratchpad(this.state.scratchpad).currentMessage;
-    if (!message || message.id !== messageId) return null;
+    const scratchpad = normalizeRasterScratchpad(this.state.scratchpad);
+    const message = [scratchpad.currentMessage, ...scratchpad.messageAudit]
+      .find(candidate => candidate?.id === messageId && candidate.imageFile && (!candidate.status || candidate.status === 'sent'));
+    if (!message) return null;
     const expected = path.resolve(this.dataDir, 'rendezvous-drawings', runId, message.imageFile);
     const root = path.resolve(this.dataDir, 'rendezvous-drawings', runId);
     return expected.startsWith(`${root}${path.sep}`) ? expected : null;
+  }
+
+  getPublicHistory() {
+    if (!this.state.runId || Number(this.state.scratchpad?.version) !== 5) {
+      return { runId: this.state.runId, sequence: 0, items: [] };
+    }
+    return {
+      runId: this.state.runId,
+      ...publicRasterScratchpadHistory(this.state.scratchpad, {
+        imageUrlFor: message => `/api/rendezvous/drawings/${encodeURIComponent(this.state.runId)}/${encodeURIComponent(message.id)}`,
+        snapshotFor: message => this.#approximateSheetSnapshot(message)
+      })
+    };
+  }
+
+  #captureSheetSnapshot(authorId = null, authoredThought = null) {
+    const agents = {};
+    for (const agentId of AGENT_ORDER) {
+      const agent = this.state.agents?.[agentId];
+      if (!agent?.position || !agent?.panoId) return null;
+      const publicAgent = sanitizePublicAgent(agent);
+      agents[agentId] = {
+        name: publicAgent.name,
+        panoId: publicAgent.panoId,
+        position: publicPoint(publicAgent.position),
+        heading: Number(publicAgent.heading) || 0,
+        stepCount: Math.max(0, Math.floor(Number(publicAgent.stepCount) || 0)),
+        pathLength: Math.max(1, publicAgent.path?.length || 1),
+        status: publicAgent.status || 'searching',
+        lastThought: agentId === authorId && authoredThought
+          ? normalizeLastThought(authoredThought)
+          : (publicAgent.lastThought || null)
+      };
+    }
+    return {
+      turn: Math.max(0, Math.floor(Number(this.state.turn) || 0)),
+      status: this.state.status || 'running',
+      distanceMeters: Math.round(calculateDistance(agents.ada.position, agents.theo.position)),
+      capturedAt: new Date().toISOString(),
+      approximate: false,
+      agents
+    };
+  }
+
+  #approximateSheetSnapshot(message) {
+    const capturedTime = Date.parse(message.createdAt || message.sentAt || '');
+    const agents = {};
+    for (const agentId of AGENT_ORDER) {
+      const agent = this.state.agents?.[agentId];
+      const pathPoints = Array.isArray(agent?.path) ? agent.path.filter(Boolean) : [];
+      if (!agent || pathPoints.length === 0) return null;
+      let pointIndex = pathPoints.length - 1;
+      if (Number.isFinite(capturedTime)) {
+        const atOrBefore = pathPoints.findLastIndex(point => {
+          const pointTime = Date.parse(point.timestamp || '');
+          return Number.isFinite(pointTime) && pointTime <= capturedTime;
+        });
+        if (atOrBefore >= 0) pointIndex = atOrBefore;
+      }
+      const point = pathPoints[pointIndex];
+      const previous = pathPoints[Math.max(0, pointIndex - 1)];
+      const heading = pointIndex > 0 ? calculateBearing(previous, point) : 0;
+      agents[agentId] = {
+        name: agent.name || (agentId === 'ada' ? 'Ada' : 'Theo'),
+        panoId: agentId === message.from && message.sourcePanoId ? message.sourcePanoId : point.panoId,
+        position: publicPoint(point),
+        heading: Number.isFinite(heading) ? heading : 0,
+        stepCount: pointIndex,
+        pathLength: pointIndex + 1,
+        status: 'searching',
+        lastThought: null
+      };
+    }
+    if (!agents.ada.panoId || !agents.theo.panoId) return null;
+    return {
+      turn: message.turn,
+      status: 'running',
+      distanceMeters: Math.round(calculateDistance(agents.ada.position, agents.theo.position)),
+      capturedAt: message.createdAt || message.sentAt || null,
+      approximate: true,
+      agents
+    };
   }
 
   async start({ reset = false } = {}) {
@@ -1055,7 +1140,15 @@ export class RendezvousController {
               drawingPrompt: decision.drawingPrompt,
               drawingIntent: decision.drawingIntent,
               groundedFeatures: decision.observedFeatures,
-              sourcePanoId: current.panoId
+              sourcePanoId: current.panoId,
+              snapshot: this.#captureSheetSnapshot(agentId, {
+                reasoning: decision.reasoning,
+                turn: this.state.turn,
+                stepCount: agent.stepCount,
+                mode,
+                selectedLabel: requested?.label || null,
+                createdAt: new Date().toISOString()
+              })
             });
             this.#recordEvent('scratchpad_queued', {
               id: pendingId,

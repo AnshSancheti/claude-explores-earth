@@ -304,10 +304,56 @@ button:disabled {
   font-size: 11px;
 }
 
-.rv-pad-heading > span {
+.rv-history-controls {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.rv-history-controls > span {
+  min-width: 88px;
   color: var(--quiet);
+  text-align: center;
+  white-space: nowrap;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+.rv-history-button {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--quiet);
+  cursor: pointer;
+}
+
+.rv-history-button[hidden] {
+  display: none;
+}
+
+.rv-history-button:hover:not(:disabled),
+.rv-history-button:focus-visible {
+  background: rgba(239, 237, 229, 0.07);
+  color: var(--ink);
+}
+
+.rv-history-button svg {
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.8;
+}
+
+.rv-history-live {
+  margin-left: 3px;
+  color: #91c9a6;
 }
 
 .rv-paper {
@@ -638,6 +684,15 @@ button:disabled {
   .rv-map-heading {
     width: 100%;
     padding: 0 5px 12px;
+  }
+
+  .rv-history-controls > span {
+    min-width: 96px;
+  }
+
+  .rv-history-button {
+    width: 36px;
+    height: 36px;
   }
 
   .rv-pad-heading h2,

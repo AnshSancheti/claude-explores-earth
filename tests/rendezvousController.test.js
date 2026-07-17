@@ -9,7 +9,11 @@ import {
   RendezvousController,
   isShortPanoLoop
 } from '../server/rendezvous/rendezvousController.js';
-import { queueRasterScratchpadMessage } from '../server/rendezvous/scratchpad.js';
+import {
+  commitRasterScratchpadMessage,
+  createRasterScratchpad,
+  queueRasterScratchpadMessage
+} from '../server/rendezvous/scratchpad.js';
 
 function distance(pos1, pos2) {
   const lat1 = Number(pos1.lat);
@@ -208,6 +212,66 @@ class FakeImageModel {
     };
   }
 }
+
+test('legacy raster history is approximated from durable paths and serves older images', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-history-test-'));
+  try {
+    const controller = new RendezvousController({ dataDir: tempDir, logger: { warn() {}, error() {} } });
+    let sheet = queueRasterScratchpadMessage(createRasterScratchpad({ owner: 'ada' }), {
+      id: 'older-sheet',
+      agentId: 'ada',
+      turn: 2,
+      drawingPrompt: 'An older drawing.',
+      sourcePanoId: 'ada-old'
+    });
+    sheet = commitRasterScratchpadMessage(sheet, {
+      pendingId: 'older-sheet',
+      imageFile: 'older-sheet.webp'
+    });
+    sheet = queueRasterScratchpadMessage(sheet, {
+      id: 'current-sheet',
+      agentId: 'theo',
+      turn: 4,
+      drawingPrompt: 'A newer drawing.',
+      sourcePanoId: 'theo-old'
+    });
+    sheet = commitRasterScratchpadMessage(sheet, {
+      pendingId: 'current-sheet',
+      imageFile: 'current-sheet.webp'
+    });
+    controller.state = {
+      ...controller.state,
+      runId: 'legacy-run',
+      status: 'running',
+      turn: 5,
+      scratchpad: sheet,
+      agents: {
+        ada: {
+          id: 'ada', name: 'Ada', panoId: 'ada-now', position: { lat: 40.72, lng: -73.97 },
+          path: [
+            { lat: 40.7, lng: -73.99, panoId: 'ada-old', timestamp: '2020-01-01T00:00:00.000Z' },
+            { lat: 40.72, lng: -73.97, panoId: 'ada-now', timestamp: '2030-01-01T00:00:00.000Z' }
+          ]
+        },
+        theo: {
+          id: 'theo', name: 'Theo', panoId: 'theo-now', position: { lat: 40.73, lng: -73.96 },
+          path: [
+            { lat: 40.71, lng: -73.98, panoId: 'theo-old', timestamp: '2020-01-01T00:00:00.000Z' },
+            { lat: 40.73, lng: -73.96, panoId: 'theo-now', timestamp: '2030-01-01T00:00:00.000Z' }
+          ]
+        }
+      }
+    };
+
+    const history = controller.getPublicHistory();
+    assert.equal(history.items.length, 2);
+    assert.ok(history.items.every(item => item.snapshot.approximate));
+    assert.equal(history.items[0].snapshot.agents.ada.pathLength, 1);
+    assert.equal(path.basename(controller.getDrawingPath('legacy-run', 'older-sheet')), 'older-sheet.webp');
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
 
 function deferred() {
   let resolve;
@@ -992,6 +1056,14 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
     assert.equal(Object.hasOwn(publicState.scratchpad, 'messageAudit'), false);
     assert.equal(Object.hasOwn(publicState.scratchpad, 'pendingMessage'), false);
     assert.doesNotMatch(JSON.stringify(publicState.scratchpad), /observational sketch chosen/i);
+    const history = controller.getPublicHistory();
+    assert.equal(history.runId, completedRunId);
+    assert.equal(history.items.length, controller.state.scratchpad.messageAudit.filter(message => message.status === 'sent').length);
+    assert.ok(history.items.every(item => item.snapshot?.approximate === false));
+    assert.ok(history.items.every(item => item.snapshot.agents.ada.pathLength <= publicState.agents.ada.path.length));
+    assert.ok(history.items.every(item => item.snapshot.agents.theo.pathLength <= publicState.agents.theo.path.length));
+    assert.ok(controller.getDrawingPath(completedRunId, history.items[0].id));
+    assert.doesNotMatch(JSON.stringify(history), /drawingPrompt|drawingIntent|groundedFeatures|privateMemory/);
     assert.equal(publicState.eventLog.some(entry => entry.type === 'agent_step' && entry.payload.searchTargetName), false);
     assert.equal(publicState.eventLog.some(entry => Object.hasOwn(entry.payload || {}, 'targetName')), false);
     assert.equal(publicState.eventLog.some(entry => Object.hasOwn(entry.payload || {}, 'distanceToTarget')), false);
