@@ -48,10 +48,22 @@ function cleanString(value, maxLength) {
 const NAMED_ROUTE_PATTERN = /\b(?:[A-Z][A-Za-z'-]*|[EWNS]|\d+(?:st|nd|rd|th)?)(?:\s+(?:[A-Z0-9][A-Za-z0-9'-]*)){0,3}\s+(?:St(?:reet)?|Ave(?:nue)?|Rd|Road|Blvd|Boulevard|Pl|Place|Park|Plaza|Square)\b/;
 const NAMED_GEOGRAPHY_PATTERN = /\b(?:Manhattan|Brooklyn|Bronx|Queens|Staten Island|New York|NYC|Yonkers)\b/i;
 const SHARED_DIRECTION_PATTERN = /\b(?:north|south|east|west|northeast|northwest|southeast|southwest|northbound|southbound|eastbound|westbound)\b/i;
+const SHEET_INSTRUCTION_PATTERN = /\b(?:continue|advance|proceed|push|follow|backtrack|retrace|go|head|turn|wait|stay|converge)\w*\b|\b(?:move|movement|motion|approach)\w*\s+(?:toward|along|through|forward|ahead|back|closer)\b|\bforward\b|\b(?:same|shared)\s+(?:axis|route|path|corridor|direction)\b|\b(?:meetup|rendezvous)\s+(?:axis|route|path|corridor|point)\b/i;
+const PROJECTED_ACTION_PATTERN = /\b(?:sheet|drawing|sketch|message|friend|ada|theo)\b.{0,180}\b(?:asks?|wants?|tells?|signals?|indicates?|reinforces?|means?|cues?)\b.{0,120}\b(?:continue|advance|proceed|push|follow|backtrack|retrace|move|go|head|turn|wait|stay|forward)\w*\b/i;
+const ACTION_PROJECTED_FROM_SHEET_PATTERN = /\b(?:continue|advance|proceed|push|follow|backtrack|retrace|move|go|head|turn|wait|stay)\w*\b.{0,160}\b(?:because|from|based on|according to)\b.{0,80}\b(?:sheet|drawing|sketch|message)\b/i;
 
 export function containsUnsupportedSheetGeography(value) {
   const text = String(value || '');
   return NAMED_ROUTE_PATTERN.test(text) || NAMED_GEOGRAPHY_PATTERN.test(text) || SHARED_DIRECTION_PATTERN.test(text);
+}
+
+export function containsUnsupportedSheetInstruction(value) {
+  return SHEET_INSTRUCTION_PATTERN.test(String(value || ''));
+}
+
+export function projectsActionFromSheet(value) {
+  const text = String(value || '');
+  return PROJECTED_ACTION_PATTERN.test(text) || ACTION_PROJECTED_FROM_SHEET_PATTERN.test(text);
 }
 
 function cleanStringList(values, { limit = 5, maxLength = 180 } = {}) {
@@ -190,7 +202,7 @@ export class RendezvousModelService {
       : `- move: continue through a promising unfamiliar public route;
 - retrace: deliberately choose an option marked walked before when returning toward a remembered place supports the joint plan.
 
-You have already chosen to remain at this same branch ${Math.max(1, Math.floor(Number(consecutiveWaitDecisions) || 0))} consecutive times without gaining a new local observation. Your friend may also be waiting. Remaining here again is not available at this decision; choose move or retrace and communicate that choice visually.`;
+You have already chosen to remain at this same branch ${Math.max(1, Math.floor(Number(consecutiveWaitDecisions) || 0))} consecutive times without gaining a new local observation. Your friend may also be waiting. Remaining here again is not available at this decision; choose move or retrace. The outgoing drawing still describes what you observe; it does not announce that route choice.`;
     const actionSchema = allowWait ? '"move" | "retrace" | "wait"' : '"move" | "retrace"';
     const incomingSheetGuidance = sheetMessage
       ? 'The current sheet contains your friend\'s latest drawing. Interpret only visible sender-side evidence from it.'
@@ -208,13 +220,13 @@ You are now at a real branching point. Choose a cooperative action:
 ${actionGuidance}
 Avoid indoor shops, private interiors, dead ends, and accidental immediate loops. Google headings are compass bearings clockwise from north.
 
-Because you currently hold the sheet, decide what visual message to send to ${partnerName}. The drawing is evidence about the world around its sender, not a command that maps onto the recipient's private route options. Base it on at least two stable features visible in the current route images, including at least one discriminative feature when one is available, and preserve their spatial relationship. Examples include unusual facade geometry, a distinctive awning arrangement, scaffolding structure, road geometry, trees relative to buildings, towers, stairs, traffic lights, sculpture, or uncommon street furniture. Symbols may support the observation, but they must not dominate it. Do not encode private option numbers, an imagined compass agreement, or a place name. Reuse a visual convention only when the evidence ledger shows actual prior sheet sequences supporting it.
+Because you currently hold the sheet, decide what visual message to send to ${partnerName}. Treat it as a wordless observational postcard: evidence about the sender's surroundings and memory, never an instruction for what the recipient should do next. Do not encode continue, forward, turn, retrace, wait, a shared route, or any other requested motion. A street's perspective and vanishing point describe its shape; they are not an arrow. Base the drawing on at least two stable features visible in the current route images, including at least one discriminative feature when one is available, and preserve their spatial relationship. Examples include unusual facade geometry, a distinctive awning arrangement, scaffolding structure, road geometry, trees relative to buildings, towers, stairs, traffic lights, sculpture, or uncommon street furniture. Symbols may support the observation, but they must not dominate it. Do not encode private option numbers, an imagined compass agreement, or a place name. Reuse a visual motif only as a tentative descriptive vocabulary, never as a movement command.
 
 Street names and geographic labels visible in your route-option images are private local navigation evidence for you alone. The no-text sheet cannot transmit them. Never put a named street, avenue, park, square, neighborhood, borough, city, compass heading, or option label into observedFeatures, drawingIntent, drawingPrompt, sheetInterpretation, conventionUpdate, or partnerHypothesis. You may mention a visible local label only in your private observation, reasoning, or currentPlan.
 
 The resulting picture must contain no readable text, letters, numbers, labels, captions, signatures, logos, or watermarks. Express everything visually. Do not put those prohibitions into drawingPrompt; simply describe the picture you want.
 
-Interpret the received sheet explicitly and state your confidence. Describe only sender-side visual evidence actually present in the drawing. Any street label in your current route images belongs to your surroundings, not the sender's. Similar generic features such as trees, parked cars, or scaffolding are weak evidence; do not infer that you share a block or route unless multiple unusual features and their arrangement recur across reciprocal sheets. Update only the current plan and at most one sourced visual convention and partner hypothesis. basisSequences must list real prior sent or received sheet sequence numbers from your evidence ledger. Unsupported beliefs will remain low confidence. drawingIntent is your private record of what the outgoing picture is meant to communicate; only drawingPrompt and the grounded visible features are sent to the image renderer.
+Interpret the received sheet explicitly and state your confidence. First describe only sender-side visual evidence actually present in the drawing; any hypothesis must remain about the sender's surroundings, not the action they want you to take. A sheet cannot tell you to move, continue, turn, retrace, wait, or follow an axis. The absence of a mark is not a cue. Choose your route from your own current observations and search strategy. The sheet may suggest visual features worth looking for, but it cannot select one of your private route options. Any street label in your current route images belongs to your surroundings, not the sender's. Similar generic features such as trees, parked cars, scaffolding, or a vanishing point are weak evidence; do not infer that you share a block or route unless multiple unusual features and their arrangement recur across reciprocal sheets. Repetition alone is not independent confirmation. Update only the current plan and at most one sourced visual motif and partner hypothesis. basisSequences provide provenance, not confidence. Keep conventionUpdate purely descriptive of recurring visible marks and partnerHypothesis purely descriptive of the sender's possible surroundings. drawingIntent is your private record of which sender-side observation or memory the outgoing picture preserves; only drawingPrompt and the grounded visible features are sent to the image renderer.
 
 Return only JSON:
 {
@@ -225,14 +237,14 @@ Return only JSON:
   "reasoning": "one concise first-person field note",
   "observation": "a grounded description of what you currently notice and want to remember",
   "observedFeatures": ["stable visible feature one", "stable visible feature two"],
-  "sheetInterpretation": "what you think the current drawing from your friend means, including uncertainty",
+  "sheetInterpretation": "literal visible content, followed by an uncertain sender-side observation hypothesis; never a requested action",
   "sheetConfidence": <0.0-1.0>,
   "memoryUpdate": {
     "currentPlan": "your current cooperative next strategy, revised by fresh evidence",
-    "conventionUpdate": {"key": "short-stable-key", "description": "a visual convention hypothesis", "confidence": <0.0-1.0>, "basisSequences": [<real sequence numbers>]},
-    "partnerHypothesis": {"key": "short-stable-key", "description": "a hypothesis about your friend's situation", "confidence": <0.0-1.0>, "basisSequences": [<real sequence numbers>]}
+    "conventionUpdate": {"key": "short-stable-key", "description": "a purely descriptive recurring visual motif", "confidence": <0.0-1.0>, "basisSequences": [<real sequence numbers>]},
+    "partnerHypothesis": {"key": "short-stable-key", "description": "an uncertain hypothesis about visible features around your friend", "confidence": <0.0-1.0>, "basisSequences": [<real sequence numbers>]}
   },
-  "drawingIntent": "what you want your friend to learn from the next drawing",
+  "drawingIntent": "which sender-side observation or memory the next drawing preserves",
   "drawingPrompt": "complete instructions for an observational sketch that visually encodes that intent without text"
 }`;
 
@@ -320,11 +332,26 @@ ${recentFieldNotes}`
         if (unsupportedGeography) {
           throw new Error(`Rendezvous model put unsupported named geography into the visual channel: ${unsupportedGeography.slice(0, 120)}`);
         }
+        const unsupportedInstruction = [
+          decision.sheetInterpretation,
+          decision.drawingIntent,
+          decision.drawingPrompt,
+          decision.memoryUpdate.conventionUpdate.description,
+          decision.memoryUpdate.partnerHypothesis.description
+        ].find(containsUnsupportedSheetInstruction);
+        if (unsupportedInstruction) {
+          throw new Error(`Rendezvous model turned the sheet into a movement instruction: ${unsupportedInstruction.slice(0, 120)}`);
+        }
+        const projectedAction = [decision.reasoning, decision.memoryUpdate.currentPlan]
+          .find(projectsActionFromSheet);
+        if (projectedAction) {
+          throw new Error(`Rendezvous model projected an action from the sheet: ${projectedAction.slice(0, 120)}`);
+        }
         return decision;
       } catch (error) {
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
-        if (/blank content|drawing prompt|drawing intent|memory revision|named geography|json/i.test(error.message)) {
+        if (/blank content|drawing prompt|drawing intent|memory revision|named geography|movement instruction|projected an action|json/i.test(error.message)) {
           tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 3200));
         }
       }

@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   containsUnsupportedSheetGeography,
+  containsUnsupportedSheetInstruction,
+  projectsActionFromSheet,
   RendezvousModelService,
   sanitizeRendezvousDecision
 } from '../server/rendezvous/rendezvousModel.js';
@@ -32,7 +34,7 @@ function input(overrides = {}) {
       version: 2,
       currentPlan: 'Test the circle convention at the next branch.',
       ownObservations: [{ description: 'I followed a row of stone arches.' }],
-      visualConventions: [{ key: 'yellow-circle', description: 'A yellow circle may mean wait or converge.', confidence: 0.35, basisSequences: [5] }]
+      visualConventions: [{ key: 'yellow-circle', description: 'A yellow circle recurs beside stone arches.', confidence: 0.35, basisSequences: [5] }]
     },
     movementSinceDecision: { steps: 4, distanceMeters: 90, headings: [0, 10], routeLabels: [] },
     ...overrides
@@ -56,13 +58,13 @@ test('branch decision revises private memory and authors a grounded visual messa
                   reasoning: 'The northern opening feels useful.',
                   observation: 'Repeated stone arches line the northern opening.',
                   observedFeatures: ['three repeated stone arches', 'a suspended traffic light beside them'],
-                  sheetInterpretation: 'Theo may be asking me to converge on a bright circular landmark.',
+                  sheetInterpretation: 'A bright circle appears between two repeated arch forms; Theo may be near similar masonry.',
                   sheetConfidence: 0.4,
                   memoryUpdate: {
                     currentPlan: 'Move through the arch-lined opening while testing the circle hypothesis.',
                     conventionUpdate: {
                       key: 'yellow-circle',
-                      description: 'A yellow circle may suggest convergence.',
+                      description: 'A yellow circle recurs between repeated arch forms.',
                       confidence: 0.5,
                       basisSequences: [5, 7]
                     },
@@ -89,7 +91,7 @@ test('branch decision revises private memory and authors a grounded visual messa
   assert.equal(decision.selectedIndex, 1);
   assert.equal(decision.action, 'move');
   assert.match(decision.drawingPrompt, /repeated arches/);
-  assert.match(decision.sheetInterpretation, /converge/);
+  assert.match(decision.sheetInterpretation, /bright circle/);
   assert.match(decision.memoryUpdate.conventionUpdate.description, /yellow circle/);
   assert.equal(decision.observedFeatures.length, 2);
   const serialized = JSON.stringify(request.messages);
@@ -97,7 +99,9 @@ test('branch decision revises private memory and authors a grounded visual messa
   assert.match(serialized, /no readable text/);
   assert.match(serialized, /Symbols may support the observation, but they must not dominate it/);
   assert.match(serialized, /not a passive target/);
-  assert.match(serialized, /evidence about the world around its sender/);
+  assert.match(serialized, /evidence about the sender's surroundings and memory/);
+  assert.match(serialized, /wordless observational postcard/);
+  assert.match(serialized, /absence of a mark is not a cue/);
   assert.match(serialized, /row of stone arches/);
   assert.match(request.messages[1].content[0].text, /History image 1: sheet sequence 5/);
   assert.equal(request.messages[1].content.length, 5);
@@ -120,6 +124,61 @@ test('visual-channel geography guard rejects names and compass projection but pe
   assert.equal(containsUnsupportedSheetGeography('Prince St beside Manhattan'), true);
   assert.equal(containsUnsupportedSheetGeography('continue southeast'), true);
   assert.equal(containsUnsupportedSheetGeography('three iron arches beside a suspended globe lamp'), false);
+});
+
+test('visual-channel instruction guard separates observation from motion commands', () => {
+  assert.equal(containsUnsupportedSheetInstruction('continue along the same forward axis'), true);
+  assert.equal(containsUnsupportedSheetInstruction('show a meetup corridor with motion toward its vanishing point'), true);
+  assert.equal(containsUnsupportedSheetInstruction('three iron arches beside a suspended globe lamp'), false);
+  assert.equal(containsUnsupportedSheetInstruction('a cyclist moving beside three parked taxis'), false);
+  assert.equal(projectsActionFromSheet('Theo\'s sheet reinforces that I should keep moving forward.'), true);
+  assert.equal(projectsActionFromSheet('I choose the open street because its facade is visually distinctive.'), false);
+});
+
+test('model retries when an ambiguous sheet is projected into a route instruction', async () => {
+  let calls = 0;
+  const baseDecision = {
+    action: 'move',
+    selectedIndex: 1,
+    intendedHeading: 0,
+    observation: 'Three iron arches sit beside one suspended globe lamp.',
+    observedFeatures: ['three iron arches', 'one suspended globe lamp beside them'],
+    sheetConfidence: 0.35,
+    memoryUpdate: {
+      currentPlan: 'Search for uncommon arrangements while avoiding immediate loops.',
+      conventionUpdate: {},
+      partnerHypothesis: {}
+    },
+    drawingIntent: 'Preserve the uncommon arch-and-lamp arrangement.',
+    drawingPrompt: 'Sketch three iron arches with one suspended globe lamp beside them.'
+  };
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          calls += 1;
+          const content = calls === 1
+            ? {
+                ...baseDecision,
+                reasoning: 'Theo\'s sheet signals me to continue forward.',
+                sheetInterpretation: 'Theo wants me to continue along the same forward axis.'
+              }
+            : {
+                ...baseDecision,
+                reasoning: 'The unfamiliar opening has the most distinctive facade.',
+                sheetInterpretation: 'A row of dark vertical marks sits beneath a pale circular form; Theo may be near a strongly patterned facade.'
+              };
+          return { choices: [{ message: { content: JSON.stringify(content) } }] };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const decision = await service.decide(input());
+
+  assert.equal(calls, 2);
+  assert.match(decision.sheetInterpretation, /vertical marks/);
+  assert.doesNotMatch(decision.reasoning, /sheet signals/);
 });
 
 test('a blank first sheet cannot become invented partner evidence', async () => {
@@ -170,19 +229,19 @@ test('decision sanitizer bounds deliberate waiting and private memory fields', (
     action: 'wait',
     waitTurns: 99,
     selectedIndex: 0,
-    sheetInterpretation: 'The blue line may mean Theo is approaching.',
+    sheetInterpretation: 'A blue line sits beside a stone arch.',
     observedFeatures: ['one stone arch', 'a traffic light beside the arch'],
     drawingIntent: 'I will stay beside the arch.',
     memoryUpdate: {
       currentPlan: 'Wait here.',
       conventionUpdate: {
         key: 'blue-line',
-        description: 'A blue line may mean approach.',
+        description: 'A blue line recurs beside a stone arch.',
         confidence: 0.4,
         basisSequences: [7]
       }
     },
-    drawingPrompt: 'A still figure beneath one arch and an approaching blue line.'
+    drawingPrompt: 'A still figure beneath one arch with a blue line beside it.'
   }, input().options);
   assert.equal(decision.action, 'wait');
   assert.equal(decision.waitTurns, 6);
@@ -208,12 +267,12 @@ test('expired local patience removes waiting from the model decision', async () 
                   reasoning: 'Holding this corner has taught me nothing new, so I will move.',
                   observation: 'The northern public route remains open.',
                   observedFeatures: ['a broad road opening', 'a stone facade on its corner'],
-                  sheetInterpretation: 'The sheet may preserve our last shared convergence idea.',
+                  sheetInterpretation: 'Two dark forms flank a pale circle; the sender may be near a symmetrical facade.',
                   memoryUpdate: {
                     currentPlan: 'Break a mutual pause by moving and showing the chosen route.'
                   },
-                  drawingIntent: 'Show that I am leaving the anchor through the opening beside the stone facade.',
-                  drawingPrompt: 'A hand sketch of a still circle opening into one path beside a stone facade.'
+                  drawingIntent: 'Preserve the broad opening beside the stone facade.',
+                  drawingPrompt: 'A hand sketch of a broad street opening beside a stone facade.'
                 })
               }
             }]

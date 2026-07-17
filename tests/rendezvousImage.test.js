@@ -16,6 +16,8 @@ test('image scaffolding constrains the medium without authoring the clue', () =>
   assert.match(prompt, /stable visible features/);
   assert.match(prompt, /not become a literal camera reproduction/);
   assert.match(prompt, /not become.*purely decorative abstraction/);
+  assert.match(prompt, /never exaggerate a vanishing point into a directional cue/);
+  assert.match(prompt, /postcard about what the sender sees/);
   assert.doesNotMatch(prompt, /Manhattan|north|south|find Theo/);
 });
 

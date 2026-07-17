@@ -61,7 +61,7 @@ function normalizeReceived(entry) {
     sequence,
     from: entry.from === 'ada' || entry.from === 'theo' ? entry.from : null,
     interpretation,
-    confidence: confidence(entry.confidence),
+    confidence: Math.min(confidence(entry.confidence), 0.45),
     createdAt: entry.createdAt || null
   };
 }
@@ -89,7 +89,7 @@ function normalizeBelief(entry, kind) {
   return {
     key,
     description,
-    confidence: confidence(entry.confidence, 0.25),
+    confidence: Math.min(confidence(entry.confidence, 0.25), kind === 'convention' ? 0.45 : 0.35),
     basisSequences: [...new Set((Array.isArray(entry.basisSequences) ? entry.basisSequences : [])
       .map(positiveInt)
       .filter(sequence => sequence > 0))]
@@ -171,13 +171,15 @@ function mergeBelief(memory, collectionName, update, turn) {
   const known = knownSequences(memory);
   candidate.basisSequences = candidate.basisSequences.filter(sequence => known.has(sequence));
   const evidenceCount = candidate.basisSequences.length;
-  const evidenceCap = evidenceCount >= 3 ? 0.85 : evidenceCount === 2 ? 0.65 : evidenceCount === 1 ? 0.45 : 0.25;
+  const evidenceCap = evidenceCount > 0
+    ? (kind === 'convention' ? 0.45 : 0.35)
+    : 0.25;
   candidate.confidence = Math.min(candidate.confidence, evidenceCap);
 
   const existing = memory[collectionName].find(entry => entry.key === candidate.key);
   if (existing) {
     candidate.basisSequences = [...new Set([...existing.basisSequences, ...candidate.basisSequences])].slice(-8);
-    const combinedCap = candidate.basisSequences.length >= 3 ? 0.85 : candidate.basisSequences.length === 2 ? 0.65 : 0.45;
+    const combinedCap = kind === 'convention' ? 0.45 : 0.35;
     candidate.confidence = Math.min(Math.max(existing.confidence, candidate.confidence), combinedCap);
   }
   memory[collectionName] = [

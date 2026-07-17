@@ -63,6 +63,36 @@ test('memory revision records sourced evidence and caps unsupported confidence',
   assert.equal(memory.ownObservations[0].sourcePanoId, 'pano-12');
 });
 
+test('repetition preserves provenance without converting ambiguous sheets into certainty', () => {
+  let memory = createAgentMemory();
+  for (let sequence = 1; sequence <= 4; sequence += 1) {
+    memory = applyMemoryRevision(memory, {
+      conventionUpdate: {
+        key: 'vertical-bars-circle',
+        description: 'Dark vertical bars recur beneath a pale circle.',
+        confidence: 0.99,
+        basisSequences: Array.from({ length: sequence }, (_, index) => index + 1)
+      },
+      partnerHypothesis: {
+        key: 'patterned-facade',
+        description: 'The sender may repeatedly encounter a strongly patterned facade.',
+        confidence: 0.99,
+        basisSequences: Array.from({ length: sequence }, (_, index) => index + 1)
+      }
+    }, {
+      turn: sequence,
+      sheetMessage: { sequence, from: 'theo' },
+      sheetInterpretation: 'Dark vertical bars sit beneath a pale circle.',
+      sheetConfidence: 0.99
+    });
+  }
+
+  assert.equal(memory.receivedSheets.at(-1).confidence, 0.45);
+  assert.equal(memory.visualConventions[0].confidence, 0.45);
+  assert.equal(memory.partnerHypotheses[0].confidence, 0.35);
+  assert.deepEqual(memory.visualConventions[0].basisSequences, [1, 2, 3, 4]);
+});
+
 test('sent intentions are recorded only as bounded durable episodes', () => {
   let memory = createAgentMemory();
   for (let sequence = 1; sequence <= 20; sequence += 1) {
