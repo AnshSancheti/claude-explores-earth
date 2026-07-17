@@ -51,7 +51,7 @@ const SHARED_DIRECTION_PATTERN = /\b(?:north|south|east|west|northeast|northwest
 const SHEET_INSTRUCTION_PATTERN = /\b(?:continue|advance|proceed|push|follow|backtrack|retrace|go|head|turn|wait|stay|converge)\w*\b|\b(?:move|movement|motion|approach)\w*\s+(?:toward|along|through|forward|ahead|back|closer)\b|\bforward\b|\b(?:same|shared)\s+(?:axis|route|path|corridor|direction)\b|\b(?:meetup|rendezvous)\s+(?:axis|route|path|corridor|point)\b/i;
 const PROJECTED_ACTION_PATTERN = /\b(?:sheet|drawing|sketch|message|friend|ada|theo)\b.{0,180}\b(?:asks?|wants?|tells?|signals?|indicates?|reinforces?|means?|cues?)\b.{0,120}\b(?:continue|advance|proceed|push|follow|backtrack|retrace|move|go|head|turn|wait|stay|forward)\w*\b/i;
 const ACTION_PROJECTED_FROM_SHEET_PATTERN = /\b(?:continue|advance|proceed|push|follow|backtrack|retrace|move|go|head|turn|wait|stay)\w*\b.{0,160}\b(?:because|from|based on|according to)\b.{0,80}\b(?:sheet|drawing|sketch|message)\b/i;
-const COMMUNICATION_REFERENCE_PATTERN = /\b(?:sheet|drawing|sketch|message|friend|partner|ada|theo)\b|\breceived\s+(?:clue|observation|visual|memory)\b|\bvisual\s+memory\b/i;
+const COMMUNICATION_REFERENCE_PATTERN = /\b(?:sheet|drawing|sketch|message|friend|partner|ada|theo|we|us|our|ours|joint|together|coordinate|coordination)\b|\breceived\s+(?:clue|observation|visual|memory)\b|\bvisual\s+memory\b/i;
 const RELATIONAL_ROUTE_PATTERN = /\b(?:same|shared)\s+(?:axis|route|path|corridor|direction)\b|\balign\w*\b|\bsynchroni[sz]\w*\b/i;
 
 export function containsUnsupportedSheetGeography(value) {
@@ -295,6 +295,7 @@ ${JSON.stringify(sheetMemory, null, 2)}`
     }).join('\n');
     const recentFieldNotes = (agent.recentNotes || [])
       .filter(note => !/model (?:is|was) unavailable/i.test(note))
+      .filter(note => !contaminatesRouteReasoning(note))
       .slice(-5)
       .map(note => `- ${cleanString(note, 300)}`)
       .join('\n') || '- No prior field notes.';
@@ -330,7 +331,7 @@ Street names and geographic labels visible in your route-option images are priva
 
 The resulting picture must contain no readable text, letters, numbers, labels, captions, signatures, logos, or watermarks. Express everything visually. Do not put those prohibitions into drawingPrompt; simply describe the picture you want.
 
-Choose your route from your own current observations and search strategy. A received observation may suggest visible features worth checking, but it cannot select one of your private route options. reasoning must justify the selected action using only features visible in your current route images and your private exploration history; it must not mention the sheet, any drawing or message, received visual memory, your friend, or coordination with them. Any street label in your current route images belongs to your surroundings. drawingIntent is your private record of which sender-side observation or memory the outgoing picture preserves; only drawingPrompt and the grounded visible features are sent to the image renderer.
+Choose your route from your own current observations and search strategy. A received observation may suggest visible features worth checking, but it cannot select one of your private route options. reasoning must justify the selected action using only features visible in your current route images and your private exploration history. Write it in first-person singular. It must not mention the sheet, any drawing or message, received visual memory, your friend, a joint plan, or coordination; do not use we, us, or our. Any street label in your current route images belongs to your surroundings. drawingIntent is your private record of which sender-side observation or memory the outgoing picture preserves; only drawingPrompt and the grounded visible features are sent to the image renderer.
 
 Return only JSON:
 {
@@ -338,7 +339,7 @@ Return only JSON:
   "selectedIndex": <0-${options.length - 1}>,
   "intendedHeading": <the numeric heading you intend, or null>,
   "waitTurns": <1-6 when action is wait, otherwise 0>,
-  "reasoning": "one concise first-person action justification using only local route evidence, with no mention of the sheet, drawing, message, friend, or coordination",
+  "reasoning": "one concise first-person singular action justification using only local route evidence, with no collective plan or communication reference",
   "observation": "a grounded description of what you currently notice and want to remember",
   "observedFeatures": ["stable visible feature one", "stable visible feature two"],
   "memoryUpdate": {
@@ -348,6 +349,13 @@ Return only JSON:
   "drawingPrompt": "complete instructions for an observational sketch that visually encodes that intent without text"
 }`;
 
+    const actionMemory = {
+      ...(privateMemory || {}),
+      currentPlan: contaminatesRouteReasoning(privateMemory?.currentPlan)
+        ? 'Keep gathering local evidence, avoid loops, and revise uncertain visual hypotheses.'
+        : privateMemory?.currentPlan,
+      sentMessages: (privateMemory?.sentMessages || []).map(({ intent, ...entry }) => entry)
+    };
     const userContent = [
       {
         type: 'text',
@@ -357,8 +365,8 @@ ${incomingSheetGuidance}
 
 ${optionLines}
 
-Your persistent private memory, unavailable to ${partnerName}:
-${JSON.stringify(privateMemory || {}, null, 2)}
+Your descriptive private evidence ledger, unavailable to ${partnerName}:
+${JSON.stringify(actionMemory, null, 2)}
 
 Your own movement since your last successful branch decision:
 ${JSON.stringify(movementSinceDecision || {}, null, 2)}

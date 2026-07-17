@@ -142,6 +142,7 @@ test('visual-channel instruction guard separates observation from motion command
   assert.equal(contaminatesRouteReasoning('The sheet suggests a continuation along a similar corridor.'), true);
   assert.equal(contaminatesRouteReasoning('I will wait here to stay synchronized.'), true);
   assert.equal(contaminatesRouteReasoning('I will wait while comparing local cues with the received visual memory.'), true);
+  assert.equal(contaminatesRouteReasoning('I will retrace to consolidate our joint plan.'), true);
   assert.equal(contaminatesRouteReasoning('The unfamiliar opening has the most distinctive facade.'), false);
 });
 
