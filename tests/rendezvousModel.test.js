@@ -44,11 +44,13 @@ function input(overrides = {}) {
 
 test('branch decision revises private memory and authors a grounded visual message without transcript channels', async () => {
   let request;
+  const requests = [];
   const client = {
     chat: {
       completions: {
         async create(value) {
           request = value;
+          requests.push(value);
           return {
             choices: [{
               message: {
@@ -95,17 +97,20 @@ test('branch decision revises private memory and authors a grounded visual messa
   assert.match(decision.sheetInterpretation, /bright circle/);
   assert.match(decision.memoryUpdate.conventionUpdate.description, /yellow circle/);
   assert.equal(decision.observedFeatures.length, 2);
-  const serialized = JSON.stringify(request.messages);
-  assert.match(serialized, /only information that crosses/);
+  const serialized = JSON.stringify(requests);
+  assert.equal(requests.length, 2);
+  assert.match(serialized, /route-independent visual reading/);
   assert.match(serialized, /no readable text/);
   assert.match(serialized, /Symbols may support the observation, but they must not dominate it/);
   assert.match(serialized, /not a passive target/);
   assert.match(serialized, /evidence about the sender's surroundings and memory/);
   assert.match(serialized, /wordless observational postcard/);
-  assert.match(serialized, /absence of a mark is not a cue/);
+  assert.match(serialized, /absence of a mark is not evidence/);
   assert.match(serialized, /row of stone arches/);
-  assert.match(request.messages[1].content[0].text, /History image 1: sheet sequence 5/);
-  assert.equal(request.messages[1].content.length, 5);
+  assert.match(requests[0].messages[1].content[0].text, /History image 1: sheet sequence 5/);
+  assert.equal(requests[0].messages[1].content.length, 3);
+  assert.equal(request.messages[1].content.length, 3);
+  assert.doesNotMatch(JSON.stringify(request.messages[1].content), /c2hlZXQ=|b2xkZXItc2hlZXQ=/);
   assert.match(request.messages[1].content[0].text, /"distanceMeters": 90/);
   assert.doesNotMatch(serialized, /referenceViewIndices/);
   assert.doesNotMatch(serialized, /partnerPadText|ownPadText|distanceToFriend|-?\d+\.\d{4,}/);
@@ -136,6 +141,7 @@ test('visual-channel instruction guard separates observation from motion command
   assert.equal(projectsActionFromSheet('I choose the open street because its facade is visually distinctive.'), false);
   assert.equal(contaminatesRouteReasoning('The sheet suggests a continuation along a similar corridor.'), true);
   assert.equal(contaminatesRouteReasoning('I will wait here to stay synchronized.'), true);
+  assert.equal(contaminatesRouteReasoning('I will wait while comparing local cues with the received visual memory.'), true);
   assert.equal(contaminatesRouteReasoning('The unfamiliar opening has the most distinctive facade.'), false);
 });
 
@@ -180,25 +186,28 @@ test('model retries when an ambiguous sheet is projected into a route instructio
   const service = new RendezvousModelService({ client, logger: { warn() {} } });
   const decision = await service.decide(input());
 
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
   assert.match(decision.sheetInterpretation, /vertical marks/);
   assert.doesNotMatch(decision.reasoning, /sheet signals/);
 });
 
 test('model retries when route reasoning merely associates motion with sheet context', async () => {
   let calls = 0;
+  let actionCalls = 0;
   const client = {
     chat: {
       completions: {
-        async create() {
+        async create(request) {
           calls += 1;
+          const isPerception = /route-independent visual reading/.test(request.messages[0].content);
+          if (!isPerception) actionCalls += 1;
           return {
             choices: [{
               message: {
                 content: JSON.stringify({
                   action: 'move',
                   selectedIndex: 1,
-                  reasoning: calls === 1
+                  reasoning: !isPerception && actionCalls === 1
                     ? 'Choosing a promising public route while interpreting the sheet context for alignment.'
                     : 'The unfamiliar opening has a distinctive row of repeated arches.',
                   observation: 'Three iron arches sit beside one suspended globe lamp.',
@@ -221,7 +230,8 @@ test('model retries when route reasoning merely associates motion with sheet con
   const service = new RendezvousModelService({ client, logger: { warn() {} } });
   const decision = await service.decide(input());
 
-  assert.equal(calls, 2);
+  assert.equal(calls, 3);
+  assert.equal(actionCalls, 2);
   assert.match(decision.reasoning, /repeated arches/);
 });
 
@@ -331,7 +341,7 @@ test('expired local patience removes waiting from the model decision', async () 
     consecutiveWaitDecisions: 2
   }));
 
-  assert.equal(calls, 1);
+  assert.equal(calls, 2);
   assert.equal(decision.action, 'move');
   const systemPrompt = request.messages[0].content;
   assert.match(systemPrompt, /same branch 2 consecutive times/);
