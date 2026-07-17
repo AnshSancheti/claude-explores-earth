@@ -51,6 +51,8 @@ const SHARED_DIRECTION_PATTERN = /\b(?:north|south|east|west|northeast|northwest
 const SHEET_INSTRUCTION_PATTERN = /\b(?:continue|advance|proceed|push|follow|backtrack|retrace|go|head|turn|wait|stay|converge)\w*\b|\b(?:move|movement|motion|approach)\w*\s+(?:toward|along|through|forward|ahead|back|closer)\b|\bforward\b|\b(?:same|shared)\s+(?:axis|route|path|corridor|direction)\b|\b(?:meetup|rendezvous)\s+(?:axis|route|path|corridor|point)\b/i;
 const PROJECTED_ACTION_PATTERN = /\b(?:sheet|drawing|sketch|message|friend|ada|theo)\b.{0,180}\b(?:asks?|wants?|tells?|signals?|indicates?|reinforces?|means?|cues?)\b.{0,120}\b(?:continue|advance|proceed|push|follow|backtrack|retrace|move|go|head|turn|wait|stay|forward)\w*\b/i;
 const ACTION_PROJECTED_FROM_SHEET_PATTERN = /\b(?:continue|advance|proceed|push|follow|backtrack|retrace|move|go|head|turn|wait|stay)\w*\b.{0,160}\b(?:because|from|based on|according to)\b.{0,80}\b(?:sheet|drawing|sketch|message)\b/i;
+const COMMUNICATION_REFERENCE_PATTERN = /\b(?:sheet|drawing|sketch|message|friend|partner|ada|theo)\b/i;
+const RELATIONAL_ROUTE_PATTERN = /\b(?:same|shared)\s+(?:axis|route|path|corridor|direction)\b|\balign\w*\b|\bsynchroni[sz]\w*\b/i;
 
 export function containsUnsupportedSheetGeography(value) {
   const text = String(value || '');
@@ -64,6 +66,11 @@ export function containsUnsupportedSheetInstruction(value) {
 export function projectsActionFromSheet(value) {
   const text = String(value || '');
   return PROJECTED_ACTION_PATTERN.test(text) || ACTION_PROJECTED_FROM_SHEET_PATTERN.test(text);
+}
+
+export function contaminatesRouteReasoning(value) {
+  const text = String(value || '');
+  return COMMUNICATION_REFERENCE_PATTERN.test(text) || RELATIONAL_ROUTE_PATTERN.test(text);
 }
 
 function cleanStringList(values, { limit = 5, maxLength = 180 } = {}) {
@@ -226,7 +233,7 @@ Street names and geographic labels visible in your route-option images are priva
 
 The resulting picture must contain no readable text, letters, numbers, labels, captions, signatures, logos, or watermarks. Express everything visually. Do not put those prohibitions into drawingPrompt; simply describe the picture you want.
 
-Interpret the received sheet explicitly and state your confidence. First describe only sender-side visual evidence actually present in the drawing; any hypothesis must remain about the sender's surroundings, not the action they want you to take. A sheet cannot tell you to move, continue, turn, retrace, wait, or follow an axis. The absence of a mark is not a cue. Choose your route from your own current observations and search strategy. The sheet may suggest visual features worth looking for, but it cannot select one of your private route options. Any street label in your current route images belongs to your surroundings, not the sender's. Similar generic features such as trees, parked cars, scaffolding, or a vanishing point are weak evidence; do not infer that you share a block or route unless multiple unusual features and their arrangement recur across reciprocal sheets. Repetition alone is not independent confirmation. Update only the current plan and at most one sourced visual motif and partner hypothesis. basisSequences provide provenance, not confidence. Keep conventionUpdate purely descriptive of recurring visible marks and partnerHypothesis purely descriptive of the sender's possible surroundings. drawingIntent is your private record of which sender-side observation or memory the outgoing picture preserves; only drawingPrompt and the grounded visible features are sent to the image renderer.
+Interpret the received sheet explicitly and state your confidence. First describe only sender-side visual evidence actually present in the drawing; any hypothesis must remain about the sender's surroundings, not the action they want you to take. A sheet cannot tell you to move, continue, turn, retrace, wait, or follow an axis. The absence of a mark is not a cue. Choose your route from your own current observations and search strategy. The sheet may suggest visual features worth looking for, but it cannot select one of your private route options. Keep these two tasks strictly separated inside this response: sheetInterpretation describes the sheet, while reasoning justifies the selected action using only your current local route images and private exploration history. reasoning must not mention the sheet, any drawing or message, your friend, or coordination with them. Any street label in your current route images belongs to your surroundings, not the sender's. Similar generic features such as trees, parked cars, scaffolding, or a vanishing point are weak evidence; do not infer that you share a block or route unless multiple unusual features and their arrangement recur across reciprocal sheets. Repetition alone is not independent confirmation. Update only the current plan and at most one sourced visual motif and partner hypothesis. basisSequences provide provenance, not confidence. Keep conventionUpdate purely descriptive of recurring visible marks and partnerHypothesis purely descriptive of the sender's possible surroundings. drawingIntent is your private record of which sender-side observation or memory the outgoing picture preserves; only drawingPrompt and the grounded visible features are sent to the image renderer.
 
 Return only JSON:
 {
@@ -234,7 +241,7 @@ Return only JSON:
   "selectedIndex": <0-${options.length - 1}>,
   "intendedHeading": <the numeric heading you intend, or null>,
   "waitTurns": <1-6 when action is wait, otherwise 0>,
-  "reasoning": "one concise first-person field note",
+  "reasoning": "one concise first-person action justification using only local route evidence, with no mention of the sheet, drawing, message, friend, or coordination",
   "observation": "a grounded description of what you currently notice and want to remember",
   "observedFeatures": ["stable visible feature one", "stable visible feature two"],
   "sheetInterpretation": "literal visible content, followed by an uncertain sender-side observation hypothesis; never a requested action",
@@ -347,11 +354,14 @@ ${recentFieldNotes}`
         if (projectedAction) {
           throw new Error(`Rendezvous model projected an action from the sheet: ${projectedAction.slice(0, 120)}`);
         }
+        if (contaminatesRouteReasoning(decision.reasoning)) {
+          throw new Error(`Rendezvous model contaminated route reasoning with communication: ${decision.reasoning.slice(0, 120)}`);
+        }
         return decision;
       } catch (error) {
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
-        if (/blank content|drawing prompt|drawing intent|memory revision|named geography|movement instruction|projected an action|json/i.test(error.message)) {
+        if (/blank content|drawing prompt|drawing intent|memory revision|named geography|movement instruction|projected an action|contaminated route reasoning|json/i.test(error.message)) {
           tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 3200));
         }
       }

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  contaminatesRouteReasoning,
   containsUnsupportedSheetGeography,
   containsUnsupportedSheetInstruction,
   projectsActionFromSheet,
@@ -133,6 +134,9 @@ test('visual-channel instruction guard separates observation from motion command
   assert.equal(containsUnsupportedSheetInstruction('a cyclist moving beside three parked taxis'), false);
   assert.equal(projectsActionFromSheet('Theo\'s sheet reinforces that I should keep moving forward.'), true);
   assert.equal(projectsActionFromSheet('I choose the open street because its facade is visually distinctive.'), false);
+  assert.equal(contaminatesRouteReasoning('The sheet suggests a continuation along a similar corridor.'), true);
+  assert.equal(contaminatesRouteReasoning('I will wait here to stay synchronized.'), true);
+  assert.equal(contaminatesRouteReasoning('The unfamiliar opening has the most distinctive facade.'), false);
 });
 
 test('model retries when an ambiguous sheet is projected into a route instruction', async () => {
@@ -179,6 +183,46 @@ test('model retries when an ambiguous sheet is projected into a route instructio
   assert.equal(calls, 2);
   assert.match(decision.sheetInterpretation, /vertical marks/);
   assert.doesNotMatch(decision.reasoning, /sheet signals/);
+});
+
+test('model retries when route reasoning merely associates motion with sheet context', async () => {
+  let calls = 0;
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          calls += 1;
+          return {
+            choices: [{
+              message: {
+                content: JSON.stringify({
+                  action: 'move',
+                  selectedIndex: 1,
+                  reasoning: calls === 1
+                    ? 'Choosing a promising public route while interpreting the sheet context for alignment.'
+                    : 'The unfamiliar opening has a distinctive row of repeated arches.',
+                  observation: 'Three iron arches sit beside one suspended globe lamp.',
+                  observedFeatures: ['three iron arches', 'one suspended globe lamp beside them'],
+                  sheetInterpretation: 'Dark vertical marks sit beneath a pale circle; the sender may be near a strongly patterned facade.',
+                  sheetConfidence: 0.35,
+                  memoryUpdate: {
+                    currentPlan: 'Compare uncommon visual arrangements and avoid immediate loops.'
+                  },
+                  drawingIntent: 'Preserve the uncommon arch-and-lamp arrangement.',
+                  drawingPrompt: 'Sketch three iron arches with one suspended globe lamp beside them.'
+                })
+              }
+            }]
+          };
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const decision = await service.decide(input());
+
+  assert.equal(calls, 2);
+  assert.match(decision.reasoning, /repeated arches/);
 });
 
 test('a blank first sheet cannot become invented partner evidence', async () => {
