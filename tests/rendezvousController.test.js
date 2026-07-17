@@ -209,6 +209,16 @@ class FakeImageModel {
   }
 }
 
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
 class IndoorAdaStartStreetView extends FakeStreetView {
   constructor() {
     super();
@@ -619,6 +629,130 @@ test('a persisted pending drawing resumes after controller restart', async () =>
     assert.equal(restarted.state.scratchpad.currentMessage.id, 'restart-message');
     assert.equal(restarted.state.scratchpad.owner, 'theo');
     assert.equal(imageModel.calls.length, 1);
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('an image finishing after reset cannot commit into the successor run', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-reset-image-race-test-'));
+  const imageGate = deferred();
+  const imageModel = {
+    calls: 0,
+    async generate() {
+      this.calls += 1;
+      await imageGate.promise;
+      return {
+        buffer: Buffer.from('stale-raster'),
+        mimeType: 'image/webp',
+        model: 'deferred-image',
+        requestId: 'stale-request'
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel,
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    const oldRunId = controller.state.runId;
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'stale-message',
+      agentId: 'ada',
+      turn: 3,
+      drawingPrompt: 'A drawing that belongs only to the old run.'
+    });
+    const staleWork = controller.resumePendingDrawing();
+    while (imageModel.calls === 0) await new Promise(resolve => setTimeout(resolve, 1));
+
+    await controller.reset();
+    const newRunId = controller.state.runId;
+    assert.notEqual(newRunId, oldRunId);
+    assert.equal(controller.state.scratchpad.sequence, 0);
+    assert.equal(controller.state.scratchpad.messageAudit.length, 0);
+
+    imageGate.resolve();
+    await staleWork;
+    assert.equal(controller.state.runId, newRunId);
+    assert.equal(controller.state.scratchpad.sequence, 0);
+    assert.equal(controller.state.scratchpad.currentMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.length, 0);
+    await assert.rejects(
+      fsp.access(path.join(tempDir, 'rendezvous-drawings', newRunId, 'stale-message.webp')),
+      { code: 'ENOENT' }
+    );
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('reset waits for an active step before replacing run state', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-reset-step-race-test-'));
+  const decisionGate = deferred();
+  let decisionStarted = false;
+  const agentModel = {
+    async decide(input) {
+      decisionStarted = true;
+      await decisionGate.promise;
+      return {
+        action: 'move',
+        selectedIndex: 0,
+        reasoning: 'I choose the locally distinctive open street.',
+        observation: 'A stone facade stands beside a broad public road.',
+        observedFeatures: ['a stone facade', 'a broad public road beside it'],
+        sheetInterpretation: '',
+        sheetConfidence: 0,
+        memoryUpdate: { currentPlan: 'Keep gathering local evidence.' },
+        drawingIntent: 'Preserve the facade beside the broad road.',
+        drawingPrompt: 'Sketch a stone facade beside a broad public road.',
+        fallbackCause: null
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    const oldRunId = controller.state.runId;
+    controller.state.status = 'running';
+    controller.running = true;
+    const tickWork = controller.tick();
+    while (!decisionStarted) await new Promise(resolve => setTimeout(resolve, 1));
+
+    let resetFinished = false;
+    const resetWork = controller.reset().then(value => {
+      resetFinished = true;
+      return value;
+    });
+    await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(resetFinished, false);
+
+    decisionGate.resolve();
+    await tickWork;
+    await resetWork;
+    assert.notEqual(controller.state.runId, oldRunId);
+    assert.equal(controller.state.turn, 0);
+    assert.equal(controller.state.scratchpad.sequence, 0);
+    assert.equal(controller.state.scratchpad.messageAudit.length, 0);
+    assert.equal(controller.state.agents.ada.stepCount, 0);
+    assert.equal(controller.state.agents.theo.stepCount, 0);
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
     else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;

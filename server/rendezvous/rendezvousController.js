@@ -376,6 +376,7 @@ export class RendezvousController {
     this.timer = null;
     this.running = false;
     this.stepInFlight = false;
+    this.tickInFlight = null;
     this.drawingInFlight = null;
     this.saveQueue = Promise.resolve();
     this.state = this.#emptyState();
@@ -734,6 +735,12 @@ export class RendezvousController {
   }
 
   async createRun() {
+    this.running = false;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+    if (this.tickInFlight) await this.tickInFlight.catch(() => {});
     await this.ensureStreetView();
     await this.#archiveCurrentState();
 
@@ -774,6 +781,8 @@ export class RendezvousController {
         theo: agents.theo.startLabel
       }
     });
+    // Old image work may still finish, but run-id fences prevent it from committing.
+    this.drawingInFlight = null;
     this.#updateMeetingMetrics();
     await this.saveState();
   }
@@ -831,21 +840,30 @@ export class RendezvousController {
   }
 
   async tick() {
-    if (this.stepInFlight || !this.running || this.state.status !== 'running') return this.getPublicState();
+    if (this.tickInFlight) return this.tickInFlight;
+    if (!this.running || this.state.status !== 'running') return this.getPublicState();
+    const runId = this.state.runId;
     this.stepInFlight = true;
-    try {
+    const work = (async () => {
       const agentId = AGENT_ORDER[this.state.turn % AGENT_ORDER.length];
       await this.#stepAgent(agentId);
+      if (this.state.runId !== runId) return this.getPublicState();
       this.state.turn += 1;
       this.#updateMeetingMetrics();
       this.#checkFound();
       this.#checkExhausted();
       this.state.updatedAt = new Date().toISOString();
       await this.saveState();
+      if (this.state.runId !== runId) return this.getPublicState();
       this.broadcastState();
       void this.resumePendingDrawing();
       return this.getPublicState();
+    })();
+    this.tickInFlight = work;
+    try {
+      return await work;
     } finally {
+      if (this.tickInFlight === work) this.tickInFlight = null;
       this.stepInFlight = false;
     }
   }
@@ -1182,8 +1200,8 @@ export class RendezvousController {
     return screenshots;
   }
 
-  #drawingDirectory() {
-    return path.join(this.dataDir, 'rendezvous-drawings', this.state.runId || 'unknown');
+  #drawingDirectory(runId = this.state.runId) {
+    return path.join(this.dataDir, 'rendezvous-drawings', runId || 'unknown');
   }
 
   async #pruneUnreferencedDrawingFiles() {
@@ -1275,14 +1293,15 @@ export class RendezvousController {
     return history;
   }
 
-  async #removePendingReferences(pendingId) {
+  async #removePendingReferences(pendingId, runId = this.state.runId) {
     await Promise.all(Array.from({ length: 4 }, (_, index) =>
-      fsp.unlink(path.join(this.#drawingDirectory(), `${pendingId}-reference-${index}.jpg`)).catch(() => {})
+      fsp.unlink(path.join(this.#drawingDirectory(runId), `${pendingId}-reference-${index}.jpg`)).catch(() => {})
     ));
   }
 
   async resumePendingDrawing() {
     if (this.drawingInFlight) return this.drawingInFlight;
+    const runId = this.state.runId;
     const pending = Number(this.state.scratchpad?.version) === 5
       ? normalizeRasterScratchpad(this.state.scratchpad).pendingMessage
       : null;
@@ -1294,7 +1313,10 @@ export class RendezvousController {
           drawingPrompt: pending.drawingPrompt,
           groundedFeatures: pending.groundedFeatures
         });
-        const directory = this.#drawingDirectory();
+        if (this.state.runId !== runId) return null;
+        const currentPendingBeforeWrite = normalizeRasterScratchpad(this.state.scratchpad).pendingMessage;
+        if (!currentPendingBeforeWrite || currentPendingBeforeWrite.id !== pending.id) return null;
+        const directory = this.#drawingDirectory(runId);
         await fsp.mkdir(directory, { recursive: true });
         const imageFile = `${pending.id}.webp`;
         const destination = path.join(directory, imageFile);
@@ -1302,6 +1324,10 @@ export class RendezvousController {
         await fsp.writeFile(temporary, generated.buffer);
         await fsp.rename(temporary, destination);
 
+        if (this.state.runId !== runId) {
+          await fsp.unlink(destination).catch(() => {});
+          return null;
+        }
         const currentPending = normalizeRasterScratchpad(this.state.scratchpad).pendingMessage;
         if (!currentPending || currentPending.id !== pending.id) return null;
         const imageSha256 = createHash('sha256').update(generated.buffer).digest('hex');
@@ -1344,7 +1370,9 @@ export class RendezvousController {
         this.broadcastState();
         return sent;
       } catch (error) {
-        const currentPending = normalizeRasterScratchpad(this.state.scratchpad).pendingMessage;
+        const currentPending = this.state.runId === runId
+          ? normalizeRasterScratchpad(this.state.scratchpad).pendingMessage
+          : null;
         if (currentPending?.id === pending.id) {
           this.state.scratchpad = failRasterScratchpadMessage(this.state.scratchpad, {
             pendingId: pending.id,
@@ -1362,8 +1390,8 @@ export class RendezvousController {
         this.logger.warn?.(`Rendezvous drawing ${pending.id} failed: ${error.message}`);
         return null;
       } finally {
-        await this.#removePendingReferences(pending.id);
-        await this.#pruneUnreferencedDrawingFiles();
+        await this.#removePendingReferences(pending.id, runId);
+        if (this.state.runId === runId) await this.#pruneUnreferencedDrawingFiles();
       }
     })();
     this.drawingInFlight = work;
