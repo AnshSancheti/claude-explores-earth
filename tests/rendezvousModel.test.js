@@ -2165,6 +2165,41 @@ test('local-observation review rejects a chase scene that relegates the landmark
   assert.match(review.revisionPrompt, /observation itself.*largest/);
 });
 
+test('local-observation review recognizes a midtown-scale urban canyon', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: ['a narrow street canyon between tall rows of buildings'],
+        primarySubject: 'a narrow urban canyon formed by tall buildings',
+        likelyMessage: 'The sender is observing a dense high-rise district.',
+        dominantAction: 'stillness',
+        frameOfReference: 'sender',
+        frameBasis: 'The balanced building rows dominate the image.',
+        communicationFunction: 'report',
+        movementCues: [],
+        stillnessCues: ['balanced static building rows'],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: urban midtown-scale street scene',
+    drawingIntent: 'Show the scale and rhythm of the surrounding buildings.',
+    informationDelta: 'New local observation: urban midtown-scale street scene',
+    messageAction: 'stillness',
+    drawingPrompt: 'Draw balanced rows of tall buildings.',
+    groundedFeatures: ['urban midtown-scale street scene'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, true);
+});
+
 test('blind recipient action overrides a sender review biased by intent', async () => {
   const requests = [];
   const service = new RendezvousModelService({

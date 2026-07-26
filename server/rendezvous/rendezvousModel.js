@@ -142,9 +142,25 @@ const VISUAL_SIMILARITY_STOPWORDS = new Set([
   'this', 'through', 'toward', 'towards', 'urban', 'viewer', 'with', 'would'
 ]);
 
+function normalizeVisualToken(token) {
+  if (/(?:ches|shes|xes|zes|ses)$/.test(token)) return token.slice(0, -2);
+  if (token.length > 3 && /s$/.test(token) && !/ss$/.test(token)) return token.slice(0, -1);
+  return token;
+}
+
 function visualDescriptionTokens(value) {
-  return new Set((cleanString(value, 500).toLowerCase().match(/[a-z][a-z'-]{2,}/g) || [])
+  const description = cleanString(value, 500).toLowerCase();
+  const tokens = new Set((description.match(/[a-z][a-z'-]{2,}/g) || [])
+    .map(normalizeVisualToken)
     .filter(token => !VISUAL_SIMILARITY_STOPWORDS.has(token)));
+  if (
+    /\bmidtown(?:-scale)?\b/.test(description) ||
+    /\burban canyon\b/.test(description) ||
+    /\b(?:tall|high-rise|multi-?story)\b[^.!;]{0,40}\b(?:building|tower)s?\b/.test(description)
+  ) {
+    tokens.add('dense-highrise-scale');
+  }
+  return tokens;
 }
 
 function visualDescriptionSimilarity(first, second) {
