@@ -36,7 +36,12 @@ const RENDER_REVISION_MARKER = 'Authoritative rendering correction:';
 const MAX_DRAWING_REPLANS = 2;
 const MAX_DRAWING_REPLAN_FAILURES = 2;
 
-function composeDrawingRevisionPrompt(drawingPrompt, revisionPrompt, messageAction = 'unclear') {
+function composeDrawingRevisionPrompt(
+  drawingPrompt,
+  revisionPrompt,
+  messageAction = 'unclear',
+  contributionSummary = ''
+) {
   const actionConstraint = messageAction === 'stillness'
     ? 'The dominant action must be stillness: remove arrows, directional lines, motion trails, and route cues that read as movement; make stopping, waiting, anchoring, or uncertainty visually dominant.'
     : messageAction === 'movement'
@@ -46,8 +51,12 @@ function composeDrawingRevisionPrompt(drawingPrompt, revisionPrompt, messageActi
         : 'Make the intended information delta visually dominant and unambiguous.';
   const correction = String(revisionPrompt || '').trim()
     || 'Correct the rejected image so a context-free recipient can read the intended information delta.';
+  const citedContribution = String(contributionSummary || '').trim();
+  const contributionConstraint = citedContribution
+    ? `The exact cited contribution to communicate is: ${citedContribution}`
+    : '';
 
-  return `${RENDER_REVISION_MARKER} ${correction} ${actionConstraint} Rebuild the image from these instructions and the compatible visual anchors supplied separately. Do not reuse the rejected composition or any earlier instruction that conflicts with this correction.`;
+  return `${RENDER_REVISION_MARKER} ${correction} ${contributionConstraint} ${actionConstraint} Rebuild the image from these instructions and the compatible visual anchors supplied separately. Do not reuse the rejected composition or any earlier instruction that conflicts with this correction.`;
 }
 
 function compatibleRevisionFeatures(drawingPrompt, groundedFeatures, messageAction) {
@@ -1549,7 +1558,8 @@ export class RendezvousController {
       pending.drawingPrompt = composeDrawingRevisionPrompt(
         '',
         `Rebuild from this intended message: ${pending.drawingIntent} Make this evidence delta visible: ${pending.informationDelta}`,
-        reconciledMessageAction
+        reconciledMessageAction,
+        pending.contributionSummary || pending.informationDelta || pending.drawingIntent
       );
       normalizedScratchpad.updatedAt = new Date().toISOString();
       this.state.scratchpad = normalizedScratchpad;
@@ -1684,7 +1694,8 @@ export class RendezvousController {
           const revisionPrompt = composeDrawingRevisionPrompt(
             pending.drawingPrompt,
             review.revisionPrompt,
-            pending.messageAction
+            pending.messageAction,
+            pending.contributionSummary || pending.informationDelta || pending.drawingIntent
           );
           generated = await this.imageModel.generate({
             drawingPrompt: revisionPrompt,
@@ -1728,7 +1739,8 @@ export class RendezvousController {
           error.nextDrawingPrompt = composeDrawingRevisionPrompt(
             pending.drawingPrompt,
             review.revisionPrompt,
-            pending.messageAction
+            pending.messageAction,
+            pending.contributionSummary || pending.informationDelta || pending.drawingIntent
           );
           throw error;
         }

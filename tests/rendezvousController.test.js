@@ -753,6 +753,7 @@ test('the sender reviews a generated drawing and one rejection produces a revise
 
     assert.equal(imageModel.calls.length, 2);
     assert.match(imageModel.calls[1].drawingPrompt, /Separate the landmarks/);
+    assert.match(imageModel.calls[1].drawingPrompt, /Show two related landmarks and my intended movement/);
     assert.match(imageModel.calls[1].drawingPrompt, /^Authoritative rendering correction:/);
     assert.doesNotMatch(imageModel.calls[1].drawingPrompt, /Draw two arch groups/);
     assert.equal(reviews.length, 2);
@@ -800,6 +801,7 @@ test('sender revision feedback survives a durable retry and controller restart',
 
     assert.equal(first.state.scratchpad.pendingMessage.status, 'retrying');
     assert.match(first.state.scratchpad.pendingMessage.drawingPrompt, /Remove the large arrow/);
+    assert.match(first.state.scratchpad.pendingMessage.drawingPrompt, /I am deliberately waiting rather than advancing/);
     assert.match(first.state.scratchpad.pendingMessage.drawingPrompt, /^Authoritative rendering correction:/);
     assert.doesNotMatch(first.state.scratchpad.pendingMessage.drawingPrompt, /For the next rendering/);
     first.state.scratchpad.pendingMessage.nextAttemptAt = new Date(0).toISOString();
