@@ -97,7 +97,8 @@ function canAcceptRecipientLegibleRetry(review, pending, attemptNumber) {
       return true;
     }
   }
-  return attemptNumber >= 4
+  return pending?.contributionKind === 'own_action'
+    && attemptNumber >= 4
     && ['movement', 'stillness', 'transition'].includes(pending?.messageAction)
     && blindRead?.dominantAction === pending.messageAction
     && blindRead.readableText !== true

@@ -835,7 +835,7 @@ test('sender revision feedback survives a durable retry and controller restart',
   }
 });
 
-test('a recipient-legible drawing escapes an intent-review livelock after repeated retries', async () => {
+test('a recipient-legible own-action drawing escapes an intent-review livelock after repeated retries', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-review-livelock-test-'));
   const agentModel = {
     async reviewDrawing() {
@@ -845,6 +845,8 @@ test('a recipient-legible drawing escapes an intent-review livelock after repeat
         revisionPrompt: 'Keep the figures waiting while making anticipation visible.',
         blindRead: {
           dominantAction: 'stillness',
+          frameOfReference: 'sender',
+          communicationFunction: 'report',
           readableText: false,
           likelyMessage: 'Two people wait at a corner while anticipating a later move.'
         }
@@ -864,6 +866,7 @@ test('a recipient-legible drawing escapes an intent-review livelock after repeat
       id: 'recipient-legible-message',
       agentId: 'ada',
       turn: 4,
+      contributionKind: 'own_action',
       messageAction: 'stillness',
       drawingIntent: 'Show that I am waiting but attentive.',
       drawingPrompt: 'Draw two people waiting beside a fixed landmark.'
@@ -878,6 +881,57 @@ test('a recipient-legible drawing escapes an intent-review livelock after repeat
       controller.state.scratchpad.messageAudit.at(-1).reviewAssessment,
       /independent recipient read the intended dominant action/
     );
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('matching movement cannot waive a rejected local observation', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-observation-waiver-test-'));
+  const agentModel = {
+    async reviewDrawing() {
+      return {
+        accepted: false,
+        assessment: 'The runner is primary, not the cited tree-lined street.',
+        revisionPrompt: 'Remove the runner and foreground the tree-lined street.',
+        blindRead: {
+          dominantAction: 'movement',
+          frameOfReference: 'sender',
+          communicationFunction: 'report',
+          readableText: false,
+          likelyMessage: 'The sender is running down a street.'
+        }
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'runner-dominates-observation',
+      agentId: 'ada',
+      turn: 4,
+      contributionKind: 'local_observation',
+      contributionSummary: 'New local observation: tree-lined street',
+      informationDelta: 'New local observation: tree-lined street',
+      messageAction: 'movement',
+      drawingIntent: 'Show the tree-lined street.',
+      drawingPrompt: 'Draw a runner on a tree-lined street.'
+    });
+    controller.state.scratchpad.pendingMessage.attempts = 3;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(controller.state.scratchpad.currentMessage, null);
+    assert.equal(controller.state.scratchpad.pendingMessage.id, 'runner-dominates-observation');
+    assert.equal(controller.state.scratchpad.pendingMessage.attempts, 4);
+    assert.match(controller.state.scratchpad.pendingMessage.lastError, /runner is primary/i);
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }

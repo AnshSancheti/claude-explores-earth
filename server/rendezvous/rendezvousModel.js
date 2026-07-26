@@ -167,6 +167,7 @@ const ROUTE_COMMAND_CUES = [
   'arrow',
   'direction',
   'directional',
+  'footprint',
   'journey',
   'move',
   'moved',
@@ -189,7 +190,9 @@ function routeCommandCues(value) {
     ' '
   );
   const tokens = visualDescriptionTokens(positiveText);
-  return ROUTE_COMMAND_CUES.filter(token => tokens.has(token));
+  return ROUTE_COMMAND_CUES.filter(token =>
+    [...tokens].some(candidate => candidate === token || candidate === `${token}s`)
+  );
 }
 
 function historicalSheetLiteralContents(privateMemory, currentSequence) {
@@ -1312,6 +1315,17 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
             );
           }
         }
+        const unsupportedRouteCues = routeCommandCues(
+          `${candidateDrawingPlan.drawingIntent} ${candidateDrawingPlan.drawingPrompt}`
+        ).filter(cue => !routeCommandCues(citedEvidence?.description).includes(cue));
+        if (
+          candidateDrawingPlan.contributionKind === 'local_observation' &&
+          unsupportedRouteCues.length > 0
+        ) {
+          throw new Error(
+            'Rendezvous drawing planner added route-command imagery unrelated to its local observation'
+          );
+        }
         drawingPlan = candidateDrawingPlan;
         break;
       } catch (error) {
@@ -1319,13 +1333,15 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         this.logger.warn?.(`Rendezvous drawing plan attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
         drawingRetryFeedback = /multi-panel template/i.test(error.message)
           ? 'Start from a blank page and use one coherent composition centered on the cited contribution. You may retain one small recurring symbol, but do not use panels, a triptych, or the received sheet layout.'
+          : (/route-command imagery unrelated/i.test(error.message)
+            ? 'The cited local observation is static evidence. Remove uncited routes, footprints, arrows, runners, progression, and directional cues. If movement is the actual contribution you want to send, cite an exact action evidence ID instead.'
           : (/labeled its contribution/i.test(error.message)
               ? 'Preserve the communicative act you actually intend. Cite an exact evidence ID whose prefix matches that contribution kind: local for local_observation, action for own_action, question for question, contradiction for correction, received for acknowledgement, or prior_sent for deliberate_repetition. Do not change the message kind merely to fit a mismatched ID.'
               : (/repeated visual proposition/i.test(error.message)
               ? 'The proposed composition repeats a recent visual proposition. Choose a genuinely different grounded contribution or composition. If repetition itself is what you intend to communicate, cite an exact prior_sent evidence ID as deliberate_repetition and explain why repeating it is useful now.'
               : (/(?:uncited motif|unsupported partner hypothesis)/i.test(error.message)
               ? 'Keep the cited contribution primary. Do not describe any inherited symbol, route, target, waypoint, district, or place as a known shared destination or otherwise promote an unsupported partner hypothesis into a movement goal. If you retain one, make it subordinate and explicitly uncertain, questioned, tested, transformed, or deliberately repeated.'
-              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.')));
+              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.'))));
         tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
       }
     }

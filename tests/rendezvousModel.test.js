@@ -121,11 +121,11 @@ function drawingResponse(overrides = {}) {
     contributionKind: 'local_observation',
     contributionEvidenceId: 'local:0',
     contributionSummary: 'Ada can tell Theo that she currently sees three matching stone arches.',
-    drawingIntent: 'Tell Theo that I see matching arches and intend to investigate them.',
+    drawingIntent: 'Tell Theo that I see matching arches.',
     informationDelta: 'I now see three matching arches beside a suspended traffic light.',
     continuityReason: 'Repeating the arches links this observation to Theo’s earlier motif.',
-    messageAction: 'movement',
-    drawingPrompt: 'Draw two groups of arches echoing each other, with one small figure moving toward the nearer group and a large uncertain circle above the distant group.',
+    messageAction: 'stillness',
+    drawingPrompt: 'Draw two groups of arches echoing each other, with a suspended traffic light beside the nearer group and a large uncertain circle above the distant group.',
     groundedFeatureEvidenceIds: ['local:0', 'local:1'],
     ...overrides
   };
@@ -207,7 +207,7 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(decision.memoryUpdate.partnerHypothesis.description, /Washington Square/);
   assert.equal(decision.memoryUpdate.partnerHypothesis.evidenceStatus, 'new_corroboration');
   assert.match(decision.reasoning, /Theo may be describing/);
-  assert.match(decision.drawingIntent, /intend to investigate/);
+  assert.match(decision.drawingIntent, /see matching arches/);
   assert.equal(decision.contributionKind, 'local_observation');
   assert.equal(decision.contributionEvidenceId, 'local:0');
   assert.equal(decision.contributionSummary, 'New local observation: three repeated stone arches');
@@ -220,8 +220,8 @@ test('a branch separates interpretation, route choice, and visual communication'
     'three repeated stone arches',
     'a suspended traffic light beside them'
   ]);
-  assert.equal(decision.messageAction, 'movement');
-  assert.match(decision.drawingPrompt, /figure moving/);
+  assert.equal(decision.messageAction, 'stillness');
+  assert.match(decision.drawingPrompt, /suspended traffic light/);
 
   const serialized = JSON.stringify(requests);
   assert.match(serialized, /privately name possible landmarks/);
@@ -294,6 +294,43 @@ test('drawing planner corrects a kind and evidence mismatch without changing the
   assert.equal(requests.filter(request =>
     /currently hold the one physical sheet/.test(request.messages[0].content)
   ).length, 2);
+});
+
+test('a static local observation cannot add an uncited movement scene', async () => {
+  const requests = [];
+  let drawingAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      drawing(request) {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            drawingIntent: 'Show a tree-lined street splitting around an obstacle.',
+            messageAction: 'movement',
+            drawingPrompt: 'Draw footprints tracing two routes toward a vanishing point.'
+          });
+        }
+        assert.match(
+          request.messages[1].content[0].text,
+          /AUTHORITATIVE PLANNING CORRECTION.*static evidence.*Remove uncited routes/
+        );
+        return drawingResponse({
+          drawingIntent: 'Show the repeated stone arches I can see.',
+          messageAction: 'stillness',
+          drawingPrompt: 'Draw three repeated stone arches beside a suspended traffic light.'
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'local_observation');
+  assert.equal(decision.messageAction, 'stillness');
+  assert.doesNotMatch(decision.drawingPrompt, /footprints|route|vanishing point/i);
 });
 
 test('repeated sheet imagery cannot become new evidence or leak into local observation', async () => {
@@ -1551,6 +1588,8 @@ test('a paused route drawing is reconciled to transition before image review', a
   const service = new RendezvousModelService({
     client: stagedClient(requests, {
       drawing: drawingResponse({
+        contributionKind: 'own_action',
+        contributionEvidenceId: 'action:0',
         messageAction: 'stillness',
         drawingIntent: 'Hold at the tree anchor while keeping the diagonal route toward the storefront visible.',
         drawingPrompt: 'Draw a waiting figure at a tree anchor with a diagonal path toward a distant storefront.'
