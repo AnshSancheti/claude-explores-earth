@@ -266,6 +266,66 @@ test('drawing planner normalizes a mismatched contribution kind to its cited evi
   ).length, 1);
 });
 
+test('repeated sheet imagery cannot become new evidence or leak into local observation', async () => {
+  const repeatedLiteral = 'a backpacked figure follows a diagonal arrow beside parked vans and a sidewalk bench';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        literalContents: [repeatedLiteral],
+        sheetInterpretation: 'The same walking figure and arrow appear again.'
+      },
+      route: routeResponse({
+        observation: 'I see storefronts and trees, while a bold diagonal arrow reinforces the newest sheet.',
+        observedFeatures: [
+          'storefronts beside mature sidewalk trees',
+          'a bold diagonal arrow from the newest sheet'
+        ],
+        sheetReconciliation: {
+          ...routeResponse().sheetReconciliation,
+          informationNovelty: 'new',
+          newEvidenceIds: ['visible:0'],
+          repeatedEvidence: [],
+          planAssessment: 'supporting'
+        }
+      }),
+      drawing: drawingResponse({
+        contributionKind: 'local_observation',
+        contributionEvidenceId: 'local:0',
+        groundedFeatureEvidenceIds: ['local:0']
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    sheetMessage: { sequence: 7, from: 'theo', to: 'ada' },
+    privateMemory: {
+      version: 5,
+      currentPlan: 'Keep comparing grounded evidence.',
+      ownObservations: [],
+      receivedSheets: [{
+        sequence: 5,
+        from: 'theo',
+        interpretation: 'A walking figure follows an arrow.',
+        literalContents: [repeatedLiteral],
+        informationNovelty: 'new'
+      }],
+      sentMessages: [],
+      reconciliations: [],
+      visualConventions: [],
+      partnerHypotheses: []
+    }
+  }));
+
+  assert.equal(decision.sheetPerception.informationNovelty, 'repeated');
+  assert.deepEqual(decision.reconciliation.newEvidence, []);
+  assert.deepEqual(decision.reconciliation.repeatedEvidence, [repeatedLiteral]);
+  assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
+  assert.equal(decision.observation, 'storefronts beside mature sidewalk trees');
+  assert.deepEqual(decision.observedFeatures, ['storefronts beside mature sidewalk trees']);
+});
+
 test('own-action evidence uses the executed option bearing without leaking its route label', async () => {
   const requests = [];
   const service = new RendezvousModelService({
@@ -1139,8 +1199,45 @@ test('own-action drawing review rejects a recipient-framed command', async () =>
 
   assert.equal(review.accepted, false);
   assert.match(review.assessment, /recipient.*not clearly the sender's own action/);
-  assert.match(review.revisionPrompt, /Avoid a standalone command-like arrow/);
+  assert.match(review.revisionPrompt, /Avoid any standalone arrow/);
+  assert.match(review.revisionPrompt, /completed motion behind/);
   assert.equal(requests.length, 1);
+});
+
+test('acknowledgement drawing review rejects a replay that reads as a movement report', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: ['a backpacked figure follows an arrow along a sidewalk'],
+        likelyMessage: 'A person is moving forward along the indicated route.',
+        dominantAction: 'movement',
+        frameOfReference: 'sender',
+        frameBasis: 'The walking figure is embedded in the route scene.',
+        communicationFunction: 'report',
+        movementCues: ['walking figure', 'forward arrow'],
+        stillnessCues: [],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'acknowledgement',
+    contributionSummary: 'Acknowledging the received walking figure and arrow.',
+    drawingIntent: 'Show that I recognized the received route scene.',
+    informationDelta: 'Acknowledging the received walking figure and arrow.',
+    continuityReason: 'I want Ada to know I understood the image.',
+    messageAction: 'movement',
+    drawingPrompt: 'Redraw the same walking figure and arrow.',
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /report, not an acknowledgement/);
+  assert.match(review.revisionPrompt, /function as a response/);
 });
 
 test('blind recipient action overrides a sender review biased by intent', async () => {

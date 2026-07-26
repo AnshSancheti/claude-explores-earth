@@ -125,6 +125,51 @@ function isConcreteLocalEvidence(description) {
     .test(value);
 }
 
+const VISUAL_SIMILARITY_STOPWORDS = new Set([
+  'about', 'along', 'also', 'around', 'away', 'been', 'being', 'both', 'city',
+  'could', 'down', 'from', 'into', 'large', 'left', 'might', 'other', 'person',
+  'right', 'scene', 'shows', 'side', 'street', 'their', 'there', 'these', 'they',
+  'this', 'through', 'toward', 'towards', 'urban', 'viewer', 'with', 'would'
+]);
+
+function visualDescriptionTokens(value) {
+  return new Set((cleanString(value, 500).toLowerCase().match(/[a-z][a-z'-]{2,}/g) || [])
+    .filter(token => !VISUAL_SIMILARITY_STOPWORDS.has(token)));
+}
+
+function visualDescriptionSimilarity(first, second) {
+  const a = visualDescriptionTokens(first);
+  const b = visualDescriptionTokens(second);
+  if (a.size === 0 || b.size === 0) return 0;
+  let shared = 0;
+  for (const token of a) {
+    if (b.has(token)) shared += 1;
+  }
+  return shared / Math.min(a.size, b.size);
+}
+
+function historicalSheetLiteralContents(privateMemory, currentSequence) {
+  return (privateMemory?.receivedSheets || [])
+    .filter(sheet => Number(sheet?.sequence) !== Number(currentSequence))
+    .slice(-6)
+    .flatMap(sheet => cleanStringList(sheet?.literalContents, { limit: 6, maxLength: 220 }));
+}
+
+function splitCurrentSheetEvidence(perception, privateMemory, currentSequence) {
+  const historical = historicalSheetLiteralContents(privateMemory, currentSequence);
+  const current = cleanStringList(perception?.literalContents, { limit: 6, maxLength: 220 });
+  if (historical.length === 0) {
+    return { novel: current, repeated: [] };
+  }
+  return current.reduce((result, description) => {
+    const similarity = Math.max(...historical.map(previous =>
+      visualDescriptionSimilarity(description, previous)
+    ));
+    result[similarity >= 0.55 ? 'repeated' : 'novel'].push(description);
+    return result;
+  }, { novel: [], repeated: [] });
+}
+
 function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -367,14 +412,20 @@ export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = 
     if (selectedDelta > 12 && matches.length === 1) selectedIndex = matches[0].index;
   }
   const numericSheetConfidence = Number(raw?.sheetConfidence);
+  const observedFeatures = cleanStringList(raw?.observedFeatures)
+    .filter(isConcreteLocalEvidence);
+  const rawObservation = cleanString(raw?.observation, 700);
+  const observation = isConcreteLocalEvidence(rawObservation)
+    ? rawObservation
+    : observedFeatures.join('; ');
   return {
     action,
     selectedIndex,
     intendedHeading,
     waitTurns: action === 'wait' ? Math.min(6, Math.max(1, Math.floor(Number(raw?.waitTurns) || 1))) : 0,
     reasoning: cleanString(raw?.reasoning, 700) || 'I choose the most promising unfamiliar public route.',
-    observation: cleanString(raw?.observation, 700),
-    observedFeatures: cleanStringList(raw?.observedFeatures),
+    observation,
+    observedFeatures,
     sheetInterpretation: cleanString(raw?.sheetInterpretation, 700),
     sheetConfidence: Number.isFinite(numericSheetConfidence)
       ? Math.min(1, Math.max(0, numericSheetConfidence))
@@ -556,6 +607,11 @@ Only use a depicted route as a direct instruction for your own movement when the
       id: `visible:${index}`,
       description
     }));
+    const visualEvidenceSplit = splitCurrentSheetEvidence(
+      perception,
+      privateMemory,
+      sheetMessage?.sequence
+    );
 
     const systemPrompt = `You are ${agent.name}, one of two friends actively trying to find each other after becoming separated on unfamiliar streets. You both began in Manhattan, but the world is open. The only information you exchange is a wordless drawing passed back and forth.
 
@@ -625,10 +681,16 @@ ${JSON.stringify(currentVisibleEvidence, null, 2)}
 Recent private field notes:
 ${recentFieldNotes}`
       },
-      ...screenshots.map(buffer => ({
-        type: 'image_url',
-        image_url: { url: `data:image/jpeg;base64,${buffer.toString('base64')}`, detail: 'low' }
-      }))
+      ...screenshots.flatMap((buffer, index) => ([
+        {
+          type: 'text',
+          text: `LOCAL ROUTE-OPTION IMAGE ${index}. This is your physical surroundings, not the passed sheet. Only these route-option images may ground "observation" and "observedFeatures".`
+        },
+        {
+          type: 'image_url',
+          image_url: { url: `data:image/jpeg;base64,${buffer.toString('base64')}`, detail: 'low' }
+        }
+      ]))
     ];
 
     let lastError = null;
@@ -697,7 +759,7 @@ ${recentFieldNotes}`
             ? rawReconciliation.currentSenderAction
             : null;
           const currentSenderActionBasis = cleanString(rawReconciliation?.currentSenderActionBasis, 400);
-          const informationNovelty = ['new', 'mixed', 'repeated', 'unclear'].includes(rawReconciliation?.informationNovelty)
+          let informationNovelty = ['new', 'mixed', 'repeated', 'unclear'].includes(rawReconciliation?.informationNovelty)
             ? rawReconciliation.informationNovelty
             : null;
           if (!informationNovelty || !currentSenderAction || !currentSenderActionBasis) {
@@ -709,7 +771,11 @@ ${recentFieldNotes}`
           });
           const groundedNewEvidence = requestedNewEvidenceIds
             .map(id => currentVisibleEvidence.find(item => item.id === id)?.description)
+            .filter(description => visualEvidenceSplit.novel.includes(description))
             .filter(Boolean);
+          if (visualEvidenceSplit.repeated.length > 0) {
+            informationNovelty = groundedNewEvidence.length > 0 ? 'mixed' : 'repeated';
+          }
           const evidenceDelta = sanitizeEvidenceDelta(rawReconciliation);
           const corroborationContext = {
             sheetSequence: sheetMessage.sequence,
@@ -738,6 +804,10 @@ ${recentFieldNotes}`
             evidenceDelta: {
               ...evidenceDelta,
               newEvidence: groundedNewEvidence,
+              repeatedEvidence: [...new Set([
+                ...evidenceDelta.repeatedEvidence,
+                ...visualEvidenceSplit.repeated
+              ])].slice(0, 5),
               planAssessment: normalizedPlanAssessment
             },
             conventionUpdate,
@@ -982,6 +1052,12 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           throw new Error('Rendezvous drawing planner omitted its intended message, information delta, or dominant action');
         }
         if (
+          ['acknowledgement', 'deliberate_repetition'].includes(candidateDrawingPlan.contributionKind) &&
+          !candidateDrawingPlan.continuityReason
+        ) {
+          throw new Error('Rendezvous repeated contribution omitted why repeating it is useful now');
+        }
+        if (
           !['acknowledgement', 'deliberate_repetition'].includes(candidateDrawingPlan.contributionKind) &&
           usesMultiPanelTemplate(...perception.literalContents, perception.sheetInterpretation) &&
           usesMultiPanelTemplate(candidateDrawingPlan.drawingIntent, candidateDrawingPlan.drawingPrompt)
@@ -1092,6 +1168,7 @@ Return only JSON:
   "dominantAction": "movement" | "stillness" | "transition" | "unclear",
   "frameOfReference": "sender" | "recipient" | "shared" | "unclear",
   "frameBasis": "specific visible cue establishing whose action, observation, or route this is",
+  "communicationFunction": "report" | "request" | "acknowledgement" | "directive" | "deliberate_repetition" | "unclear",
   "movementCues": ["visible cue suggesting movement or direction"],
   "stillnessCues": ["visible cue suggesting waiting, stopping, anchoring, or no movement"],
   "readableText": true | false
@@ -1127,6 +1204,16 @@ Return only JSON:
             ? parsed.frameOfReference
             : 'unclear',
           frameBasis: cleanString(parsed?.frameBasis, 400),
+          communicationFunction: [
+            'report',
+            'request',
+            'acknowledgement',
+            'directive',
+            'deliberate_repetition',
+            'unclear'
+          ].includes(parsed?.communicationFunction)
+            ? parsed.communicationFunction
+            : 'unclear',
           movementCues: cleanStringList(parsed?.movementCues, { limit: 6, maxLength: 220 }),
           stillnessCues: cleanStringList(parsed?.stillnessCues, { limit: 6, maxLength: 220 }),
           readableText: parsed?.readableText === true
@@ -1169,7 +1256,18 @@ Return only JSON:
       return {
         accepted: false,
         assessment: `Blind recipient read the action frame as ${blindRead.frameOfReference}, not clearly the sender's own action: ${blindRead.likelyMessage}`,
-        revisionPrompt: 'Make it visually clear that the depicted movement belongs to the sender reporting what they chose or did. Avoid a standalone command-like arrow aimed at the viewer. Use a visible acting subject, a path clearly trailing from that subject, or another self-authored scene relationship of your choice. Do not add text, labels, or a prescribed identity symbol.',
+        revisionPrompt: 'Make it visually clear that this is the sender reporting their own completed or chosen movement, like a self-authored visual diary rather than route guidance. Avoid any standalone arrow or route line continuing ahead of the figure. If direction needs emphasis, show completed motion behind the acting subject through footprints, a fading trail, changed posture, or another retrospective relationship of your choice. Do not add text, labels, or a prescribed identity symbol.',
+        blindRead
+      };
+    }
+    if (
+      contributionKind === 'acknowledgement' &&
+      blindRead.communicationFunction !== 'acknowledgement'
+    ) {
+      return {
+        accepted: false,
+        assessment: `Blind recipient read the response as ${blindRead.communicationFunction}, not an acknowledgement: ${blindRead.likelyMessage}`,
+        revisionPrompt: 'Make the image visibly function as a response to something received rather than replaying the received scene as a fresh report or command. Show reception, recognition, reflection, transformation, or a reciprocal relationship in whatever visual language you choose. Do not add text, labels, or a prescribed code.',
         blindRead
       };
     }
@@ -1258,9 +1356,11 @@ ${JSON.stringify(groundedFeatures)}`
         if (typeof parsed?.accepted !== 'boolean' || !assessment) {
           throw new Error('Rendezvous drawing review omitted its verdict');
         }
+        const intentionalNearCopy = contributionKind === 'deliberate_repetition'
+          && Boolean(cleanString(continuityReason, 500));
         const accidentalNearCopy = comparisonSheets.length > 0
           && visualNovelty === 'near_copy'
-          && !['acknowledgement', 'deliberate_repetition'].includes(contributionKind);
+          && !intentionalNearCopy;
         const materialContributionConflict = parsed?.materialContributionConflict === true;
         const layoutOnlyRejection = parsed.accepted === false
           && parsed?.materialContributionConflict === false;

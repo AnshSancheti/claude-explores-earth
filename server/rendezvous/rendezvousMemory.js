@@ -1,4 +1,4 @@
-export const RENDEZVOUS_MEMORY_VERSION = 4;
+export const RENDEZVOUS_MEMORY_VERSION = 5;
 
 const MAX_TEXT_CHARS = 700;
 const MAX_RECEIVED_SHEETS = 10;
@@ -37,6 +37,21 @@ function enumValue(value, allowed, fallback) {
   return allowed.includes(value) ? value : fallback;
 }
 
+function removeCommunicationFromLocalObservation(value) {
+  const description = cleanString(value, 500);
+  if (!description) return '';
+  const communicationCue = /\b(?:arrow|draw(?:ing|n)?|sheet|visual cue|shared cue|latest message|newest message|latest note|scratchpad)\b/i;
+  if (!communicationCue.test(description)) return description;
+
+  const cleaned = description
+    .split(/(?<=[.!?;])\s+|;\s*|,\s+(?=(?:and\s+)?(?:a|an|the)\s+[^,.;]{0,80}\b(?:arrow|draw(?:ing|n)?|sheet|visual cue|shared cue|latest message|newest message|latest note|scratchpad)\b)/i)
+    .filter(fragment => !communicationCue.test(fragment))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return cleaned || '';
+}
+
 function knownSequences(memory) {
   return new Set([
     ...(memory.receivedSheets || []).map(entry => entry.sequence),
@@ -46,7 +61,9 @@ function knownSequences(memory) {
 
 function normalizeObservation(entry) {
   if (!entry || typeof entry !== 'object') return null;
-  const description = cleanString(entry.description || entry.observation, 500);
+  const description = entry.sourcePanoId
+    ? removeCommunicationFromLocalObservation(entry.description || entry.observation)
+    : cleanString(entry.description || entry.observation, 500);
   if (!description) return null;
   return {
     turn: positiveInt(entry.turn),

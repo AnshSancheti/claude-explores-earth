@@ -192,7 +192,7 @@ test('echoed symbols preserve conventions while unsupported partner hypotheses d
     sheetInterpretation: 'The same star and path appear again.'
   });
 
-  assert.equal(memory.version, 4);
+  assert.equal(memory.version, RENDEZVOUS_MEMORY_VERSION);
   assert.equal(memory.visualConventions[0].confidence, 0.65);
   assert.deepEqual(memory.visualConventions[0].basisSequences, [1]);
   assert.equal(memory.visualConventions[0].evidenceStatus, 'repetition_only');
@@ -279,4 +279,29 @@ test('movement memory preserves compact dead reckoning without coordinates', () 
   assert.deepEqual(movement.routeLabels, ['public avenue']);
   assert.equal(Object.hasOwn(movement, 'lat'), false);
   assert.equal(Object.hasOwn(movement, 'lng'), false);
+});
+
+test('pano-sourced observations discard communication imagery while retaining the street', () => {
+  const memory = normalizeAgentMemory({
+    version: RENDEZVOUS_MEMORY_VERSION,
+    currentPlan: 'Keep searching.',
+    ownObservations: [{
+      turn: 12,
+      description: 'I see parked vans and storefronts. A bold diagonal arrow from the newest sheet points ahead.',
+      sourcePanoId: 'pano-12'
+    }, {
+      turn: 13,
+      description: 'Trees line the sidewalk, and a shared cue arrow reinforces southeast movement.',
+      sourcePanoId: 'pano-13'
+    }],
+    receivedSheets: [],
+    sentMessages: [],
+    visualConventions: [],
+    partnerHypotheses: [],
+    reconciliations: []
+  });
+
+  assert.equal(memory.ownObservations[0].description, 'I see parked vans and storefronts.');
+  assert.equal(memory.ownObservations[1].description, 'Trees line the sidewalk');
+  assert.doesNotMatch(JSON.stringify(memory.ownObservations), /arrow|shared cue|newest sheet/i);
 });

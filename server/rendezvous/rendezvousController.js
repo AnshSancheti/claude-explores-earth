@@ -65,11 +65,23 @@ function compatibleRevisionFeatures(drawingPrompt, groundedFeatures, messageActi
     });
 }
 
-function canAcceptRecipientLegibleRetry(review, messageAction, attemptNumber) {
+function canAcceptRecipientLegibleRetry(review, pending, attemptNumber) {
   const blindRead = review?.blindRead;
+  if (
+    pending?.contributionKind === 'own_action' &&
+    blindRead?.frameOfReference !== 'sender'
+  ) {
+    return false;
+  }
+  if (
+    pending?.contributionKind === 'acknowledgement' &&
+    blindRead?.communicationFunction !== 'acknowledgement'
+  ) {
+    return false;
+  }
   return attemptNumber >= 4
-    && ['movement', 'stillness', 'transition'].includes(messageAction)
-    && blindRead?.dominantAction === messageAction
+    && ['movement', 'stillness', 'transition'].includes(pending?.messageAction)
+    && blindRead?.dominantAction === pending.messageAction
     && blindRead.readableText !== true
     && Boolean(blindRead.likelyMessage);
 }
@@ -1595,7 +1607,7 @@ export class RendezvousController {
             : { accepted: true, assessment: 'Drawing review is not available in this model adapter.', revisionPrompt: '' };
         }
         const attemptNumber = Math.max(1, Number(pending.attempts || 0) + 1);
-        if (!review.accepted && canAcceptRecipientLegibleRetry(review, pending.messageAction, attemptNumber)) {
+        if (!review.accepted && canAcceptRecipientLegibleRetry(review, pending, attemptNumber)) {
           review = {
             ...review,
             accepted: true,
