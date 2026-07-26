@@ -631,6 +631,43 @@ test('an acknowledgement replan does not relabel received imagery as a local obs
   assert.doesNotMatch(requestText, /long sidewalk, footprints, and a large tree/);
 });
 
+test('a drawing replan offers composite streetscapes as separate visual facts', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      replan: {
+        contributionEvidenceId: 'local:1',
+        drawingIntent: 'Show the row of parked vans.',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw one row of parked vans as the sole dominant subject.',
+        groundedFeatureEvidenceIds: ['local:1']
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const replan = await service.replanUnrenderableDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    pending: {
+      contributionKind: 'acknowledgement',
+      groundedFeatures: ['Theo’s received footprints']
+    },
+    privateMemory: {
+      ownObservations: [{
+        description: 'tree-lined sidewalk; row of parked vans; crosswalk markings ahead',
+        sourcePanoId: 'ada-current'
+      }]
+    }
+  });
+
+  assert.equal(replan.contributionSummary, 'New local observation: row of parked vans');
+  const requestText = requests[0].messages.at(-1).content;
+  assert.match(requestText, /"description": "tree-lined sidewalk"/);
+  assert.match(requestText, /"description": "row of parked vans"/);
+  assert.doesNotMatch(requestText, /tree-lined sidewalk; row of parked vans/);
+});
+
 test('own-action evidence uses the executed option bearing without leaking its route label', async () => {
   const requests = [];
   const service = new RendezvousModelService({

@@ -1362,7 +1362,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
     const localEvidence = cleanStringList([
       ...durableLocalEvidence,
       ...compatiblePendingEvidence
-    ], {
+    ].flatMap(description => description.split(/\s*;\s*/)), {
       limit: 6,
       maxLength: 220
     })
