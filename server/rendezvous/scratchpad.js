@@ -153,7 +153,7 @@ function normalizePendingRasterMessage(raw) {
     snapshot: normalizeRasterSnapshot(raw.snapshot),
     status: cleanString(raw.status, 40) || 'generating',
     attempts: Math.max(0, Math.floor(Number(raw.attempts) || 0)),
-    replanCount: Math.max(0, Math.floor(Number(raw.replanCount) || 0)),
+    replanCount: Math.min(1, Math.max(0, Math.floor(Number(raw.replanCount) || 0))),
     lastError: cleanString(raw.lastError, 500) || null,
     nextAttemptAt: raw.nextAttemptAt || null,
     createdAt: raw.createdAt || new Date().toISOString()
@@ -210,7 +210,7 @@ export function normalizeRasterScratchpad(raw, { turn = 0 } = {}) {
         requestId: cleanString(entry?.requestId, 240) || null,
         reviewAssessment: cleanString(entry?.reviewAssessment, 500) || null,
         renderAttempts: Math.max(0, Math.floor(Number(entry?.renderAttempts) || 0)),
-        replanCount: Math.max(0, Math.floor(Number(entry?.replanCount) || 0)),
+        replanCount: Math.min(1, Math.max(0, Math.floor(Number(entry?.replanCount) || 0))),
         status: cleanString(entry?.status, 40) || 'sent',
         error: cleanString(entry?.error, 500) || null,
         createdAt: entry?.createdAt || null,

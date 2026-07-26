@@ -1539,45 +1539,56 @@ export class RendezvousController {
       pending.replanCount < 1 &&
       typeof this.agentModel.replanUnrenderableDrawing === 'function'
     ) {
-      try {
-        const sender = this.state.agents[pending.from];
-        const replanned = await this.agentModel.replanUnrenderableDrawing({
-          agentName: sender?.name || pending.from,
-          partnerName: this.state.agents[pending.to]?.name || pending.to,
-          pending,
-          privateMemory: normalizeAgentMemory(sender?.privateMemory)
-        });
-        const liveScratchpad = normalizeRasterScratchpad(this.state.scratchpad);
-        if (
-          replanned &&
-          liveScratchpad.pendingMessage?.id === pending.id &&
-          this.state.runId === runId
-        ) {
+      const replanWork = (async () => {
+        try {
+          const sender = this.state.agents[pending.from];
+          const replanned = await this.agentModel.replanUnrenderableDrawing({
+            agentName: sender?.name || pending.from,
+            partnerName: this.state.agents[pending.to]?.name || pending.to,
+            pending,
+            privateMemory: normalizeAgentMemory(sender?.privateMemory)
+          });
+          const liveScratchpad = normalizeRasterScratchpad(this.state.scratchpad);
+          if (liveScratchpad.pendingMessage?.id !== pending.id || this.state.runId !== runId) return;
           liveScratchpad.pendingMessage = {
             ...liveScratchpad.pendingMessage,
-            ...replanned,
-            attempts: 0,
-            replanCount: liveScratchpad.pendingMessage.replanCount + 1,
-            status: 'generating',
-            lastError: null,
-            nextAttemptAt: null
+            ...(replanned || {}),
+            attempts: replanned ? 0 : liveScratchpad.pendingMessage.attempts,
+            replanCount: 1,
+            status: replanned ? 'generating' : liveScratchpad.pendingMessage.status,
+            lastError: replanned ? null : liveScratchpad.pendingMessage.lastError,
+            nextAttemptAt: replanned ? null : liveScratchpad.pendingMessage.nextAttemptAt
           };
           liveScratchpad.updatedAt = new Date().toISOString();
           this.state.scratchpad = liveScratchpad;
-          pending = liveScratchpad.pendingMessage;
-          this.#recordEvent('scratchpad_replanned', {
-            id: pending.id,
-            from: pending.from,
-            to: pending.to,
-            contributionKind: pending.contributionKind,
-            contributionEvidenceId: pending.contributionEvidenceId
-          });
+          if (replanned) {
+            this.#recordEvent('scratchpad_replanned', {
+              id: liveScratchpad.pendingMessage.id,
+              from: liveScratchpad.pendingMessage.from,
+              to: liveScratchpad.pendingMessage.to,
+              contributionKind: liveScratchpad.pendingMessage.contributionKind,
+              contributionEvidenceId: liveScratchpad.pendingMessage.contributionEvidenceId
+            });
+          }
           await this.saveState();
           this.broadcastState();
+        } catch (error) {
+          const liveScratchpad = normalizeRasterScratchpad(this.state.scratchpad);
+          if (liveScratchpad.pendingMessage?.id === pending.id && this.state.runId === runId) {
+            liveScratchpad.pendingMessage.replanCount = 1;
+            this.state.scratchpad = liveScratchpad;
+            await this.saveState();
+          }
+          this.logger.warn?.(`Rendezvous drawing ${pending.id} could not be replanned: ${error.message}`);
         }
-      } catch (error) {
-        this.logger.warn?.(`Rendezvous drawing ${pending.id} could not be replanned: ${error.message}`);
+      })();
+      this.drawingInFlight = replanWork;
+      try {
+        await replanWork;
+      } finally {
+        if (this.drawingInFlight === replanWork) this.drawingInFlight = null;
       }
+      return this.resumePendingDrawing();
     }
     const nextAttemptAt = Date.parse(pending.nextAttemptAt || '');
     if (Number.isFinite(nextAttemptAt) && nextAttemptAt > Date.now()) return null;

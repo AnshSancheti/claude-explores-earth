@@ -149,6 +149,7 @@ function stagedClient(requests, overrides = {}) {
           } else if (/without any knowledge of what its sender intended/.test(prompt)) {
             payload = overrides.blindRead || {
               literalContents: ['two separated arch groups and a moving figure'],
+              primarySubject: 'three repeated stone arches',
               likelyMessage: 'The sender sees matching arches and is moving toward one group.',
               dominantAction: 'movement',
               frameOfReference: 'sender',
@@ -1112,6 +1113,18 @@ test('drawing review rejects an accidental near-copy even when the model accepts
   const requests = [];
   const service = new RendezvousModelService({
     client: stagedClient(requests, {
+      blindRead: {
+        literalContents: ['a singular median tree appears inside a repeated triptych'],
+        primarySubject: 'a singular median tree',
+        likelyMessage: 'The sender sees a singular median tree.',
+        dominantAction: 'movement',
+        frameOfReference: 'sender',
+        frameBasis: 'The observation is presented by the sender.',
+        communicationFunction: 'report',
+        movementCues: ['a small route arrow'],
+        stillnessCues: [],
+        readableText: false
+      },
       review: {
         accepted: true,
         contributionPrimary: true,
@@ -1292,6 +1305,43 @@ test('acknowledgement drawing review rejects a replay that reads as a movement r
   assert.equal(review.accepted, false);
   assert.match(review.assessment, /report, not an acknowledgement/);
   assert.match(review.revisionPrompt, /function as a response/);
+});
+
+test('local-observation review rejects a chase scene that relegates the landmark to background', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: ['a large foreground runner chases a smaller figure past sidewalk trees'],
+        primarySubject: 'a foreground runner urgently chasing another person',
+        likelyMessage: 'An urgent pursuit moves down the street.',
+        dominantAction: 'movement',
+        frameOfReference: 'unclear',
+        frameBasis: 'The figures dominate the scene.',
+        communicationFunction: 'report',
+        movementCues: ['two running figures', 'speed lines'],
+        stillnessCues: [],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: trees lining the sidewalk',
+    drawingIntent: 'Show the trees lining the sidewalk.',
+    informationDelta: 'New local observation: trees lining the sidewalk',
+    messageAction: 'movement',
+    drawingPrompt: 'Draw a runner moving through a tree-lined street.',
+    groundedFeatures: ['trees lining the sidewalk'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /foreground runner.*primary/);
+  assert.match(review.revisionPrompt, /observation itself.*largest/);
 });
 
 test('blind recipient action overrides a sender review biased by intent', async () => {

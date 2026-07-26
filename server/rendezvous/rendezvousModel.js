@@ -148,6 +148,40 @@ function visualDescriptionSimilarity(first, second) {
   return shared / Math.min(a.size, b.size);
 }
 
+function contributionEvidenceText(value) {
+  return cleanString(value, 700)
+    .replace(/^(?:New local observation|My current chosen action|Question I am sending|Correction I am sending|Acknowledging received visual evidence without claiming it as my own|Deliberately repeating existing visual evidence without treating it as new):\s*/i, '');
+}
+
+const ROUTE_COMMAND_CUES = [
+  'arrow',
+  'direction',
+  'directional',
+  'journey',
+  'move',
+  'moved',
+  'movement',
+  'moving',
+  'path',
+  'progress',
+  'progression',
+  'route',
+  'run',
+  'runner',
+  'running',
+  'walk',
+  'walking'
+];
+
+function routeCommandCues(value) {
+  const positiveText = cleanString(value, 2400).replace(
+    /\b(?:avoid|exclude|instead of|no|omit|remove|without)\b[^.!;]{0,140}/gi,
+    ' '
+  );
+  const tokens = visualDescriptionTokens(positiveText);
+  return ROUTE_COMMAND_CUES.filter(token => tokens.has(token));
+}
+
 function historicalSheetLiteralContents(privateMemory, currentSequence) {
   return (privateMemory?.receivedSheets || [])
     .filter(sheet => Number(sheet?.sequence) !== Number(currentSequence))
@@ -1175,7 +1209,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
 
     const systemPrompt = `You are ${agentName}, reconsidering only the drawing you are about to pass to ${partnerName}. Your route choice is already made and does not change.
 
-Your prior contribution could not be rendered so a context-free recipient could tell whose action it depicted. Choose a different useful contribution from the supplied evidence catalog rather than retrying the same claim. This is not a request to adopt a prescribed code or strategy: decide what grounded observation or genuine question is most worth communicating now.
+Your prior contribution could not be rendered so a context-free recipient could tell whose action it depicted. Choose a different useful contribution from the supplied evidence catalog rather than retrying the same claim. Start from a conceptually blank page. Do not retain the prior person, arrow, path, route, directional cue, movement scene, or composition unless the newly cited alternative itself requires that element. This is not a request to adopt a prescribed code or strategy: decide what grounded observation or genuine question is most worth communicating now.
 
 Use one coherent, wordless composition. Do not include readable text, letters, numbers, captions, street names, coordinates, labels, signatures, logos, or watermarks. Do not invent evidence or enlarge the cited claim.
 
@@ -1236,6 +1270,11 @@ ${JSON.stringify(catalog, null, 2)}`
         if (!drawingIntent || !drawingPrompt) {
           throw new Error('Rendezvous drawing replan omitted its visual message');
         }
+        const unsupportedRouteCues = routeCommandCues(`${drawingIntent} ${drawingPrompt}`)
+          .filter(cue => !routeCommandCues(cited.description).includes(cue));
+        if (cited.kind === 'local_observation' && unsupportedRouteCues.length > 0) {
+          throw new Error('Rendezvous drawing replan echoed route-command imagery unrelated to its local observation');
+        }
         return {
           contributionKind: cited.kind,
           contributionEvidenceId: cited.id,
@@ -1287,6 +1326,7 @@ A figure seen from behind is not automatically recipient-framed. A completed tra
 Return only JSON:
 {
   "literalContents": ["visible element and relationship"],
+  "primarySubject": "the largest, darkest, or most compositionally dominant visible subject or relationship",
   "likelyMessage": "best context-free interpretation, including uncertainty",
   "dominantAction": "movement" | "stillness" | "transition" | "unclear",
   "frameOfReference": "sender" | "recipient" | "shared" | "unclear",
@@ -1320,6 +1360,7 @@ Return only JSON:
         blindRead = {
           literalContents: cleanStringList(parsed?.literalContents, { limit: 8, maxLength: 220 }),
           likelyMessage: cleanString(parsed?.likelyMessage, 700),
+          primarySubject: cleanString(parsed?.primarySubject, 400),
           dominantAction: ['movement', 'stillness', 'transition', 'unclear'].includes(parsed?.dominantAction)
             ? parsed.dominantAction
             : 'unclear',
@@ -1369,6 +1410,20 @@ Return only JSON:
         accepted: false,
         assessment: `Blind recipient read the drawing as ${blindRead.dominantAction}, but the intended message is ${normalizedMessageAction}: ${blindRead.likelyMessage}`,
         revisionPrompt,
+        blindRead
+      };
+    }
+    if (
+      contributionKind === 'local_observation' &&
+      visualDescriptionSimilarity(
+        contributionEvidenceText(contributionSummary),
+        blindRead.primarySubject || blindRead.likelyMessage
+      ) < 0.4
+    ) {
+      return {
+        accepted: false,
+        assessment: `Blind recipient saw "${blindRead.primarySubject || blindRead.likelyMessage}" as primary, not the cited local observation: ${contributionSummary}`,
+        revisionPrompt: 'Start from a blank composition and make the cited local observation itself the largest, darkest, or most central subject. Remove unrelated arrows, paths, runners, movement narratives, and inherited route imagery instead of using the observation as background scenery.',
         blindRead
       };
     }

@@ -938,6 +938,7 @@ test('a repeatedly unrenderable action is replanned without changing the run or 
   const agentModel = {
     async replanUnrenderableDrawing(input) {
       replans.push(input);
+      await new Promise(resolve => setTimeout(resolve, 10));
       return {
         contributionKind: 'local_observation',
         contributionEvidenceId: 'local:0',
@@ -990,7 +991,7 @@ test('a repeatedly unrenderable action is replanned without changing the run or 
     });
     controller.state.scratchpad.pendingMessage.attempts = 6;
 
-    await controller.resumePendingDrawing();
+    await Promise.all(Array.from({ length: 4 }, () => controller.resumePendingDrawing()));
 
     assert.equal(replans.length, 1);
     assert.equal(controller.state.runId, runId);
