@@ -1137,6 +1137,77 @@ test('a second failed replan can accept a recipient-legible local report', async
   }
 });
 
+test('failed replanning is retried separately before bounded recipient-legible delivery', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-replan-failure-test-'));
+  let replans = 0;
+  const agentModel = {
+    async replanUnrenderableDrawing() {
+      replans += 1;
+      throw new Error('Rendezvous drawing replan omitted its visual message');
+    },
+    async reviewDrawing() {
+      return {
+        accepted: false,
+        assessment: 'The median tree is more dominant than the broad avenue.',
+        revisionPrompt: 'Make the avenue more dominant.',
+        blindRead: {
+          dominantAction: 'stillness',
+          frameOfReference: 'sender',
+          communicationFunction: 'report',
+          readableText: false,
+          likelyMessage: 'The sender sees a broad avenue with a central median tree.'
+        }
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'failed-replan-report',
+      agentId: 'ada',
+      turn: 9,
+      contributionKind: 'local_observation',
+      contributionEvidenceId: 'local:0',
+      contributionSummary: 'New local observation: broad urban street with multiple lanes',
+      drawingIntent: 'Show the broad avenue.',
+      informationDelta: 'New local observation: broad urban street with multiple lanes',
+      messageAction: 'unclear',
+      drawingPrompt: 'Draw a broad avenue with multiple lanes.',
+      groundedFeatures: ['broad urban street with multiple lanes']
+    });
+    controller.state.scratchpad.pendingMessage.attempts = 6;
+    controller.state.scratchpad.pendingMessage.replanCount = 1;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(replans, 1);
+    assert.equal(controller.state.scratchpad.pendingMessage.replanCount, 1);
+    assert.equal(controller.state.scratchpad.pendingMessage.replanFailureCount, 1);
+    assert.ok(Date.parse(controller.state.scratchpad.pendingMessage.nextAttemptAt) > Date.now());
+
+    controller.state.scratchpad.pendingMessage.nextAttemptAt = new Date(Date.now() - 1).toISOString();
+    await controller.resumePendingDrawing();
+
+    assert.equal(replans, 2);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.currentMessage.id, 'failed-replan-report');
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).replanCount, 2);
+    assert.match(
+      controller.state.scratchpad.messageAudit.at(-1).reviewAssessment,
+      /Accepted after 7 durable attempts/
+    );
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('drawing failure preserves a retryable handoff across controller restart', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-drawing-retry-test-'));
   try {

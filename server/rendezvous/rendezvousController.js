@@ -34,6 +34,7 @@ import {
 const AGENT_ORDER = ['ada', 'theo'];
 const RENDER_REVISION_MARKER = 'Authoritative rendering correction:';
 const MAX_DRAWING_REPLANS = 2;
+const MAX_DRAWING_REPLAN_FAILURES = 2;
 
 function composeDrawingRevisionPrompt(drawingPrompt, revisionPrompt, messageAction = 'unclear') {
   const actionConstraint = messageAction === 'stillness'
@@ -1550,6 +1551,8 @@ export class RendezvousController {
       normalizedScratchpad.updatedAt = new Date().toISOString();
       this.state.scratchpad = normalizedScratchpad;
     }
+    const nextAttemptAt = Date.parse(pending.nextAttemptAt || '');
+    if (Number.isFinite(nextAttemptAt) && nextAttemptAt > Date.now()) return null;
     if (
       pending.attempts >= 6 &&
       pending.replanCount < MAX_DRAWING_REPLANS &&
@@ -1575,6 +1578,7 @@ export class RendezvousController {
             ...(replanned || {}),
             attempts: replanned ? 0 : liveScratchpad.pendingMessage.attempts,
             replanCount: nextReplanCount,
+            replanFailureCount: 0,
             status: replanned ? 'generating' : liveScratchpad.pendingMessage.status,
             lastError: replanned ? null : liveScratchpad.pendingMessage.lastError,
             nextAttemptAt: replanned ? null : liveScratchpad.pendingMessage.nextAttemptAt
@@ -1595,10 +1599,33 @@ export class RendezvousController {
         } catch (error) {
           const liveScratchpad = normalizeRasterScratchpad(this.state.scratchpad);
           if (liveScratchpad.pendingMessage?.id === pending.id && this.state.runId === runId) {
-            liveScratchpad.pendingMessage.replanCount = Math.min(
-              MAX_DRAWING_REPLANS,
-              Math.max(0, Number(liveScratchpad.pendingMessage.replanCount) || 0) + 1
+            const failureCount = Math.min(
+              MAX_DRAWING_REPLAN_FAILURES,
+              Math.max(0, Number(liveScratchpad.pendingMessage.replanFailureCount) || 0) + 1
             );
+            liveScratchpad.pendingMessage.replanFailureCount = failureCount;
+            if (failureCount >= MAX_DRAWING_REPLAN_FAILURES) {
+              liveScratchpad.pendingMessage.replanCount = MAX_DRAWING_REPLANS;
+              liveScratchpad.pendingMessage.nextAttemptAt = null;
+              this.#recordEvent('scratchpad_replan_exhausted', {
+                id: pending.id,
+                from: pending.from,
+                to: pending.to,
+                failures: failureCount,
+                error: error.message
+              });
+            } else {
+              const retryAt = new Date(Date.now() + this.drawingRetryBaseMs).toISOString();
+              liveScratchpad.pendingMessage.nextAttemptAt = retryAt;
+              this.#recordEvent('scratchpad_replan_retry_scheduled', {
+                id: pending.id,
+                from: pending.from,
+                to: pending.to,
+                failures: failureCount,
+                error: error.message,
+                retryAt
+              });
+            }
             this.state.scratchpad = liveScratchpad;
             await this.saveState();
           }
@@ -1613,8 +1640,6 @@ export class RendezvousController {
       }
       return this.resumePendingDrawing();
     }
-    const nextAttemptAt = Date.parse(pending.nextAttemptAt || '');
-    if (Number.isFinite(nextAttemptAt) && nextAttemptAt > Date.now()) return null;
 
     const work = (async () => {
       try {

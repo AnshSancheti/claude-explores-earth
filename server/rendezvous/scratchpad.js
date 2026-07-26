@@ -154,6 +154,7 @@ function normalizePendingRasterMessage(raw) {
     status: cleanString(raw.status, 40) || 'generating',
     attempts: Math.max(0, Math.floor(Number(raw.attempts) || 0)),
     replanCount: Math.min(2, Math.max(0, Math.floor(Number(raw.replanCount) || 0))),
+    replanFailureCount: Math.min(2, Math.max(0, Math.floor(Number(raw.replanFailureCount) || 0))),
     lastError: cleanString(raw.lastError, 500) || null,
     nextAttemptAt: raw.nextAttemptAt || null,
     createdAt: raw.createdAt || new Date().toISOString()
@@ -270,6 +271,7 @@ export function queueRasterScratchpadMessage(scratchpad, {
     snapshot,
     attempts: 0,
     replanCount: 0,
+    replanFailureCount: 0,
     createdAt: new Date().toISOString()
   });
   normalized.updatedAt = new Date().toISOString();
