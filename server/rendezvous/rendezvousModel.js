@@ -94,14 +94,39 @@ function isConcreteLocalEvidence(description) {
     .test(value);
 }
 
-function sanitizeOutboundLocalEvidence(description) {
-  return cleanString(description, 220)
-    .replace(/\b[A-Z][A-Za-z0-9'.-]*\/[A-Z][A-Za-z0-9'.-]*\s+intersection\b/g, ' ')
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function sanitizeOutboundPlaceNames(description, routeLabels = [], maxLength = 2400) {
+  let value = cleanString(description, maxLength)
+    .replace(
+      /\b[A-Z][A-Za-z0-9'.-]*(?:\s+[A-Z][A-Za-z0-9'.-]*)?\s*\/\s*[A-Z][A-Za-z0-9'.-]*(?:\s+[A-Z][A-Za-z0-9'.-]*)?(?:\s+(?:intersection|anchor|corner))?\b/g,
+      'local street corner'
+    )
     .replace(
       /\b(?:[A-Z][A-Za-z0-9'.-]*\s+){1,3}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Place|Pl|Parkway|Pkwy|Highway|Hwy)\b/g,
-      ' '
-    )
+      'local street'
+    );
+  const labels = routeLabels.flatMap(label => {
+    const full = cleanString(label, 120);
+    const base = full.replace(
+      /\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Place|Pl|Parkway|Pkwy|Highway|Hwy)\.?$/i,
+      ''
+    );
+    return [full, base.length >= 4 ? base : ''];
+  });
+  [...new Set(labels.filter(Boolean))]
+    .sort((a, b) => b.length - a.length)
+    .forEach(label => {
+      value = value.replace(
+        new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(label)}(?![A-Za-z0-9])`, 'gi'),
+        'local street'
+      );
+    });
+  return value
     .replace(/^(?:at|in|near|the|with)\s+/i, '')
+    .replace(/\blocal street(?:\s+local street)+\b/gi, 'local street')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -133,13 +158,16 @@ function describeChosenAction(routeDecision, options) {
 
 function buildContributionEvidence({ routeDecision, perception, privateMemory, options }) {
   const catalog = [];
+  const routeLabels = (Array.isArray(options) ? options : []).map(option => option?.label);
   const add = (prefix, values) => {
-    cleanStringList(values, { limit: 6, maxLength: 220 }).forEach((description, index) => {
+    cleanStringList(values, { limit: 6, maxLength: 220 })
+      .map(description => sanitizeOutboundPlaceNames(description, routeLabels, 220))
+      .filter(Boolean)
+      .forEach((description, index) => {
       catalog.push({ id: `${prefix}:${index}`, description });
     });
   };
   add('local', routeDecision.observedFeatures
-    .map(sanitizeOutboundLocalEvidence)
     .filter(isConcreteLocalEvidence));
   add('action', [describeChosenAction(routeDecision, options)]);
   add('received', perception.literalContents);
@@ -752,8 +780,9 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
             contributionEvidence.find(item => item.id === id)?.description
           )
         ].filter(Boolean);
-        const drawingIntent = cleanString(parsed?.drawingIntent, 700);
-        const drawingPrompt = cleanString(parsed?.drawingPrompt, 2400);
+        const routeLabels = (Array.isArray(options) ? options : []).map(option => option?.label);
+        const drawingIntent = sanitizeOutboundPlaceNames(parsed?.drawingIntent, routeLabels, 700);
+        const drawingPrompt = sanitizeOutboundPlaceNames(parsed?.drawingPrompt, routeLabels, 2400);
         const requestedMessageAction = ['movement', 'stillness', 'transition', 'unclear']
           .includes(parsed?.messageAction)
           ? parsed.messageAction
@@ -764,7 +793,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           contributionSummary,
           drawingIntent,
           informationDelta: contributionSummary,
-          continuityReason: cleanString(parsed?.continuityReason, 500),
+          continuityReason: sanitizeOutboundPlaceNames(parsed?.continuityReason, routeLabels, 500),
           messageAction: reconcileRendezvousMessageAction(
             requestedMessageAction,
             drawingIntent,

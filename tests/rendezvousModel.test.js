@@ -292,6 +292,39 @@ test('own-action evidence uses the executed option bearing without leaking its r
   assert.doesNotMatch(catalogText, /north route/);
 });
 
+test('planner-authored fields cannot reintroduce private place names for an own-action reply', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing: drawingResponse({
+        contributionKind: 'own_action',
+        contributionEvidenceId: 'action:0',
+        drawingIntent: 'Anchor at Bowery/Prince and continue toward Delancey.',
+        drawingPrompt: 'Draw Bowery/Prince with a tree, then follow Delancey St east.',
+        continuityReason: 'The Bowery/Prince anchor connects to Delancey.',
+        groundedFeatureEvidenceIds: ['action:0']
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    options: [
+      { panoId: 'west', heading: 270, label: 'Bowery' },
+      { panoId: 'east', heading: 90, label: 'Delancey St' }
+    ]
+  }));
+  const outbound = JSON.stringify({
+    drawingIntent: decision.drawingIntent,
+    drawingPrompt: decision.drawingPrompt,
+    continuityReason: decision.continuityReason,
+    drawingGroundedFeatures: decision.drawingGroundedFeatures
+  });
+
+  assert.equal(decision.fallbackCause, null);
+  assert.doesNotMatch(outbound, /Bowery|Prince|Delancey/);
+  assert.match(outbound, /local street/);
+});
+
 test('a new contribution cannot echo the received multi-panel template', async () => {
   const requests = [];
   let drawingAttempts = 0;
