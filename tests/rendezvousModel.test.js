@@ -52,6 +52,9 @@ function perceptionResponse() {
     literalContents: ['a bright circle between two repeated arch forms'],
     possiblePlaces: ['possibly an arcade near Washington Square, with low confidence'],
     possibleIntentions: ['Theo may be asking Ada to compare or approach similar arches'],
+    frameOfReference: 'sender',
+    requestedResponse: 'Compare the arches with Ada’s surroundings.',
+    informationNovelty: 'mixed',
     sheetInterpretation: 'Theo may be near a recognizable arcade and may want me to answer with comparable evidence.',
     sheetConfidence: 0.58,
     evidenceDelta: {
@@ -95,6 +98,8 @@ function routeResponse(overrides = {}) {
 function drawingResponse(overrides = {}) {
   return {
     drawingIntent: 'Tell Theo that I see matching arches and intend to investigate them.',
+    informationDelta: 'I now see three matching arches beside a suspended traffic light.',
+    continuityReason: 'Repeating the arches links this observation to Theo’s earlier motif.',
     drawingPrompt: 'Draw two groups of arches echoing each other, with one small figure moving toward the nearer group and a large uncertain circle above the distant group.',
     groundedFeatures: ['three repeated stone arches', 'a suspended traffic light beside them'],
     ...overrides
@@ -141,15 +146,20 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.equal(decision.action, 'move');
   assert.equal(decision.selectedIndex, 1);
   assert.match(decision.sheetInterpretation, /recognizable arcade/);
+  assert.equal(decision.sheetPerception.frameOfReference, 'sender');
+  assert.equal(decision.sheetPerception.informationNovelty, 'mixed');
   assert.deepEqual(decision.reconciliation.newEvidence, ['the circle is now placed between arches']);
   assert.match(decision.memoryUpdate.partnerHypothesis.description, /Washington Square/);
   assert.match(decision.reasoning, /Theo may be describing/);
   assert.match(decision.drawingIntent, /intend to investigate/);
+  assert.match(decision.informationDelta, /three matching arches/);
   assert.match(decision.drawingPrompt, /figure moving/);
 
   const serialized = JSON.stringify(requests);
   assert.match(serialized, /privately name possible landmarks/);
   assert.match(serialized, /intended movement/);
+  assert.match(serialized, /frame of reference/);
+  assert.match(serialized, /information delta/);
   assert.match(serialized, /wordless drawing/);
   assert.match(serialized, /no readable text/);
   assert.match(requests[0].messages[1].content[0].text, /History image 1: sheet sequence 5/);
@@ -258,6 +268,8 @@ test('sender reviews the actual generated image and can request a visual revisio
     agentName: 'Ada',
     partnerName: 'Theo',
     drawingIntent: 'Show two matching places and my intended movement.',
+    informationDelta: 'The nearer arches now match the earlier distant arches.',
+    continuityReason: 'The paired arches deliberately continue the shared motif.',
     drawingPrompt: 'Draw two arch groups and a moving figure.',
     groundedFeatures: ['three repeated arches'],
     imageBuffer: Buffer.from('generated-image')
@@ -267,6 +279,8 @@ test('sender reviews the actual generated image and can request a visual revisio
   assert.match(review.revisionPrompt, /Separate the arch groups/);
   assert.equal(requests.length, 1);
   assert.match(requests[0].messages[0].content, /inspecting the actual wordless drawing/);
+  assert.match(requests[0].messages[1].content[0].text, /nearer arches now match/);
+  assert.match(requests[0].messages[1].content[0].text, /deliberately continue/);
   assert.equal(requests[0].messages[1].content[1].type, 'image_url');
 });
 

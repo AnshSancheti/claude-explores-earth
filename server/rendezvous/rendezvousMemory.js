@@ -33,6 +33,10 @@ function cleanList(values, { limit = 8, itemLength = 220 } = {}) {
     .slice(-limit);
 }
 
+function enumValue(value, allowed, fallback) {
+  return allowed.includes(value) ? value : fallback;
+}
+
 function knownSequences(memory) {
   return new Set([
     ...(memory.receivedSheets || []).map(entry => entry.sequence),
@@ -66,6 +70,9 @@ function normalizeReceived(entry) {
     literalContents: cleanList(entry.literalContents, { limit: 6, itemLength: 220 }),
     possiblePlaces: cleanList(entry.possiblePlaces, { limit: 4, itemLength: 220 }),
     possibleIntentions: cleanList(entry.possibleIntentions, { limit: 4, itemLength: 220 }),
+    frameOfReference: enumValue(entry.frameOfReference, ['sender', 'recipient', 'shared', 'unclear'], 'unclear'),
+    requestedResponse: cleanString(entry.requestedResponse, 400),
+    informationNovelty: enumValue(entry.informationNovelty, ['new', 'mixed', 'repeated', 'unclear'], 'unclear'),
     createdAt: entry.createdAt || null
   };
 }
@@ -106,6 +113,8 @@ function normalizeSent(entry) {
     sequence,
     to: entry.to === 'ada' || entry.to === 'theo' ? entry.to : null,
     intent,
+    informationDelta: cleanString(entry.informationDelta, 500),
+    continuityReason: cleanString(entry.continuityReason, 400),
     groundedFeatures: cleanList(entry.groundedFeatures, { limit: 5, itemLength: 180 }),
     createdAt: entry.createdAt || null
   };
@@ -252,6 +261,9 @@ export function applyMemoryRevision(memory, revision, {
       literalContents: sheetPerception?.literalContents || previous?.literalContents,
       possiblePlaces: sheetPerception?.possiblePlaces || previous?.possiblePlaces,
       possibleIntentions: sheetPerception?.possibleIntentions || previous?.possibleIntentions,
+      frameOfReference: sheetPerception?.frameOfReference || previous?.frameOfReference,
+      requestedResponse: sheetPerception?.requestedResponse || previous?.requestedResponse,
+      informationNovelty: sheetPerception?.informationNovelty || previous?.informationNovelty,
       createdAt: updatedAt
     });
     normalized.receivedSheets = [
@@ -284,11 +296,22 @@ export function recordSentMessage(memory, {
   sequence = 0,
   to = null,
   intent = '',
+  informationDelta = '',
+  continuityReason = '',
   groundedFeatures = [],
   createdAt = new Date().toISOString()
 } = {}) {
   const normalized = normalizeAgentMemory(memory);
-  const entry = normalizeSent({ turn, sequence, to, intent, groundedFeatures, createdAt });
+  const entry = normalizeSent({
+    turn,
+    sequence,
+    to,
+    intent,
+    informationDelta,
+    continuityReason,
+    groundedFeatures,
+    createdAt
+  });
   if (!entry) return normalized;
   normalized.sentMessages = [
     ...normalized.sentMessages.filter(item => item.sequence !== entry.sequence),

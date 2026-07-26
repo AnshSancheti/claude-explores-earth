@@ -81,6 +81,12 @@ function sanitizeEvidenceDelta(raw) {
 function sanitizeSheetPerception(raw) {
   const sheetInterpretation = cleanString(raw?.sheetInterpretation, 700);
   const numericConfidence = Number(raw?.sheetConfidence);
+  const frameOfReference = ['sender', 'recipient', 'shared', 'unclear'].includes(raw?.frameOfReference)
+    ? raw.frameOfReference
+    : 'unclear';
+  const informationNovelty = ['new', 'mixed', 'repeated', 'unclear'].includes(raw?.informationNovelty)
+    ? raw.informationNovelty
+    : 'unclear';
   return {
     sheetInterpretation,
     sheetConfidence: sheetInterpretation && Number.isFinite(numericConfidence)
@@ -89,6 +95,9 @@ function sanitizeSheetPerception(raw) {
     literalContents: cleanStringList(raw?.literalContents, { limit: 6, maxLength: 220 }),
     possiblePlaces: cleanStringList(raw?.possiblePlaces, { limit: 4, maxLength: 220 }),
     possibleIntentions: cleanStringList(raw?.possibleIntentions, { limit: 4, maxLength: 220 }),
+    frameOfReference,
+    requestedResponse: cleanString(raw?.requestedResponse, 400),
+    informationNovelty,
     evidenceDelta: sanitizeEvidenceDelta(raw?.evidenceDelta),
     conventionUpdate: cleanBeliefUpdate(raw?.conventionUpdate || raw?.memoryUpdate?.conventionUpdate),
     partnerHypothesis: cleanBeliefUpdate(raw?.partnerHypothesis || raw?.memoryUpdate?.partnerHypothesis)
@@ -211,6 +220,9 @@ export class RendezvousModelService {
         literalContents: rememberedSheet.literalContents,
         possiblePlaces: rememberedSheet.possiblePlaces,
         possibleIntentions: rememberedSheet.possibleIntentions,
+        frameOfReference: rememberedSheet.frameOfReference,
+        requestedResponse: rememberedSheet.requestedResponse,
+        informationNovelty: rememberedSheet.informationNovelty,
         evidenceDelta: rememberedReconciliation
       });
     } else if (sheetMessage) {
@@ -218,13 +230,20 @@ export class RendezvousModelService {
 
 First describe what is literally visible. Then infer what place, surroundings, intention, or coordination idea it might represent. You may use your own real-world knowledge to privately name possible landmarks, streets, neighborhoods, directions, or places. These names stay in your private memory; they are not text written on the sheet. Keep alternatives when the image is ambiguous and never treat generic city imagery as certainty.
 
-Compare this drawing with prior drawings, your own observations, and your current plan. Identify genuinely new evidence, repetitions, contradictions, unresolved questions, and information you should answer in your next drawing. Do not invent access to ${partnerName}'s coordinates, route options, hidden reasoning, or actual destination.
+Compare this drawing with prior drawings, your own observations, and your current plan. "New evidence" means visually present information absent from the earlier sheets; a recurring arrow, layout, landmark, or scene belongs under repeated evidence even if it appears in a new rendering. Identify contradictions and unresolved questions instead of turning repetition into confirmation.
+
+Privately determine the drawing's frame of reference. A direction, path, or moving figure may describe the sender's own movement, propose shared movement, request a response, or address you. Unless the image or an established convention distinguishes those roles, do not assume a depicted route is an instruction for you to follow in your own local frame.
+
+Do not invent access to ${partnerName}'s coordinates, route options, hidden reasoning, or actual destination.
 
 Return only JSON:
 {
   "literalContents": ["visible element and relationship"],
   "possiblePlaces": ["private place hypothesis with uncertainty"],
   "possibleIntentions": ["private interpretation of what the sender may intend or ask"],
+  "frameOfReference": "sender" | "recipient" | "shared" | "unclear",
+  "requestedResponse": "what response the image appears to ask from you, or empty when none is visually supported",
+  "informationNovelty": "new" | "mixed" | "repeated" | "unclear",
   "sheetInterpretation": "your concise best reading, including uncertainty",
   "sheetConfidence": <0.0-0.8>,
   "evidenceDelta": {
@@ -315,7 +334,9 @@ ${JSON.stringify(movementSinceDecision || {}, null, 2)}`
 You have already chosen to remain at this same branch ${Math.max(1, Math.floor(Number(consecutiveWaitDecisions) || 0))} consecutive times without gaining a new local observation. Your friend may also be waiting. Remaining here again is not available at this decision; choose move or retrace.`;
     const actionSchema = allowWait ? '"move" | "retrace" | "wait"' : '"move" | "retrace"';
     const incomingSheetGuidance = perception.sheetInterpretation
-      ? `Your private reading of the newest sheet is: ${JSON.stringify(perception)}`
+      ? `Your private reading of the newest sheet is: ${JSON.stringify(perception)}
+
+Only use a depicted route as a direct instruction for your own movement when the image or an established convention supports a recipient or shared frame. Sender-framed or unclear movement is evidence about your friend's behavior, not automatically a command to reproduce it locally.`
       : 'The sheet is blank or has not yet carried a usable message.';
 
     const systemPrompt = `You are ${agent.name}, one of two friends actively trying to find each other after becoming separated on unfamiliar streets. You both began in Manhattan, but the world is open. The only information you exchange is a wordless drawing passed back and forth.
@@ -421,11 +442,15 @@ ${recentFieldNotes}`
 
 Decide what wordless drawing would be most useful to send now. You may communicate anything you genuinely believe could help you find each other: what you see, a remembered place, uncertainty, a correction, intended movement, a request, relative spatial relationships, or an invented visual convention. You are not limited to an observational postcard and you may use arrows, diagrams, symbols, maps, perspective, or figurative imagery when you choose.
 
+First identify the information delta: the belief, observation, question, correction, or intentional repetition that makes this message different from the sheets already exchanged. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. Repetition is allowed when you deliberately believe repetition itself communicates something; state that private reason. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
+
 Do not include readable text, letters, numbers, captions, street labels, signatures, logos, or watermarks in the intended image. Do not encode exact coordinates or information you do not possess. The image renderer receives only your drawing prompt and the visual anchors you list.
 
 Return only JSON:
 {
   "drawingIntent": "your private account of what you are trying to tell ${partnerName}",
+  "informationDelta": "the genuinely new information, question, correction, or deliberate repetition this sheet contributes",
+  "continuityReason": "why recurring motifs are worth retaining, or empty when they are not",
   "drawingPrompt": "complete visual instructions for one coherent handmade drawing with no readable text",
   "groundedFeatures": ["visible or remembered visual anchor included in the drawing"]
 }`;
@@ -470,11 +495,13 @@ ${JSON.stringify(actionMemory, null, 2)}`
         const parsed = parseJsonContent(response?.choices?.[0]?.message?.content);
         drawingPlan = {
           drawingIntent: cleanString(parsed?.drawingIntent, 700),
+          informationDelta: cleanString(parsed?.informationDelta, 700),
+          continuityReason: cleanString(parsed?.continuityReason, 500),
           drawingPrompt: cleanString(parsed?.drawingPrompt, 2400),
           groundedFeatures: cleanStringList(parsed?.groundedFeatures, { limit: 6, maxLength: 180 })
         };
-        if (!drawingPlan.drawingIntent || !drawingPlan.drawingPrompt) {
-          throw new Error('Rendezvous drawing planner omitted its intended message');
+        if (!drawingPlan.drawingIntent || !drawingPlan.informationDelta || !drawingPlan.drawingPrompt) {
+          throw new Error('Rendezvous drawing planner omitted its intended message or information delta');
         }
         break;
       } catch (error) {
@@ -517,6 +544,8 @@ ${JSON.stringify(actionMemory, null, 2)}`
     agentName,
     partnerName,
     drawingIntent,
+    informationDelta = '',
+    continuityReason = '',
     drawingPrompt,
     groundedFeatures = [],
     imageBuffer,
@@ -527,7 +556,7 @@ ${JSON.stringify(actionMemory, null, 2)}`
     }
     const systemPrompt = `You are ${agentName}, inspecting the actual wordless drawing that will be handed to ${partnerName}. Decide whether it visibly communicates what you intended.
 
-Reject it when it contains readable text, materially omits or distorts the intended idea, contradicts your intent, or is so generic or opaque that it would not help your friend. Do not demand photorealism. A handmade, symbolic, diagrammatic, or imperfect drawing is acceptable when its meaning survives.
+Reject it when it contains readable text, materially omits or distorts the intended idea, contradicts your intent, hides the intended information delta, or is so generic or repetitive that it would not help your friend. Repeated imagery is acceptable when the stated continuity reason makes that repetition intentional. Do not demand photorealism. A handmade, symbolic, diagrammatic, or imperfect drawing is acceptable when its meaning survives.
 
 Return only JSON:
 {
@@ -549,6 +578,12 @@ Return only JSON:
                   type: 'text',
                   text: `My intended message:
 ${drawingIntent}
+
+What should be new or deliberately repeated:
+${informationDelta || 'Legacy message: no explicit information delta was recorded.'}
+
+Reason for retaining recurring motifs:
+${continuityReason || 'None recorded.'}
 
 My rendering instructions:
 ${drawingPrompt}

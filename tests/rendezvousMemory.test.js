@@ -51,7 +51,10 @@ test('memory revision records sourced evidence and caps unsupported confidence',
     sheetPerception: {
       literalContents: ['a yellow circle between two paths'],
       possiblePlaces: ['possibly Union Square'],
-      possibleIntentions: ['possibly asking me to converge']
+      possibleIntentions: ['possibly asking me to converge'],
+      frameOfReference: 'sender',
+      requestedResponse: 'Show whether I see the same circle.',
+      informationNovelty: 'mixed'
     },
     reconciliation: {
       newEvidence: ['the circle now sits between paths'],
@@ -78,6 +81,9 @@ test('memory revision records sourced evidence and caps unsupported confidence',
   assert.deepEqual(memory.visualConventions[0].basisSequences, [4]);
   assert.equal(memory.partnerHypotheses[0].confidence, 0.75);
   assert.deepEqual(memory.receivedSheets[0].possiblePlaces, ['possibly Union Square']);
+  assert.equal(memory.receivedSheets[0].frameOfReference, 'sender');
+  assert.match(memory.receivedSheets[0].requestedResponse, /same circle/);
+  assert.equal(memory.receivedSheets[0].informationNovelty, 'mixed');
   assert.equal(memory.reconciliations[0].planAssessment, 'supporting');
   assert.equal(memory.ownObservations.length, 1);
   assert.equal(memory.ownObservations[0].sourcePanoId, 'pano-12');
@@ -121,6 +127,8 @@ test('sent intentions are recorded only as bounded durable episodes', () => {
       sequence,
       to: 'theo',
       intent: `Intent ${sequence}`,
+      informationDelta: `New evidence ${sequence}`,
+      continuityReason: 'Keep the shared arch motif.',
       groundedFeatures: [`Facade ${sequence}`, 'traffic light'],
       createdAt: `2026-07-15T12:${String(sequence).padStart(2, '0')}:00.000Z`
     });
@@ -128,6 +136,8 @@ test('sent intentions are recorded only as bounded durable episodes', () => {
   assert.equal(memory.sentMessages.length, 10);
   assert.equal(memory.sentMessages[0].sequence, 11);
   assert.equal(memory.sentMessages.at(-1).intent, 'Intent 20');
+  assert.equal(memory.sentMessages.at(-1).informationDelta, 'New evidence 20');
+  assert.match(memory.sentMessages.at(-1).continuityReason, /shared arch/);
   assert.deepEqual(memory.sentMessages.at(-1).groundedFeatures, ['Facade 20', 'traffic light']);
 });
 

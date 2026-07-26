@@ -1164,6 +1164,8 @@ export class RendezvousController {
               turn: this.state.turn,
               drawingPrompt: decision.drawingPrompt,
               drawingIntent: decision.drawingIntent,
+              informationDelta: decision.informationDelta,
+              continuityReason: decision.continuityReason,
               groundedFeatures: decision.observedFeatures,
               sourcePanoId: current.panoId,
               snapshot: this.#captureSheetSnapshot(agentId, {
@@ -1471,6 +1473,8 @@ export class RendezvousController {
               agentName: this.state.agents[pending.from]?.name || pending.from,
               partnerName: this.state.agents[pending.to]?.name || pending.to,
               drawingIntent: pending.drawingIntent,
+              informationDelta: pending.informationDelta,
+              continuityReason: pending.continuityReason,
               drawingPrompt: pending.drawingPrompt,
               groundedFeatures: pending.groundedFeatures,
               imageBuffer: generated.buffer,
@@ -1492,6 +1496,8 @@ export class RendezvousController {
                 agentName: this.state.agents[pending.from]?.name || pending.from,
                 partnerName: this.state.agents[pending.to]?.name || pending.to,
                 drawingIntent: pending.drawingIntent,
+                informationDelta: pending.informationDelta,
+                continuityReason: pending.continuityReason,
                 drawingPrompt: revisionPrompt,
                 groundedFeatures: pending.groundedFeatures,
                 imageBuffer: generated.buffer,
@@ -1540,6 +1546,8 @@ export class RendezvousController {
             sequence: sent.sequence,
             to: sent.to,
             intent: pending.drawingIntent,
+            informationDelta: pending.informationDelta,
+            continuityReason: pending.continuityReason,
             groundedFeatures: pending.groundedFeatures,
             createdAt: sent.sentAt
           });
