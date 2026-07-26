@@ -1140,6 +1140,122 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
     };
   }
 
+  async replanUnrenderableDrawing({
+    agentName,
+    partnerName,
+    pending,
+    privateMemory = null
+  }) {
+    const localEvidence = cleanStringList(pending?.groundedFeatures, {
+      limit: 6,
+      maxLength: 220
+    })
+      .filter(isConcreteLocalEvidence)
+      .map(description => sanitizeOutboundPlaceNames(description, [], 220))
+      .filter(Boolean);
+    const latestQuestions = cleanStringList(
+      (privateMemory?.reconciliations || []).at(-1)?.unresolvedQuestions,
+      { limit: 3, maxLength: 220 }
+    )
+      .map(description => sanitizeOutboundPlaceNames(description, [], 220))
+      .filter(Boolean);
+    const catalog = [
+      ...localEvidence.map((description, index) => ({
+        id: `local:${index}`,
+        kind: 'local_observation',
+        description
+      })),
+      ...latestQuestions.map((description, index) => ({
+        id: `question:${index}`,
+        kind: 'question',
+        description
+      }))
+    ];
+    if (catalog.length === 0) return null;
+
+    const systemPrompt = `You are ${agentName}, reconsidering only the drawing you are about to pass to ${partnerName}. Your route choice is already made and does not change.
+
+Your prior contribution could not be rendered so a context-free recipient could tell whose action it depicted. Choose a different useful contribution from the supplied evidence catalog rather than retrying the same claim. This is not a request to adopt a prescribed code or strategy: decide what grounded observation or genuine question is most worth communicating now.
+
+Use one coherent, wordless composition. Do not include readable text, letters, numbers, captions, street names, coordinates, labels, signatures, logos, or watermarks. Do not invent evidence or enlarge the cited claim.
+
+Return only JSON:
+{
+  "contributionEvidenceId": "one exact ID from the catalog",
+  "drawingIntent": "what you now choose to communicate",
+  "messageAction": "movement" | "stillness" | "transition" | "unclear",
+  "drawingPrompt": "complete visual instructions for one handmade wordless drawing",
+  "groundedFeatureEvidenceIds": ["zero or more exact supporting IDs from the catalog"]
+}`;
+    let lastError = null;
+    let tokenBudget = Math.min(this.maxTokens, 1600);
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+      try {
+        const response = await this.#client().chat.completions.create({
+          model: this.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            {
+              role: 'user',
+              content: `The unrenderable prior contribution was:
+${JSON.stringify({
+  contributionKind: pending?.contributionKind,
+  contributionSummary: pending?.contributionSummary,
+  drawingIntent: pending?.drawingIntent
+}, null, 2)}
+
+Available grounded alternatives:
+${JSON.stringify(catalog, null, 2)}`
+            }
+          ],
+          response_format: { type: 'json_object' },
+          reasoning_effort: this.reasoningEffort,
+          max_completion_tokens: tokenBudget
+        });
+        const parsed = parseJsonContent(response?.choices?.[0]?.message?.content);
+        const evidenceId = cleanString(parsed?.contributionEvidenceId, 80);
+        const cited = catalog.find(item => item.id === evidenceId);
+        if (!cited) throw new Error('Rendezvous drawing replan cited invalid evidence');
+        const supportingIds = cleanStringList(parsed?.groundedFeatureEvidenceIds, {
+          limit: 5,
+          maxLength: 80
+        });
+        const groundedFeatures = [
+          cited.description,
+          ...supportingIds.map(id => catalog.find(item => item.id === id)?.description)
+        ].filter(Boolean);
+        const drawingIntent = sanitizeOutboundPlaceNames(parsed?.drawingIntent, [], 700);
+        const drawingPrompt = sanitizeOutboundPlaceNames(parsed?.drawingPrompt, [], 2400);
+        const messageAction = reconcileRendezvousMessageAction(
+          ['movement', 'stillness', 'transition', 'unclear'].includes(parsed?.messageAction)
+            ? parsed.messageAction
+            : 'unclear',
+          drawingIntent,
+          drawingPrompt
+        );
+        if (!drawingIntent || !drawingPrompt) {
+          throw new Error('Rendezvous drawing replan omitted its visual message');
+        }
+        return {
+          contributionKind: cited.kind,
+          contributionEvidenceId: cited.id,
+          contributionSummary: authoritativeContributionSummary(cited.kind, cited.description),
+          drawingIntent,
+          informationDelta: authoritativeContributionSummary(cited.kind, cited.description),
+          continuityReason: '',
+          messageAction,
+          drawingPrompt,
+          groundedFeatures: [...new Set(groundedFeatures)].slice(0, 6)
+        };
+      } catch (error) {
+        lastError = error;
+        this.logger.warn?.(`Rendezvous drawing replan attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
+        tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
+      }
+    }
+    throw lastError || new Error('Rendezvous drawing replan failed');
+  }
+
   async reviewDrawing({
     agentName,
     partnerName,

@@ -932,6 +932,78 @@ test('a durable retry cannot waive an own-action sender-frame failure', async ()
   }
 });
 
+test('a repeatedly unrenderable action is replanned without changing the run or route', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-replan-test-'));
+  const replans = [];
+  const agentModel = {
+    async replanUnrenderableDrawing(input) {
+      replans.push(input);
+      return {
+        contributionKind: 'local_observation',
+        contributionEvidenceId: 'local:0',
+        contributionSummary: 'New local observation: a stone arcade.',
+        drawingIntent: 'Show the stone arcade now visible here.',
+        informationDelta: 'New local observation: a stone arcade.',
+        continuityReason: '',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw one quiet stone arcade.',
+        groundedFeatures: ['a stone arcade']
+      };
+    },
+    async reviewDrawing() {
+      return {
+        accepted: true,
+        assessment: 'The stone arcade is the primary observation.',
+        blindRead: {
+          dominantAction: 'stillness',
+          frameOfReference: 'sender',
+          communicationFunction: 'report',
+          readableText: false,
+          likelyMessage: 'The sender sees a stone arcade.'
+        }
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    const runId = controller.state.runId;
+    const senderPano = controller.state.agents.ada.panoId;
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'replanned-message',
+      agentId: 'ada',
+      turn: 4,
+      contributionKind: 'own_action',
+      contributionEvidenceId: 'action:0',
+      contributionSummary: 'My current chosen action: move south.',
+      drawingIntent: 'Show my movement south.',
+      informationDelta: 'My current chosen action: move south.',
+      messageAction: 'movement',
+      drawingPrompt: 'Draw my movement south.',
+      groundedFeatures: ['I chose to move south.', 'a stone arcade']
+    });
+    controller.state.scratchpad.pendingMessage.attempts = 6;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(replans.length, 1);
+    assert.equal(controller.state.runId, runId);
+    assert.equal(controller.state.agents.ada.panoId, senderPano);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.currentMessage.id, 'replanned-message');
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).contributionKind, 'local_observation');
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).replanCount, 1);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('drawing failure preserves a retryable handoff across controller restart', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-drawing-retry-test-'));
   try {

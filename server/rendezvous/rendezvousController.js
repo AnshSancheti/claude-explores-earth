@@ -1515,7 +1515,7 @@ export class RendezvousController {
     const normalizedScratchpad = Number(this.state.scratchpad?.version) === 5
       ? normalizeRasterScratchpad(this.state.scratchpad)
       : null;
-    const pending = normalizedScratchpad?.pendingMessage || null;
+    let pending = normalizedScratchpad?.pendingMessage || null;
     if (!pending) return null;
     const reconciledMessageAction = reconcileRendezvousMessageAction(
       pending.messageAction,
@@ -1532,6 +1532,52 @@ export class RendezvousController {
       );
       normalizedScratchpad.updatedAt = new Date().toISOString();
       this.state.scratchpad = normalizedScratchpad;
+    }
+    if (
+      pending.contributionKind === 'own_action' &&
+      pending.attempts >= 6 &&
+      pending.replanCount < 1 &&
+      typeof this.agentModel.replanUnrenderableDrawing === 'function'
+    ) {
+      try {
+        const sender = this.state.agents[pending.from];
+        const replanned = await this.agentModel.replanUnrenderableDrawing({
+          agentName: sender?.name || pending.from,
+          partnerName: this.state.agents[pending.to]?.name || pending.to,
+          pending,
+          privateMemory: normalizeAgentMemory(sender?.privateMemory)
+        });
+        const liveScratchpad = normalizeRasterScratchpad(this.state.scratchpad);
+        if (
+          replanned &&
+          liveScratchpad.pendingMessage?.id === pending.id &&
+          this.state.runId === runId
+        ) {
+          liveScratchpad.pendingMessage = {
+            ...liveScratchpad.pendingMessage,
+            ...replanned,
+            attempts: 0,
+            replanCount: liveScratchpad.pendingMessage.replanCount + 1,
+            status: 'generating',
+            lastError: null,
+            nextAttemptAt: null
+          };
+          liveScratchpad.updatedAt = new Date().toISOString();
+          this.state.scratchpad = liveScratchpad;
+          pending = liveScratchpad.pendingMessage;
+          this.#recordEvent('scratchpad_replanned', {
+            id: pending.id,
+            from: pending.from,
+            to: pending.to,
+            contributionKind: pending.contributionKind,
+            contributionEvidenceId: pending.contributionEvidenceId
+          });
+          await this.saveState();
+          this.broadcastState();
+        }
+      } catch (error) {
+        this.logger.warn?.(`Rendezvous drawing ${pending.id} could not be replanned: ${error.message}`);
+      }
     }
     const nextAttemptAt = Date.parse(pending.nextAttemptAt || '');
     if (Number.isFinite(nextAttemptAt) && nextAttemptAt > Date.now()) return null;

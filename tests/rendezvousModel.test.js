@@ -138,6 +138,14 @@ function stagedClient(requests, overrides = {}) {
           let payload;
           if (/privately inspecting the newest wordless drawing/.test(prompt)) {
             payload = overrides.perception || perceptionResponse();
+          } else if (/reconsidering only the drawing/.test(prompt)) {
+            payload = overrides.replan || {
+              contributionEvidenceId: 'local:0',
+              drawingIntent: 'Show the stone arches I can actually see.',
+              messageAction: 'stillness',
+              drawingPrompt: 'Draw three stone arches as the dominant observation.',
+              groundedFeatureEvidenceIds: ['local:0']
+            };
           } else if (/without any knowledge of what its sender intended/.test(prompt)) {
             payload = overrides.blindRead || {
               literalContents: ['two separated arch groups and a moving figure'],
@@ -324,6 +332,52 @@ test('repeated sheet imagery cannot become new evidence or leak into local obser
   assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
   assert.equal(decision.observation, 'storefronts beside mature sidewalk trees');
   assert.deepEqual(decision.observedFeatures, ['storefronts beside mature sidewalk trees']);
+});
+
+test('an unrenderable action can be replanned into a grounded contribution', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      replan: {
+        contributionEvidenceId: 'local:0',
+        drawingIntent: 'Show the stone arcade beside me instead of another route cue.',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw one quiet stone arcade with three repeated arches and no route markings.',
+        groundedFeatureEvidenceIds: ['local:0', 'local:1']
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const replan = await service.replanUnrenderableDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    pending: {
+      contributionKind: 'own_action',
+      contributionSummary: 'My current chosen action: move northeast.',
+      drawingIntent: 'Show my northeast movement.',
+      groundedFeatures: [
+        'I chose to move northeast along the selected public route.',
+        'three repeated stone arches',
+        'a suspended traffic light'
+      ]
+    },
+    privateMemory: {
+      reconciliations: [{
+        unresolvedQuestions: ['whether the circle represents a lamp or destination']
+      }]
+    }
+  });
+
+  assert.equal(replan.contributionKind, 'local_observation');
+  assert.equal(replan.contributionEvidenceId, 'local:0');
+  assert.equal(replan.contributionSummary, 'New local observation: three repeated stone arches');
+  assert.deepEqual(replan.groundedFeatures, [
+    'three repeated stone arches',
+    'a suspended traffic light'
+  ]);
+  assert.match(replan.drawingPrompt, /stone arcade/);
+  assert.equal(requests.length, 1);
 });
 
 test('own-action evidence uses the executed option bearing without leaking its route label', async () => {
