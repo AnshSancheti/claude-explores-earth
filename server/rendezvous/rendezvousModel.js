@@ -1784,10 +1784,14 @@ Return only JSON:
         blindRead.primarySubject || blindRead.likelyMessage
       ) < 0.4
     ) {
+      const competingSubject = cleanString(
+        blindRead.primarySubject || blindRead.likelyMessage,
+        300
+      );
       return {
         accepted: false,
         assessment: `Blind recipient saw "${blindRead.primarySubject || blindRead.likelyMessage}" as primary, not the cited local observation: ${contributionSummary}`,
-        revisionPrompt: 'Start from a blank composition and make the cited local observation itself the largest, darkest, or most central subject. Remove unrelated arrows, paths, runners, movement narratives, and inherited route imagery instead of using the observation as background scenery.',
+        revisionPrompt: `Remove or strongly subordinate this competing focal subject: ${competingSubject}. Start from a blank composition and make the cited local observation itself the largest, darkest, or most central subject. Remove unrelated arrows, paths, runners, movement narratives, and inherited route imagery instead of using the observation as background scenery.`,
         blindRead
       };
     }

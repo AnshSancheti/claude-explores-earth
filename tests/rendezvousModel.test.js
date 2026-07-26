@@ -2162,6 +2162,7 @@ test('local-observation review rejects a chase scene that relegates the landmark
 
   assert.equal(review.accepted, false);
   assert.match(review.assessment, /foreground runner.*primary/);
+  assert.match(review.revisionPrompt, /foreground runner urgently chasing another person/);
   assert.match(review.revisionPrompt, /observation itself.*largest/);
 });
 
