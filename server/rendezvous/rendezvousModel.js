@@ -792,6 +792,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
     messageAction = 'unclear',
     drawingPrompt,
     groundedFeatures = [],
+    visualHistory = [],
     imageBuffer,
     imageMimeType = 'image/webp'
   }) {
@@ -872,13 +873,18 @@ Return only JSON:
       };
     }
 
+    const comparisonSheets = (Array.isArray(visualHistory) ? visualHistory : [])
+      .filter(item => Buffer.isBuffer(item?.buffer) && item.buffer.length > 0)
+      .slice(-2);
     const systemPrompt = `You are ${agentName}, inspecting the actual wordless drawing that will be handed to ${partnerName}. Decide whether it visibly communicates what you intended.
 
-An independent recipient has already decoded the image without seeing your intent. Judge the drawing from that blind reading, not from what you hoped the composition would imply. The outbound contribution is the sender's cited addition to the exchange. Reject a drawing that visually promotes received or remembered context into the sender's new observation, or whose dominant imagery hides the cited contribution. If the information delta is one concrete observation but the blind reading primarily describes an inherited route, destination, or multi-stage itinerary, reject it even when the observation appears somewhere in the image. Every key claim in your intended delta needs a visible cue a neutral observer could point to, and that delta must read as the image's primary message. Absence of motion does not communicate waiting when a prominent arrow communicates movement. Reject readable text, material omissions or distortions, contradictions, hidden deltas, and generic or accidental repetition. Repeated imagery is acceptable when the stated continuity reason makes that repetition intentional and subordinate to the current contribution. Do not demand photorealism.
+An independent recipient has already decoded the image without seeing your intent. Judge the drawing from that blind reading, not from what you hoped the composition would imply. The outbound contribution is the sender's cited addition to the exchange. Reject a drawing that visually promotes received or remembered context into the sender's new observation, or whose dominant imagery hides the cited contribution. If the information delta is one concrete observation but the blind reading primarily describes an inherited route, destination, or multi-stage itinerary, reject it even when the observation appears somewhere in the image. Every key claim in your intended delta needs a visible cue a neutral observer could point to, and that delta must read as the image's primary message. Compare against the labeled recent sheets when supplied. Reusing a symbol is not itself a near-copy, but repeating substantially the same layout and visual hierarchy without making the current contribution primary is. Absence of motion does not communicate waiting when a prominent arrow communicates movement. Reject readable text, material omissions or distortions, contradictions, hidden deltas, and generic or accidental repetition. Repeated imagery is acceptable when the stated continuity reason makes that repetition intentional and subordinate to the current contribution. Do not demand photorealism.
 
 Return only JSON:
 {
   "accepted": true | false,
+  "contributionPrimary": true | false,
+  "visualNovelty": "distinct" | "intentional_repetition" | "near_copy" | "unclear",
   "assessment": "concise private assessment",
   "revisionPrompt": "when rejected, concrete visual corrections for the next rendering; otherwise empty"
 }`;
@@ -919,7 +925,20 @@ ${drawingPrompt}
 
 Visual anchors:
 ${JSON.stringify(groundedFeatures)}`
-                }
+                },
+                ...comparisonSheets.flatMap(item => ([
+                  {
+                    type: 'text',
+                    text: `RECENT SHEET FOR VISUAL COMPARISON — sequence ${item.sequence}, ${item.direction}.`
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: `data:${item.mimeType || 'image/webp'};base64,${item.buffer.toString('base64')}`,
+                      detail: 'low'
+                    }
+                  }
+                ]))
               ]
             }
           ],
@@ -929,13 +948,30 @@ ${JSON.stringify(groundedFeatures)}`
         });
         const parsed = parseJsonContent(response?.choices?.[0]?.message?.content);
         const assessment = cleanString(parsed?.assessment, 500);
+        const contributionPrimary = parsed?.contributionPrimary !== false;
+        const visualNovelty = ['distinct', 'intentional_repetition', 'near_copy', 'unclear']
+          .includes(parsed?.visualNovelty)
+          ? parsed.visualNovelty
+          : 'unclear';
         if (typeof parsed?.accepted !== 'boolean' || !assessment) {
           throw new Error('Rendezvous drawing review omitted its verdict');
         }
+        const accidentalNearCopy = comparisonSheets.length > 0
+          && visualNovelty === 'near_copy'
+          && !['acknowledgement', 'deliberate_repetition'].includes(contributionKind);
+        const accepted = parsed.accepted && contributionPrimary && !accidentalNearCopy;
+        const forcedRevision = !contributionPrimary
+          ? 'Start from a blank composition and make the cited current contribution the largest and darkest primary subject. Reduce inherited route, destination, and multi-panel context to at most one subordinate supporting motif.'
+          : (accidentalNearCopy
+              ? 'Replace the repeated layout and visual hierarchy. Start from a blank composition centered on the cited current contribution; retain only one small recurring symbol if it is essential for continuity.'
+              : '');
         return {
-          accepted: parsed.accepted,
-          assessment: cleanString(`Blind read (${blindRead.dominantAction}): ${blindRead.likelyMessage} Sender review: ${assessment}`, 700),
-          revisionPrompt: cleanString(parsed?.revisionPrompt, 1200),
+          accepted,
+          assessment: cleanString(
+            `Blind read (${blindRead.dominantAction}): ${blindRead.likelyMessage} Sender review (${visualNovelty}, contribution ${contributionPrimary ? 'primary' : 'secondary'}): ${assessment}`,
+            700
+          ),
+          revisionPrompt: cleanString(forcedRevision || parsed?.revisionPrompt, 1200),
           blindRead
         };
       } catch (error) {

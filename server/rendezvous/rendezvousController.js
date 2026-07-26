@@ -1530,6 +1530,9 @@ export class RendezvousController {
           pendingId: pending.id
         });
         await this.saveState();
+        const reviewVisualHistory = typeof this.agentModel.reviewDrawing === 'function'
+          ? await this.#readVisualHistory(pending.from, this.state.scratchpad, 2)
+          : [];
         let generated = await this.imageModel.generate({
           drawingPrompt: pending.drawingPrompt,
           groundedFeatures: compatibleRevisionFeatures(
@@ -1551,6 +1554,7 @@ export class RendezvousController {
               messageAction: pending.messageAction,
               drawingPrompt: pending.drawingPrompt,
               groundedFeatures: pending.groundedFeatures,
+              visualHistory: reviewVisualHistory,
               imageBuffer: generated.buffer,
               imageMimeType: generated.mimeType
             })
@@ -1584,6 +1588,7 @@ export class RendezvousController {
                 messageAction: pending.messageAction,
                 drawingPrompt: revisionPrompt,
                 groundedFeatures: pending.groundedFeatures,
+                visualHistory: reviewVisualHistory,
                 imageBuffer: generated.buffer,
                 imageMimeType: generated.mimeType
               })

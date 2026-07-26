@@ -506,6 +506,12 @@ test('sender reviews the actual generated image and can request a visual revisio
     continuityReason: 'The paired arches deliberately continue the shared motif.',
     drawingPrompt: 'Draw two arch groups and a moving figure.',
     groundedFeatures: ['three repeated arches'],
+    visualHistory: [{
+      sequence: 5,
+      direction: 'sent',
+      mimeType: 'image/webp',
+      buffer: Buffer.from('prior-drawing')
+    }],
     imageBuffer: Buffer.from('generated-image')
   });
 
@@ -517,9 +523,52 @@ test('sender reviews the actual generated image and can request a visual revisio
   assert.match(requests[1].messages[0].content, /independent recipient/);
   assert.match(requests[1].messages[0].content, /blind reading primarily describes an inherited route/);
   assert.match(requests[1].messages[0].content, /delta must read as the image's primary message/);
+  assert.match(requests[1].messages[0].content, /substantially the same layout and visual hierarchy/);
   assert.match(requests[1].messages[1].content[0].text, /nearer arches now match/);
   assert.match(requests[1].messages[1].content[0].text, /deliberately continue/);
   assert.match(requests[1].messages[1].content[0].text, /context-free reading/);
+  assert.match(requests[1].messages[1].content[1].text, /RECENT SHEET FOR VISUAL COMPARISON.*sequence 5/);
+  assert.equal(requests[1].messages[1].content[2].type, 'image_url');
+});
+
+test('drawing review rejects an accidental near-copy even when the model accepts it', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      review: {
+        accepted: true,
+        contributionPrimary: true,
+        visualNovelty: 'near_copy',
+        assessment: 'The same triptych and route arrow appear again.',
+        revisionPrompt: ''
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: a singular median tree.',
+    drawingIntent: 'Show the median tree I can see.',
+    informationDelta: 'New local observation: a singular median tree.',
+    messageAction: 'movement',
+    drawingPrompt: 'Repeat the prior triptych and add a tree.',
+    groundedFeatures: ['a singular median tree'],
+    visualHistory: [{
+      sequence: 8,
+      direction: 'received',
+      mimeType: 'image/webp',
+      buffer: Buffer.from('prior-triptych')
+    }],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /near_copy/);
+  assert.match(review.revisionPrompt, /Replace the repeated layout/);
+  assert.match(review.revisionPrompt, /one small recurring symbol/);
 });
 
 test('blind recipient action overrides a sender review biased by intent', async () => {
