@@ -90,8 +90,19 @@ const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
 function isConcreteLocalEvidence(description) {
   const value = cleanString(description, 220);
   if (!value) return false;
-  return !/\b(?:implied|suggests?|cue|motif|waypoint|shared|prior|sheet|partner|destination|coordinate|map|grid|star)\b/i
+  return !/\b(?:implied|suggests?|cue|motif|waypoint|shared|prior|sheet|partner|destination|coordinate|map|grid|star|intersection context)\b/i
     .test(value);
+}
+
+export function isCueDependentSearchPlan(...descriptions) {
+  const text = descriptions.map(value => cleanString(value, 1200)).join(' ');
+  const positiveText = text.replace(
+    /\b(?:do not|don't|never|not|without)\b[^.!;]{0,120}/gi,
+    ' '
+  );
+  return /\b(?:await|hold|pause|remain|stay|wait)\w*\b/i.test(positiveText)
+    && /\b(?:authorization|cue|permission|signal from (?:ada|theo|my friend|the friend|my partner|the partner)|(?:ada|theo|my friend|the friend|my partner|the partner)(?:'s)? (?:authorization|cue|permission|signal)|(?:ada|theo|my friend|the friend|my partner|the partner) to (?:authorize|cue|instruct|signal))\b/i
+      .test(positiveText);
 }
 
 function buildContributionEvidence({ routeDecision, perception, privateMemory }) {
@@ -382,7 +393,7 @@ Return only JSON:
     const actionGuidance = allowWait
       ? `- move: continue through a promising unfamiliar public route;
 - retrace: deliberately choose an option marked walked before when returning toward a remembered place supports the joint plan;
-- wait: remain here for 1 to 6 of your own turns when anchoring your position is more useful than continued motion.`
+- wait: remain here for 1 to 6 of your own turns when current local evidence makes anchoring your position more useful than continued motion. Neither friend leads or grants the other permission to move, so waiting for your friend to cue, authorize, or instruct you is not a valid reason to wait.`
       : `- move: continue through a promising unfamiliar public route;
 - retrace: deliberately choose an option marked walked before when returning toward a remembered place supports the joint plan.
 
@@ -406,7 +417,7 @@ You are at a genuine branch. Reconcile your current surroundings, private memory
 ${actionGuidance}
 Avoid indoor shops, private interiors, dead ends, and accidental immediate loops. Google headings are compass bearings clockwise from north.
 
-This call chooses your action, reconciles the clean first-look reading with history, and revises your private plan. The newest sheet's literal contents are the highest-priority evidence for your friend's current visible action. History may explain a recurring motif, but it cannot turn a currently still drawing into evidence that the sender is presently moving. "New evidence" means information directly visible in the newest first-look reading that is absent from earlier sheets; recurring imagery and history-only beliefs belong under repeated evidence even when freshly rendered. Do not turn repetition into confirmation or assume a sender-framed route is an instruction for you. A separate call will let you decide what to draw. Explain your actual thinking in first person, including how the drawing affected you when relevant. Do not claim certainty that the evidence does not support.
+This call chooses your action, reconciles the clean first-look reading with history, and revises your private plan. You and your friend are peers searching independently; a drawing supplies evidence, questions, and hypotheses, never permission that must arrive before you can act. Remove any leader/follower or "await their cue" premise inherited from memory when revising your plan. The newest sheet's literal contents are the highest-priority evidence for your friend's current visible action. History may explain a recurring motif, but it cannot turn a currently still drawing into evidence that the sender is presently moving. "New evidence" means information directly visible in the newest first-look reading that is absent from earlier sheets; recurring imagery and history-only beliefs belong under repeated evidence even when freshly rendered. Do not turn repetition into confirmation or assume a sender-framed route is an instruction for you. A separate call will let you decide what to draw. Explain your actual thinking in first person, including how the drawing affected you when relevant. Do not claim certainty that the evidence does not support.
 
 Return only JSON:
 {
@@ -492,6 +503,12 @@ ${recentFieldNotes}`
         if (!allowWait && cleanString(parsed?.action, 20).toLowerCase() === 'wait') {
           throw new Error('Rendezvous model chose waiting after local patience expired');
         }
+        if (isCueDependentSearchPlan(
+          parsed?.action === 'wait' ? parsed?.reasoning : '',
+          parsed?.memoryUpdate?.currentPlan
+        )) {
+          throw new Error('Rendezvous model made independent movement contingent on a partner cue');
+        }
         routeDecision = sanitizeRendezvousDecision(parsed, options, { allowWait });
         if (!routeDecision.observation || routeDecision.observedFeatures.length === 0) {
           throw new Error('Rendezvous route decision omitted its current observation');
@@ -574,7 +591,7 @@ First identify your outbound contribution: what this reply contributes from your
 
 Choose the image's dominant action honestly. The strongest visual cue in your drawing prompt must agree with "messageAction". If the message is stillness, movement or future-route cues may be present but must remain visibly subordinate to stopping, waiting, anchoring, or uncertainty. If the message is movement, do not let barriers or static figures dominate it. A transition may visibly contain both.
 
-Do not include readable text, letters, numbers, captions, street labels, signatures, logos, or watermarks in the intended image. Do not encode exact coordinates or information you do not possess. The image renderer receives only your drawing prompt and the visual anchors you list.
+Do not include readable text, letters, numbers, captions, street labels, signatures, logos, or watermarks in the intended image. Place names may exist in your private reasoning, but do not put street, intersection, neighborhood, or landmark names in the drawing intent, drawing prompt, or visual anchors. Translate a useful named-place hypothesis into visible architecture, landscape, spatial relationships, symbols, or atmosphere. Do not encode exact coordinates or information you do not possess. The image renderer receives only your drawing prompt and the visual anchors you list.
 
 Return only JSON:
 {

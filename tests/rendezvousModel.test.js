@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  isCueDependentSearchPlan,
   RendezvousModelService,
   reconcileRendezvousMessageAction,
   sanitizeRendezvousDecision
@@ -153,7 +154,9 @@ function stagedClient(requests, overrides = {}) {
           } else if (/currently hold the one physical sheet/.test(prompt)) {
             payload = overrides.drawing || drawingResponse();
           } else {
-            payload = overrides.route || routeResponse();
+            payload = typeof overrides.route === 'function'
+              ? overrides.route(request)
+              : (overrides.route || routeResponse());
           }
           return { choices: [{ message: { content: JSON.stringify(payload) } }] };
         }
@@ -208,6 +211,9 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(serialized, /Newest-sheet visible evidence catalog/);
   assert.match(serialized, /never relabel it as a new local observation/);
   assert.match(serialized, /highest-priority evidence.*current visible action/);
+  assert.match(serialized, /Neither friend leads or grants the other permission/);
+  assert.match(serialized, /drawings? supplies evidence, questions, and hypotheses, never permission/i);
+  assert.match(serialized, /Place names may exist in your private reasoning/);
   assert.match(serialized, /strongest visual cue.*messageAction/);
   assert.match(serialized, /wordless drawing/);
   assert.match(serialized, /no readable text/);
@@ -280,7 +286,8 @@ test('abstract sheet-language residue is excluded from local outbound evidence',
         observedFeatures: [
           'three repeated stone arches',
           'a suspended traffic light beside them',
-          'a star waypoint implied by the prior sheet cue'
+          'a star waypoint implied by the prior sheet cue',
+          'Bowery/Prince intersection context'
         ]
       })
     }),
@@ -297,6 +304,58 @@ test('abstract sheet-language residue is excluded from local outbound evidence',
   assert.equal(decision.fallbackCause, null);
   assert.match(catalogText, /three repeated stone arches/);
   assert.doesNotMatch(catalogText, /star waypoint implied by the prior sheet cue/);
+  assert.doesNotMatch(catalogText, /Bowery\/Prince intersection context/);
+});
+
+test('route planning rejects partner-cue dependency but preserves evidence-based waiting', async () => {
+  const requests = [];
+  let routeAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      route() {
+        routeAttempts += 1;
+        if (routeAttempts === 1) {
+          return routeResponse({
+            action: 'wait',
+            reasoning: 'I will hold here until Theo gives me the next cue.',
+            memoryUpdate: {
+              currentPlan: 'Wait for Theo to signal that I should move.'
+            }
+          });
+        }
+        return routeResponse({
+          action: 'wait',
+          reasoning: 'I will hold briefly because this distinctive arch is easy to recognize.',
+          memoryUpdate: {
+            currentPlan: 'Stay visible at the distinctive arch for one turn, then reassess.'
+          }
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.action, 'wait');
+  assert.match(decision.reasoning, /easy to recognize/);
+  assert.doesNotMatch(decision.memoryUpdate.currentPlan, /Theo|cue|signal/);
+});
+
+test('cue-dependency detection ignores explicit rejection of permission seeking', () => {
+  assert.equal(isCueDependentSearchPlan(
+    'I will wait for Ada to cue me before moving.'
+  ), true);
+  assert.equal(isCueDependentSearchPlan(
+    'Wait for Theo to signal that I should move.'
+  ), true);
+  assert.equal(isCueDependentSearchPlan(
+    'I do not wait for Ada to cue me; I move using my own local evidence.'
+  ), false);
+  assert.equal(isCueDependentSearchPlan(
+    'I wait one turn beside the singular clock because it is easy to recognize.'
+  ), false);
 });
 
 test('a paused route drawing is reconciled to transition before image review', async () => {
