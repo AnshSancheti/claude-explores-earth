@@ -200,12 +200,6 @@ export class RendezvousModelService {
     if (!Array.isArray(options) || options.length < 2) {
       throw new Error('Rendezvous model is only called at a genuine route branch');
     }
-    const history = (Array.isArray(visualHistory) ? visualHistory : []).slice(-4);
-    const historyLines = history.length > 0
-      ? history.map((item, index) =>
-          `History image ${index + 1}: sheet sequence ${item.sequence}; ${item.direction === 'sent' ? 'you sent it' : 'you received it'}.`
-        ).join('\n')
-      : 'No earlier sheet images are available.';
     let perception = sanitizeSheetPerception(null);
     const rememberedSheet = sheetMessage
       ? (privateMemory?.receivedSheets || []).find(entry => entry.sequence === sheetMessage.sequence)
@@ -226,11 +220,9 @@ export class RendezvousModelService {
         evidenceDelta: rememberedReconciliation
       });
     } else if (sheetMessage) {
-      const perceptionPrompt = `You are ${agent.name}, privately interpreting the newest wordless drawing passed to you by ${partnerName}. The drawing is your only direct communication channel. It may depict observations, memories, uncertainty, a plan, a request, intended movement, or an invented visual convention.
+      const perceptionPrompt = `You are ${agent.name}, privately inspecting the newest wordless drawing passed to you by ${partnerName}. The drawing is your only direct communication channel. It may depict observations, memories, uncertainty, a plan, a request, intended movement, or an invented visual convention.
 
-First describe what is literally visible. Then infer what place, surroundings, intention, or coordination idea it might represent. You may use your own real-world knowledge to privately name possible landmarks, streets, neighborhoods, directions, or places. These names stay in your private memory; they are not text written on the sheet. Keep alternatives when the image is ambiguous and never treat generic city imagery as certainty.
-
-Compare this drawing with prior drawings, your own observations, and your current plan. "New evidence" means visually present information absent from the earlier sheets; a recurring arrow, layout, landmark, or scene belongs under repeated evidence even if it appears in a new rendering. Identify contradictions and unresolved questions instead of turning repetition into confirmation.
+You are deliberately seeing this image before your prior ledger or earlier drawings. Describe only what this image visibly contains, then infer what place, surroundings, intention, or coordination idea it might represent. You may use your own real-world knowledge to privately name possible landmarks, streets, neighborhoods, directions, or places. These names stay in your private memory; they are not text written on the sheet. Keep alternatives when the image is ambiguous and never treat generic city imagery as certainty.
 
 Privately determine the drawing's frame of reference. A direction, path, or moving figure may describe the sender's own movement, propose shared movement, request a response, or address you. Unless the image or an established convention distinguishes those roles, do not assume a depicted route is an instruction for you to follow in your own local frame.
 
@@ -243,42 +235,18 @@ Return only JSON:
   "possibleIntentions": ["private interpretation of what the sender may intend or ask"],
   "frameOfReference": "sender" | "recipient" | "shared" | "unclear",
   "requestedResponse": "what response the image appears to ask from you, or empty when none is visually supported",
-  "informationNovelty": "new" | "mixed" | "repeated" | "unclear",
   "sheetInterpretation": "your concise best reading, including uncertainty",
-  "sheetConfidence": <0.0-0.8>,
-  "evidenceDelta": {
-    "newEvidence": [],
-    "repeatedEvidence": [],
-    "contradictions": [],
-    "unresolvedQuestions": [],
-    "informationWorthSending": [],
-    "planAssessment": "supporting" | "weakening" | "inconclusive"
-  },
-  "conventionUpdate": {"key": "short-stable-key", "description": "possible meaning of a recurring visual convention", "confidence": <0.0-0.7>, "basisSequences": [<real sequence numbers>]},
-  "partnerHypothesis": {"key": "short-stable-key", "description": "current hypothesis about the sender's place or intention", "confidence": <0.0-0.75>, "basisSequences": [<real sequence numbers>]}
+  "sheetConfidence": <0.0-0.8>
 }`;
       const perceptionContent = [
         {
           type: 'text',
-          text: `Image 1 is sheet sequence ${sheetMessage.sequence}, sent by ${sheetMessage.from}. Earlier sheet images follow in chronological order.
-
-Visual history:
-${historyLines}
-
-Your private evidence ledger before seeing this drawing:
-${JSON.stringify(privateMemory || {}, null, 2)}
-
-Your movement since your last branch decision:
-${JSON.stringify(movementSinceDecision || {}, null, 2)}`
+          text: `This is sheet sequence ${sheetMessage.sequence}, sent by ${sheetMessage.from}. Inspect this image on its own. No earlier drawing or private ledger is included in this first-look pass.`
         },
         {
           type: 'image_url',
           image_url: { url: `data:${scratchpadMimeType};base64,${scratchpadBuffer.toString('base64')}`, detail: 'high' }
-        },
-        ...history.map(item => ({
-          type: 'image_url',
-          image_url: { url: `data:${item.mimeType || 'image/webp'};base64,${item.buffer.toString('base64')}`, detail: 'low' }
-        }))
+        }
       ];
       let perceptionTokens = Math.min(this.maxTokens, 1800);
       for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
@@ -347,7 +315,7 @@ You are at a genuine branch. Reconcile your current surroundings, private memory
 ${actionGuidance}
 Avoid indoor shops, private interiors, dead ends, and accidental immediate loops. Google headings are compass bearings clockwise from north.
 
-This call chooses your action and revises your private plan. A separate call will let you decide what to draw. Explain your actual thinking in first person, including how the drawing affected you when relevant. Do not claim certainty that the evidence does not support.
+This call chooses your action, reconciles the clean first-look reading with history, and revises your private plan. "New evidence" means information in the newest first-look reading that is absent from earlier sheets; recurring imagery belongs under repeated evidence even when freshly rendered. Do not turn repetition into confirmation or assume a sender-framed route is an instruction for you. A separate call will let you decide what to draw. Explain your actual thinking in first person, including how the drawing affected you when relevant. Do not claim certainty that the evidence does not support.
 
 Return only JSON:
 {
@@ -358,6 +326,17 @@ Return only JSON:
   "reasoning": "one concise first-person account of why this action best supports finding your friend",
   "observation": "a grounded description of what you currently notice and want to remember",
   "observedFeatures": ["stable visible feature that may be useful to remember or draw"],
+  "sheetReconciliation": {
+    "informationNovelty": "new" | "mixed" | "repeated" | "unclear",
+    "newEvidence": [],
+    "repeatedEvidence": [],
+    "contradictions": [],
+    "unresolvedQuestions": [],
+    "informationWorthSending": [],
+    "planAssessment": "supporting" | "weakening" | "inconclusive",
+    "conventionUpdate": {"key": "short-stable-key", "description": "possible meaning of a recurring visual convention", "confidence": <0.0-0.7>, "basisSequences": [<real sequence numbers>]},
+    "partnerHypothesis": {"key": "short-stable-key", "description": "current hypothesis about the sender's place or intention", "confidence": <0.0-0.75>, "basisSequences": [<real sequence numbers>]}
+  },
   "memoryUpdate": {
     "currentPlan": "your current search strategy, revised by fresh local evidence"
   }
@@ -393,6 +372,12 @@ ${recentFieldNotes}`
 
     let lastError = null;
     let routeDecision = null;
+    let routeReconciliation = {
+      informationNovelty: perception.informationNovelty,
+      evidenceDelta: perception.evidenceDelta,
+      conventionUpdate: perception.conventionUpdate,
+      partnerHypothesis: perception.partnerHypothesis
+    };
     let tokenBudget = this.maxTokens;
     for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
       try {
@@ -418,6 +403,21 @@ ${recentFieldNotes}`
         if (!routeDecision.memoryUpdate.currentPlan) {
           throw new Error('Rendezvous model omitted its private memory revision');
         }
+        if (sheetMessage) {
+          const rawReconciliation = parsed?.sheetReconciliation;
+          const informationNovelty = ['new', 'mixed', 'repeated', 'unclear'].includes(rawReconciliation?.informationNovelty)
+            ? rawReconciliation.informationNovelty
+            : null;
+          if (!informationNovelty) {
+            throw new Error('Rendezvous route decision omitted its sheet reconciliation');
+          }
+          routeReconciliation = {
+            informationNovelty,
+            evidenceDelta: sanitizeEvidenceDelta(rawReconciliation),
+            conventionUpdate: cleanBeliefUpdate(rawReconciliation?.conventionUpdate),
+            partnerHypothesis: cleanBeliefUpdate(rawReconciliation?.partnerHypothesis)
+          };
+        }
         break;
       } catch (error) {
         lastError = error;
@@ -437,6 +437,13 @@ ${recentFieldNotes}`
         reconciliation: perception.evidenceDelta
       };
     }
+    perception = {
+      ...perception,
+      informationNovelty: routeReconciliation.informationNovelty,
+      evidenceDelta: routeReconciliation.evidenceDelta,
+      conventionUpdate: routeReconciliation.conventionUpdate,
+      partnerHypothesis: routeReconciliation.partnerHypothesis
+    };
 
     const drawingSystemPrompt = `You are ${agent.name}. You have reached a real choice while trying to find ${partnerName}, and you currently hold the one physical sheet you pass back and forth.
 
@@ -554,9 +561,58 @@ ${JSON.stringify(actionMemory, null, 2)}`
     if (!Buffer.isBuffer(imageBuffer) || imageBuffer.length === 0) {
       throw new Error('Rendezvous drawing review requires the generated image');
     }
+    const decodePrompt = `Inspect this wordless drawing without any knowledge of what its sender intended. Report what a recipient would actually see and most likely infer. Do not reward artistic quality or invent meaning from absent cues.
+
+Return only JSON:
+{
+  "literalContents": ["visible element and relationship"],
+  "likelyMessage": "best context-free interpretation, including uncertainty",
+  "movementCues": ["visible cue suggesting movement or direction"],
+  "stillnessCues": ["visible cue suggesting waiting, stopping, anchoring, or no movement"],
+  "readableText": true | false
+}`;
+    let blindRead = null;
+    let lastError = null;
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+      try {
+        const response = await this.#client().chat.completions.create({
+          model: this.model,
+          messages: [
+            { role: 'system', content: decodePrompt },
+            {
+              role: 'user',
+              content: [{
+                type: 'image_url',
+                image_url: { url: `data:${imageMimeType};base64,${imageBuffer.toString('base64')}`, detail: 'high' }
+              }]
+            }
+          ],
+          response_format: { type: 'json_object' },
+          reasoning_effort: this.reasoningEffort,
+          max_completion_tokens: 1200
+        });
+        const parsed = parseJsonContent(response?.choices?.[0]?.message?.content);
+        blindRead = {
+          literalContents: cleanStringList(parsed?.literalContents, { limit: 8, maxLength: 220 }),
+          likelyMessage: cleanString(parsed?.likelyMessage, 700),
+          movementCues: cleanStringList(parsed?.movementCues, { limit: 6, maxLength: 220 }),
+          stillnessCues: cleanStringList(parsed?.stillnessCues, { limit: 6, maxLength: 220 }),
+          readableText: parsed?.readableText === true
+        };
+        if (!blindRead.likelyMessage || blindRead.literalContents.length === 0) {
+          throw new Error('Rendezvous blind drawing read omitted its grounded interpretation');
+        }
+        break;
+      } catch (error) {
+        lastError = error;
+        this.logger.warn?.(`Rendezvous blind drawing read attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
+      }
+    }
+    if (!blindRead) throw lastError || new Error('Rendezvous blind drawing read failed');
+
     const systemPrompt = `You are ${agentName}, inspecting the actual wordless drawing that will be handed to ${partnerName}. Decide whether it visibly communicates what you intended.
 
-Reject it when it contains readable text, materially omits or distorts the intended idea, contradicts your intent, hides the intended information delta, or is so generic or repetitive that it would not help your friend. Repeated imagery is acceptable when the stated continuity reason makes that repetition intentional. Do not demand photorealism. A handmade, symbolic, diagrammatic, or imperfect drawing is acceptable when its meaning survives.
+An independent recipient has already decoded the image without seeing your intent. Judge the drawing from that blind reading, not from what you hoped the composition would imply. Every key claim in your intended delta needs a visible cue a neutral observer could point to. Absence of motion does not communicate waiting when a prominent arrow communicates movement. Reject readable text, material omissions or distortions, contradictions, hidden deltas, and generic or accidental repetition. Repeated imagery is acceptable when the stated continuity reason makes that repetition intentional. Do not demand photorealism.
 
 Return only JSON:
 {
@@ -564,7 +620,7 @@ Return only JSON:
   "assessment": "concise private assessment",
   "revisionPrompt": "when rejected, concrete visual corrections for the next rendering; otherwise empty"
 }`;
-    let lastError = null;
+    lastError = null;
     for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
       try {
         const response = await this.#client().chat.completions.create({
@@ -585,15 +641,14 @@ ${informationDelta || 'Legacy message: no explicit information delta was recorde
 Reason for retaining recurring motifs:
 ${continuityReason || 'None recorded.'}
 
+Independent context-free reading of the rendered image:
+${JSON.stringify(blindRead, null, 2)}
+
 My rendering instructions:
 ${drawingPrompt}
 
 Visual anchors:
 ${JSON.stringify(groundedFeatures)}`
-                },
-                {
-                  type: 'image_url',
-                  image_url: { url: `data:${imageMimeType};base64,${imageBuffer.toString('base64')}`, detail: 'high' }
                 }
               ]
             }

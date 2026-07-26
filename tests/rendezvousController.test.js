@@ -545,6 +545,7 @@ test('repeated same-branch waiting yields to movement while preserving the autho
     assert.ok(controller.state.scratchpad.pendingMessage);
     assert.match(controller.state.scratchpad.pendingMessage.drawingIntent, /remaining here/);
     assert.ok(controller.state.eventLog.some(event => event.type === 'wait_patience_expired'));
+    await controller.resumePendingDrawing();
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
     else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;

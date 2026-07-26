@@ -88,6 +88,17 @@ function routeResponse(overrides = {}) {
     reasoning: 'Theo may be describing an arcade, and the northern opening has the closest matching repeated masonry.',
     observation: 'Repeated stone arches line the northern opening.',
     observedFeatures: ['three repeated stone arches', 'a suspended traffic light beside them'],
+    sheetReconciliation: {
+      informationNovelty: 'mixed',
+      newEvidence: ['the circle is now placed between arches'],
+      repeatedEvidence: ['the arch motif appeared before'],
+      contradictions: [],
+      unresolvedQuestions: ['whether the circle represents a lamp or destination'],
+      informationWorthSending: ['whether I also see repeated arches'],
+      planAssessment: 'supporting',
+      conventionUpdate: perceptionResponse().conventionUpdate,
+      partnerHypothesis: perceptionResponse().partnerHypothesis
+    },
     memoryUpdate: {
       currentPlan: 'Test the possible arcade hypothesis while looking for stronger geographic evidence.'
     },
@@ -114,8 +125,16 @@ function stagedClient(requests, overrides = {}) {
           requests.push(request);
           const prompt = request.messages[0].content;
           let payload;
-          if (/privately interpreting the newest wordless drawing/.test(prompt)) {
+          if (/privately inspecting the newest wordless drawing/.test(prompt)) {
             payload = overrides.perception || perceptionResponse();
+          } else if (/without any knowledge of what its sender intended/.test(prompt)) {
+            payload = overrides.blindRead || {
+              literalContents: ['two separated arch groups and a moving figure'],
+              likelyMessage: 'The sender sees matching arches and is moving toward one group.',
+              movementCues: ['a small figure approaches the nearer arches'],
+              stillnessCues: [],
+              readableText: false
+            };
           } else if (/inspecting the actual wordless drawing/.test(prompt)) {
             payload = overrides.review || {
               accepted: true,
@@ -162,8 +181,9 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(serialized, /information delta/);
   assert.match(serialized, /wordless drawing/);
   assert.match(serialized, /no readable text/);
-  assert.match(requests[0].messages[1].content[0].text, /History image 1: sheet sequence 5/);
-  assert.equal(requests[0].messages[1].content.length, 3);
+  assert.match(requests[0].messages[1].content[0].text, /Inspect this image on its own/);
+  assert.doesNotMatch(requests[0].messages[1].content[0].text, /private evidence ledger|History image/);
+  assert.equal(requests[0].messages[1].content.length, 2);
   assert.doesNotMatch(serialized, /partnerPadText|ownPadText|distanceToFriend|-?\d+\.\d{4,}/);
 });
 
@@ -194,7 +214,7 @@ test('an already interpreted sheet reuses durable memory without another percept
 
   assert.equal(requests.length, 2);
   assert.equal(requests.some(request =>
-    /privately interpreting the newest wordless drawing/.test(request.messages[0].content)
+    /privately inspecting the newest wordless drawing/.test(request.messages[0].content)
   ), false);
   assert.match(decision.sheetInterpretation, /recognizable arcade/);
 });
@@ -227,7 +247,7 @@ test('expired local patience removes waiting from route choice while preserving 
   assert.equal(decision.action, 'move');
   assert.ok(decision.drawingPrompt);
   const routeRequest = requests.find(request =>
-    !/privately interpreting|currently hold/.test(request.messages[0].content)
+    !/privately inspecting|currently hold/.test(request.messages[0].content)
   );
   assert.match(routeRequest.messages[0].content, /same branch 2 consecutive times/);
   assert.match(routeRequest.messages[0].content, /Remaining here again is not available/);
@@ -277,11 +297,13 @@ test('sender reviews the actual generated image and can request a visual revisio
 
   assert.equal(review.accepted, false);
   assert.match(review.revisionPrompt, /Separate the arch groups/);
-  assert.equal(requests.length, 1);
-  assert.match(requests[0].messages[0].content, /inspecting the actual wordless drawing/);
-  assert.match(requests[0].messages[1].content[0].text, /nearer arches now match/);
-  assert.match(requests[0].messages[1].content[0].text, /deliberately continue/);
-  assert.equal(requests[0].messages[1].content[1].type, 'image_url');
+  assert.equal(requests.length, 2);
+  assert.match(requests[0].messages[0].content, /without any knowledge/);
+  assert.equal(requests[0].messages[1].content[0].type, 'image_url');
+  assert.match(requests[1].messages[0].content, /independent recipient/);
+  assert.match(requests[1].messages[1].content[0].text, /nearer arches now match/);
+  assert.match(requests[1].messages[1].content[0].text, /deliberately continue/);
+  assert.match(requests[1].messages[1].content[0].text, /context-free reading/);
 });
 
 test('decision sanitizer reconciles heading and bounds deliberate waiting', () => {
