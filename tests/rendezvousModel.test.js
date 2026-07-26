@@ -297,6 +297,10 @@ test('own-action evidence uses the executed option bearing without leaking its r
 test('planner-authored fields cannot reintroduce private place names for an own-action reply', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {
+      route: routeResponse({
+        selectedIndex: 1,
+        intendedHeading: 90
+      }),
       drawing: drawingResponse({
         contributionKind: 'own_action',
         contributionEvidenceId: 'action:0',
@@ -400,6 +404,50 @@ test('drawing planner cannot promote an uncited recurring motif into a shared de
   assert.equal(drawingAttempts, 2);
   assert.doesNotMatch(decision.drawingIntent, /shared destination|shared target/);
   assert.match(decision.drawingIntent, /uncertain star/);
+});
+
+test('drawing planner cannot use an unsupported partner motif as an implied destination', async () => {
+  const requests = [];
+  let drawingAttempts = 0;
+  const priorMemory = {
+    ...input().privateMemory,
+    partnerHypotheses: [{
+      key: 'star-destination',
+      description: 'Theo may intend the star to mark a physical destination.',
+      confidence: 0.4,
+      basisSequences: [5],
+      evidenceStatus: 'unclear'
+    }]
+  };
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      drawing(request) {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            drawingIntent: 'Show my arches leading toward Theo’s implied destination.',
+            drawingPrompt: 'Draw one street scene with a path ending at a distant star.',
+            continuityReason: 'The star keeps our forward movement coherent.'
+          });
+        }
+        assert.match(
+          request.messages[1].content[0].text,
+          /AUTHORITATIVE PLANNING CORRECTION.*unsupported partner hypothesis/
+        );
+        return drawingResponse({
+          drawingIntent: 'Show my newly observed arches while questioning whether the star identifies a place.',
+          drawingPrompt: 'Draw one street scene centered on three arches, with a faint unresolved star off to one side.'
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({ privateMemory: priorMemory }));
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(drawingAttempts, 2);
+  assert.match(decision.drawingIntent, /questioning whether/);
 });
 
 test('drawing planner still rejects an unknown contribution evidence ID', async () => {
@@ -561,6 +609,64 @@ test('route planning retries when the selected option contradicts its intended h
   assert.equal(routeAttempts, 2);
   assert.equal(decision.selectedIndex, 1);
   assert.equal(decision.intendedHeading, 0);
+});
+
+test('route planning cannot make an unsupported partner motif its movement goal', async () => {
+  const requests = [];
+  let routeAttempts = 0;
+  const priorMemory = {
+    ...input().privateMemory,
+    partnerHypotheses: [{
+      key: 'star-destination',
+      description: 'Theo may intend the star to mark a physical destination.',
+      confidence: 0.4,
+      basisSequences: [5],
+      evidenceStatus: 'unclear'
+    }]
+  };
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      route() {
+        routeAttempts += 1;
+        return routeAttempts === 1
+          ? routeResponse({
+              memoryUpdate: {
+                currentPlan: 'Continue north toward the star while preserving the shared visual language.'
+              }
+            })
+          : routeResponse({
+              memoryUpdate: {
+                currentPlan: 'Continue north using local arches while testing whether the star has any physical meaning.'
+              }
+            });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({ privateMemory: priorMemory }));
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.memoryUpdate.currentPlan, /testing whether/);
+});
+
+test('a route response that fails every validation attempt cannot leak through', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route: routeResponse({
+        selectedIndex: 0,
+        intendedHeading: 90,
+        memoryUpdate: { currentPlan: 'Move east using my local evidence.' }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, 'route_model_error');
+  assert.equal(decision.action, 'wait');
 });
 
 test('cue-dependency detection ignores explicit rejection of permission seeking', () => {

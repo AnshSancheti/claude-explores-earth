@@ -235,6 +235,51 @@ function assertsUncitedSharedDestination(...descriptions) {
     .some(statement => destinationClaim.test(statement) && !uncertainty.test(statement));
 }
 
+const BELIEF_TERM_STOPWORDS = new Set([
+  'about', 'across', 'ada', 'along', 'anchor', 'appears', 'area', 'arrow', 'belief',
+  'central', 'convention', 'current', 'diagonal', 'district', 'friend', 'from',
+  'intend', 'intention', 'landmark', 'mark', 'meaning', 'movement', 'partner', 'path', 'physical',
+  'place', 'possible', 'recurring', 'right', 'route', 'sender', 'shared',
+  'street', 'symbol', 'target', 'theo', 'toward', 'visual', 'waypoint', 'with'
+]);
+
+function unsupportedPartnerHypothesisTerms(privateMemory, candidateUpdate = null) {
+  const candidateKey = cleanString(candidateUpdate?.key, 80);
+  return [...new Set((privateMemory?.partnerHypotheses || [])
+    .filter(belief => {
+      if (belief?.evidenceStatus === 'new_corroboration') return false;
+      return !(
+        candidateKey &&
+        candidateKey === cleanString(belief?.key, 80) &&
+        candidateUpdate?.evidenceStatus === 'new_corroboration'
+      );
+    })
+    .flatMap(belief =>
+      `${cleanString(belief?.key, 80)} ${cleanString(belief?.description, 500)}`
+        .toLowerCase()
+        .match(/[a-z][a-z0-9'-]{3,}/g) || []
+    )
+    .filter(term => !BELIEF_TERM_STOPWORDS.has(term)))];
+}
+
+function assertsUnsupportedPartnerHypothesisAsGoal(
+  privateMemory,
+  candidateUpdate,
+  ...descriptions
+) {
+  const terms = unsupportedPartnerHypothesisTerms(privateMemory, candidateUpdate);
+  if (terms.length === 0) return false;
+  const goalLanguage = /\b(?:approach|destination|ending?|goal|head(?:ing)?|progress(?:ion)?|reach|target|toward|towards|waypoint)\b/i;
+  const uncertainty = /\b(?:uncertain|unresolved|possibly|possible|hypothesis|hypothetical|question|whether|maybe|might|could|perhaps|test|verify|clarify|investigate|explore)\b/i;
+  return descriptions
+    .flatMap(value => cleanString(value, 2400).split(/[.!?;]+/))
+    .some(statement => {
+      if (!goalLanguage.test(statement) || uncertainty.test(statement)) return false;
+      const lower = statement.toLowerCase();
+      return terms.some(term => new RegExp(`\\b${escapeRegExp(term)}\\b`, 'i').test(lower));
+    });
+}
+
 export function reconcileRendezvousMessageAction(requestedAction, ...descriptions) {
   if (requestedAction === 'transition' || requestedAction === 'unclear') return requestedAction;
   const text = descriptions.map(value => cleanString(value, 2400)).join(' ');
@@ -494,6 +539,8 @@ This call chooses your action, reconciles the clean first-look reading with hist
 
 For every convention or partner hypothesis update, classify its evidence. "new_corroboration" requires an independently informative cue that supports the proposed meaning, not merely another appearance of the same symbol or your own motif echoed back to you. Use "repetition_only" when a motif recurs without new support for its meaning, "weakened" when new evidence conflicts with it or meaningful movement fails a concrete prediction, and "unclear" when the relationship cannot be assessed. A convention can remain useful visual vocabulary while the hypothesis about what it means weakens. Revise your current plan accordingly: an uncorroborated symbol may be tested as a hypothesis, but not treated as a known shared physical destination.
 
+If fresh environmental evidence supports only your local movement, it does not corroborate an inherited claim about what a recurring symbol means. When your revised plan mentions a distinctive motif from an uncorroborated partner hypothesis, explicitly frame its meaning as uncertain, questioned, or being tested rather than as the endpoint of movement.
+
 A separate call will let you decide what to draw. Explain your actual thinking in first person, including how the drawing affected you when relevant. Do not claim certainty that the evidence does not support.
 
 Return only JSON:
@@ -646,8 +693,16 @@ ${recentFieldNotes}`
             partnerHypothesis
           };
         }
+        if (assertsUnsupportedPartnerHypothesisAsGoal(
+          privateMemory,
+          routeReconciliation.partnerHypothesis,
+          routeDecision.memoryUpdate.currentPlan
+        )) {
+          throw new Error('Rendezvous route plan promoted an unsupported partner hypothesis into a movement goal');
+        }
         break;
       } catch (error) {
+        routeDecision = null;
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
         if (/blank content|observation|memory revision|json/i.test(error.message)) {
@@ -865,6 +920,15 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         )) {
           throw new Error('Rendezvous drawing planner promoted an uncited motif into a shared destination');
         }
+        if (assertsUnsupportedPartnerHypothesisAsGoal(
+          actionMemory,
+          routeReconciliation.partnerHypothesis,
+          candidateDrawingPlan.drawingIntent,
+          candidateDrawingPlan.drawingPrompt,
+          candidateDrawingPlan.continuityReason
+        )) {
+          throw new Error('Rendezvous drawing planner promoted an unsupported partner hypothesis into a movement goal');
+        }
         drawingPlan = candidateDrawingPlan;
         break;
       } catch (error) {
@@ -872,8 +936,8 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         this.logger.warn?.(`Rendezvous drawing plan attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
         drawingRetryFeedback = /multi-panel template/i.test(error.message)
           ? 'Start from a blank page and use one coherent composition centered on the cited contribution. You may retain one small recurring symbol, but do not use panels, a triptych, or the received sheet layout.'
-          : (/uncited motif/i.test(error.message)
-              ? 'Keep the cited contribution primary. Do not describe any inherited symbol, route, target, waypoint, district, or place as a known shared destination. If you retain one, make it subordinate and explicitly uncertain, questioned, tested, transformed, or deliberately repeated.'
+          : (/(?:uncited motif|unsupported partner hypothesis)/i.test(error.message)
+              ? 'Keep the cited contribution primary. Do not describe any inherited symbol, route, target, waypoint, district, or place as a known shared destination or otherwise promote an unsupported partner hypothesis into a movement goal. If you retain one, make it subordinate and explicitly uncertain, questioned, tested, transformed, or deliberately repeated.'
               : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.');
         tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
       }
