@@ -518,6 +518,34 @@ test('a question about a path cannot silently become route guidance', async () =
   assert.doesNotMatch(decision.reasoning, /following the visible path/);
 });
 
+test('a route cannot copy the latest sheet through a local-evidence disclaimer', async () => {
+  const copiedReasoning = 'The latest sheet and my local evidence both point to continuing southeast. Treating the drawing as an unresolved cue, I keep advancing along the same public street.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'shared',
+        sheetInterpretation: 'A tree-lined sidewalk recedes into the distance.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /both point to continuing/i);
+});
+
 test('a sender report can still support an explicit interception inference', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {
@@ -940,6 +968,38 @@ test('drawing planner cannot use an unsupported partner motif as an implied dest
   assert.match(decision.drawingIntent, /questioning whether/);
 });
 
+test('generic planning words are not treated as distinctive unsupported motifs', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing: drawingResponse({
+        contributionKind: 'local_observation',
+        contributionEvidenceId: 'local:0',
+        drawingIntent: 'Show the tree canopy as the dominant local landmark without specifying a destination.',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw one dense tree canopy above a quiet sidewalk, with the distant view faint and subordinate.',
+        groundedFeatureEvidenceIds: ['local:0']
+      })
+    }),
+    logger: { warn() {} }
+  });
+  const priorMemory = {
+    ...input().privateMemory,
+    partnerHypotheses: [{
+      key: 'forward-path-interpretation',
+      description: 'sender guiding along a diagonal path toward a distant meeting point but not specifying exact destination',
+      confidence: 0.2,
+      basisSequences: [1],
+      evidenceStatus: 'unclear'
+    }]
+  };
+
+  const decision = await service.decide(input({ privateMemory: priorMemory }));
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.drawingIntent, /tree canopy/);
+  assert.doesNotMatch(decision.drawingIntent, /Send the cited contribution/);
+});
+
 test('drawing planner neutralizes one stubborn unsupported motif after retries', async () => {
   const priorMemory = {
     ...input().privateMemory,
@@ -968,6 +1028,7 @@ test('drawing planner neutralizes one stubborn unsupported motif after retries',
   assert.match(decision.drawingIntent, /leaving the inherited "star" motif unresolved/);
   assert.match(decision.drawingPrompt, /Do not depict the inherited "star" motif as a destination/);
   assert.match(decision.drawingPrompt, /three repeated stone arches/);
+  assert.equal(decision.messageAction, 'unclear');
 });
 
 test('drawing planner still rejects an unknown contribution evidence ID', async () => {

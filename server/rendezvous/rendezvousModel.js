@@ -380,12 +380,14 @@ function assertsUncitedSharedDestination(...descriptions) {
 
 const BELIEF_TERM_STOPWORDS = new Set([
   'about', 'across', 'ada', 'along', 'anchor', 'appears', 'area', 'arrow', 'belief',
-  'central', 'continued', 'convention', 'current', 'diagonal', 'district', 'friend',
-  'from', 'grid', 'hand', 'inland', 'intend', 'intends', 'intention', 'landmark',
-  'mark', 'marks', 'meaning', 'move', 'moves', 'movement', 'partner', 'path',
-  'physical', 'place', 'possible', 'progression', 'recurring', 'reorientation',
-  'right', 'right-hand', 'route', 'sender', 'shared', 'signaling', 'storefront',
-  'street', 'symbol', 'target', 'theo', 'toward', 'using', 'visual', 'waypoint', 'with'
+  'central', 'continued', 'convention', 'current', 'destination', 'diagonal', 'distant',
+  'district', 'ending', 'endpoint', 'exact', 'fixed', 'friend', 'from', 'goal', 'grid',
+  'guiding', 'hand', 'inland', 'intend', 'intends', 'intention', 'interpretation',
+  'landmark', 'mark', 'marks', 'meaning', 'meeting', 'move', 'moves', 'movement',
+  'partner', 'path', 'physical', 'place', 'point', 'possible', 'progression',
+  'recurring', 'reorientation', 'right', 'right-hand', 'route', 'sender', 'shared',
+  'signaling', 'specifying', 'storefront', 'street', 'symbol', 'target', 'theo',
+  'toward', 'using', 'visual', 'waypoint', 'with'
 ]);
 
 function unsupportedPartnerHypothesisTerms(privateMemory, candidateUpdate = null) {
@@ -531,12 +533,16 @@ function copiesSheetRoute(...descriptions) {
     .flatMap(value => cleanString(value, 1200).split(/[.!?;]+/))
     .map(value => value.trim())
     .filter(Boolean);
-  const cue = '(?:arrow|cue|depicted|direction|drawing|footprints?|forward(?:-movement)? frame|indicated|implied|motif|newest sheet|path|route|sheet|visual|vector)';
+  const cue = '(?:arrow|cue|depicted|direction|drawing|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheet|motif|newest sheet|path|route|sheet|visual|vector)';
   const copyAction = '(?:align(?:ing)? with|continue|follow|mirror|move|preserve|proceed|pursue|reproduce)';
   return statements.some(statement => {
     if (/\b(?:intercept|opposite|counter|cross(?:ing)? path)\b/i.test(statement)) return false;
     return new RegExp(`\\b${copyAction}\\b[^.!;]{0,120}\\b${cue}\\b`, 'i').test(statement) ||
       new RegExp(`\\b${cue}\\b[^.!;]{0,120}\\b(?:reinforce|suggest|tell|direct|ask|imply)\\w*\\b[^.!;]{0,100}\\b(?:continue|follow|move|proceed|advance|head)\\w*\\b`, 'i')
+        .test(statement) ||
+      /\b(?:latest|newest)\s+sheet\b[^.!;]{0,160}\b(?:align|favor|point|reinforce|support|suggest)\w*\b[^.!;]{0,100}\b(?:advanc|continu|head|move|proceed)\w*\b/i
+        .test(statement) ||
+      /\b(?:drawing|sheet)s?\b[^.!;]{0,100}\b(?:cue|frame|motif|path|route)s?\b[^.!;]{0,100}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
         .test(statement) ||
       /\b(?:move|continue|proceed|advance|head)\w*\b[^.!;]{0,80}\b(?:along|with|toward)\b[^.!;]{0,80}\b(?:indicated|implied|depicted|arrow|cue|vector)\b/i
         .test(statement);
@@ -1282,6 +1288,9 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
               `The recurring "${unsupportedGoalTerm}" motif is omitted because its physical meaning remains unsupported.`;
             candidateDrawingPlan.drawingPrompt =
               `Create one coherent handmade, wordless drawing that makes this contribution unmistakably primary: ${candidateDrawingPlan.contributionSummary}. Represent it visually without rendering words. Use only these grounded features as context: ${visibleFeatures}. Do not depict the inherited "${unsupportedGoalTerm}" motif as a destination, waypoint, target, or goal. Include no readable text, letters, numbers, labels, logos, or watermarks.`;
+            if (candidateDrawingPlan.contributionKind === 'local_observation') {
+              candidateDrawingPlan.messageAction = 'unclear';
+            }
             this.logger.warn?.(
               `Rendezvous normalized unsupported drawing motif "${unsupportedGoalTerm}" after ${attempt} attempts`
             );
