@@ -548,6 +548,33 @@ test('a route cannot copy the latest sheet through a local-evidence disclaimer',
   assert.doesNotMatch(decision.reasoning, /both point to continuing/i);
 });
 
+test('a new-sheet hint cannot causally justify continuing a route', async () => {
+  const copiedReasoning = 'New sheet hints at a continuing forward progression along a tree-lined urban corridor. The visible local route options favor the eastward street, so I choose the direct continuation.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'The sender reports moving through a tree-lined corridor.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /sheet hints/i);
+});
+
 test('a sender report can still support an explicit interception inference', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {

@@ -543,14 +543,14 @@ function copiesSheetRoute(...descriptions) {
     .flatMap(value => cleanString(value, 1200).split(/[.!?;]+/))
     .map(value => value.trim())
     .filter(Boolean);
-  const cue = '(?:arrow|cue|depicted|direction|drawing|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheet|motif|newest sheet|path|route|sheet|visual|vector)';
+  const cue = '(?:arrow|cue|depicted|direction|drawing|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheet|motif|new sheet|newest sheet|path|route|sheet|visual|vector)';
   const copyAction = '(?:align(?:ing)? with|continue|follow|mirror|move|preserve|proceed|pursue|reproduce)';
   return statements.some(statement => {
     if (/\b(?:intercept|opposite|counter|cross(?:ing)? path)\b/i.test(statement)) return false;
     return new RegExp(`\\b${copyAction}\\b[^.!;]{0,120}\\b${cue}\\b`, 'i').test(statement) ||
       new RegExp(`\\b${cue}\\b[^.!;]{0,120}\\b(?:reinforce|suggest|tell|direct|ask|imply)\\w*\\b[^.!;]{0,100}\\b(?:continue|follow|move|proceed|advance|head)\\w*\\b`, 'i')
         .test(statement) ||
-      /\b(?:latest|newest)\s+sheet\b[^.!;]{0,160}\b(?:align|favor|point|reinforce|support|suggest)\w*\b[^.!;]{0,100}\b(?:advanc|continu|head|move|proceed)\w*\b/i
+      /\b(?:latest|newest|new)\s+sheet\b[^.!;]{0,160}\b(?:align|favor|hint|point|reinforce|support|suggest)\w*\b[^.!;]{0,100}\b(?:advanc|continu|head|move|proceed)\w*\b/i
         .test(statement) ||
       /\b(?:drawing|sheet)s?\b[^.!;]{0,100}\b(?:cue|frame|motif|path|route)s?\b[^.!;]{0,100}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
         .test(statement) ||
