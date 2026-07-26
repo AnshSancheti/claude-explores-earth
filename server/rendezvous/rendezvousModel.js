@@ -303,7 +303,9 @@ export function isCueDependentSearchPlan(...descriptions) {
   const interpretiveDependency =
     /\b(?:ada|theo|friend|partner|drawing|sheet)\b[^.!;]{0,120}\b(?:clarif|confirm|mean|signal|show)\w*\b/i.test(positiveText) ||
     /\b(?:clarif|confirm|learn|see|understand)\w*\b[^.!;]{0,120}\b(?:ada|theo|friend|partner)\b[^.!;]{0,80}\b(?:intend|mean|signal|want)\w*\b/i.test(positiveText) ||
-    /\b(?:scene|situation)\b[^.!;]{0,80}\bclarif\w*\b[^.!;]{0,120}\b(?:ada|theo|friend|partner)\b/i.test(positiveText);
+    /\b(?:scene|situation)\b[^.!;]{0,80}\bclarif\w*\b[^.!;]{0,120}\b(?:ada|theo|friend|partner)\b/i.test(positiveText) ||
+    /\b(?:clearer|future|later|next|new)\s+(?:drawing|sheet)\b/i.test(positiveText) ||
+    /\b(?:drawing|sheet)\s+from\s+(?:ada|theo|friend|partner)\b[^.!;]{0,100}\bbefore\b/i.test(positiveText);
   if (waitLanguage.test(positiveText) && interpretiveDependency) return true;
   const partnerCuePattern = /\b(?:authorization|cue|permission|signal from (?:ada|theo|my friend|the friend|my partner|the partner)|(?:ada|theo|my friend|the friend|my partner|the partner)(?:'s|’s)? (?:authorization|cue|permission|signal)|(?:ada|theo|my friend|the friend|my partner|the partner) (?:to )?(?:authoriz\w*|cu\w*|instruct\w*|signal\w*))\b/i;
   if (!partnerCuePattern.test(positiveText)) return false;
