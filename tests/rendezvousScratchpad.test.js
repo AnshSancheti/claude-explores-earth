@@ -20,6 +20,9 @@ test('raster sheet changes and transfers only after a durable image commit', () 
     id: 'message-one',
     agentId: 'ada',
     turn: 4,
+    contributionKind: 'local_observation',
+    contributionEvidenceId: 'local:0',
+    contributionSummary: 'A round lamp is now visible between my two arches.',
     drawingIntent: 'Tell Theo to converge near the arches.',
     informationDelta: 'The lamp is newly visible between the two arches.',
     continuityReason: 'The arches repeat Theo’s motif so the new lamp has context.',
@@ -72,6 +75,9 @@ test('raster sheet changes and transfers only after a durable image commit', () 
   assert.equal(committed.currentMessage.to, 'theo');
   assert.equal(committed.sequence, 1);
   assert.match(committed.messageAudit[0].drawingIntent, /converge/);
+  assert.equal(committed.messageAudit[0].contributionKind, 'local_observation');
+  assert.equal(committed.messageAudit[0].contributionEvidenceId, 'local:0');
+  assert.match(committed.messageAudit[0].contributionSummary, /round lamp/);
   assert.match(committed.messageAudit[0].informationDelta, /newly visible/);
   assert.match(committed.messageAudit[0].continuityReason, /repeat Theo/);
   assert.equal(committed.messageAudit[0].messageAction, 'stillness');
@@ -85,7 +91,7 @@ test('raster sheet changes and transfers only after a durable image commit', () 
   assert.equal(Object.hasOwn(publicSheet, 'pendingMessage'), false);
   assert.equal(Object.hasOwn(publicSheet.currentMessage, 'imageFile'), false);
   assert.equal(Object.hasOwn(publicSheet.currentMessage, 'imageSha256'), false);
-  assert.doesNotMatch(JSON.stringify(publicSheet), /arches|converge|drawingPrompt|drawingIntent|informationDelta|continuityReason|messageAction|groundedFeatures|sourcePanoId/);
+  assert.doesNotMatch(JSON.stringify(publicSheet), /arches|converge|drawingPrompt|drawingIntent|contributionKind|contributionEvidenceId|contributionSummary|informationDelta|continuityReason|messageAction|groundedFeatures|sourcePanoId/);
 
   const history = publicRasterScratchpadHistory(committed, {
     imageUrlFor: message => `/drawings/${message.id}`
@@ -94,7 +100,7 @@ test('raster sheet changes and transfers only after a durable image commit', () 
   assert.equal(history.items[0].snapshot.agents.ada.panoId, 'ada-branch');
   assert.equal(history.items[0].snapshot.agents.ada.pathLength, 4);
   assert.equal(history.items[0].snapshot.agents.ada.lastThought.reasoning, 'I will mark the arches.');
-  assert.doesNotMatch(JSON.stringify(history), /drawingPrompt|drawingIntent|informationDelta|continuityReason|messageAction|groundedFeatures/);
+  assert.doesNotMatch(JSON.stringify(history), /drawingPrompt|drawingIntent|contributionKind|contributionEvidenceId|contributionSummary|informationDelta|continuityReason|messageAction|groundedFeatures/);
 });
 
 test('primitive model output is composed into one authored street sketch', async () => {

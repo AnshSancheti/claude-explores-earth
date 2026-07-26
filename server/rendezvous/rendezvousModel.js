@@ -78,6 +78,46 @@ function sanitizeEvidenceDelta(raw) {
   };
 }
 
+const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
+  'local_observation',
+  'own_action',
+  'question',
+  'correction',
+  'acknowledgement',
+  'deliberate_repetition'
+]);
+
+function buildContributionEvidence({ routeDecision, perception, privateMemory }) {
+  const catalog = [];
+  const add = (prefix, values) => {
+    cleanStringList(values, { limit: 6, maxLength: 220 }).forEach((description, index) => {
+      catalog.push({ id: `${prefix}:${index}`, description });
+    });
+  };
+  add('local', routeDecision.observedFeatures);
+  add('action', [
+    `I chose to ${routeDecision.action}${routeDecision.action === 'wait' ? ' at this branch' : ' along the selected public route'}.`
+  ]);
+  add('received', perception.literalContents);
+  add('question', perception.evidenceDelta.unresolvedQuestions);
+  add('contradiction', perception.evidenceDelta.contradictions);
+  add('prior_sent', (privateMemory?.sentMessages || []).slice(-2).map(message =>
+    message.informationDelta || message.intent
+  ));
+  return catalog;
+}
+
+function validContributionEvidencePrefix(kind, evidenceId) {
+  const prefix = String(evidenceId || '').split(':')[0];
+  if (kind === 'local_observation') return prefix === 'local';
+  if (kind === 'own_action') return prefix === 'action';
+  if (kind === 'question') return prefix === 'question';
+  if (kind === 'correction') return prefix === 'contradiction';
+  if (kind === 'acknowledgement') return prefix === 'received';
+  if (kind === 'deliberate_repetition') return prefix === 'prior_sent' || prefix === 'received';
+  return false;
+}
+
 function sanitizeSheetPerception(raw) {
   const sheetInterpretation = cleanString(raw?.sheetInterpretation, 700);
   const numericConfidence = Number(raw?.sheetConfidence);
@@ -456,11 +496,16 @@ ${recentFieldNotes}`
       partnerHypothesis: routeReconciliation.partnerHypothesis
     };
 
+    const contributionEvidence = buildContributionEvidence({
+      routeDecision,
+      perception,
+      privateMemory: actionMemory
+    });
     const drawingSystemPrompt = `You are ${agent.name}. You have reached a real choice while trying to find ${partnerName}, and you currently hold the one physical sheet you pass back and forth.
 
 Decide what wordless drawing would be most useful to send now. You may communicate anything you genuinely believe could help you find each other: what you see, a remembered place, uncertainty, a correction, intended movement, a request, relative spatial relationships, or an invented visual convention. You are not limited to an observational postcard and you may use arrows, diagrams, symbols, maps, perspective, or figurative imagery when you choose.
 
-First identify the information delta: the belief, observation, question, correction, or intentional repetition that makes this message different from the sheets already exchanged. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and your information delta names what the recipient can actually see as different. Repetition does not make a belief more certain. If you are asking your friend to clarify something, make the uncertainty, choice, or missing relationship visibly legible instead of drawing a confident route. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
+First identify your outbound contribution: what this reply contributes from your own observation, chosen action, question, correction, acknowledgement, or deliberate repetition. Cite exactly one evidence ID from the supplied catalog. The information delta is what ${partnerName} can learn from your reply, not a motif you just received. A received-sheet or prior-sent motif may be retained as context, acknowledgement, or deliberate repetition, but never relabel it as a new local observation. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and your information delta names what the recipient can actually see as different. Repetition does not make a belief more certain. If you are asking your friend to clarify something, make the uncertainty, choice, or missing relationship visibly legible instead of drawing a confident route. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
 
 Choose the image's dominant action honestly. The strongest visual cue in your drawing prompt must agree with "messageAction". If the message is stillness, movement or future-route cues may be present but must remain visibly subordinate to stopping, waiting, anchoring, or uncertainty. If the message is movement, do not let barriers or static figures dominate it. A transition may visibly contain both.
 
@@ -468,6 +513,9 @@ Do not include readable text, letters, numbers, captions, street labels, signatu
 
 Return only JSON:
 {
+  "contributionKind": "local_observation" | "own_action" | "question" | "correction" | "acknowledgement" | "deliberate_repetition",
+  "contributionEvidenceId": "one exact ID from the available outbound evidence catalog",
+  "contributionSummary": "what your friend can learn from this contribution, stated without promoting received or remembered imagery into new evidence",
   "drawingIntent": "your private account of what you are trying to tell ${partnerName}",
   "informationDelta": "the genuinely new information, question, correction, or deliberate repetition this sheet contributes",
   "continuityReason": "why recurring motifs are worth retaining, or empty when they are not",
@@ -521,7 +569,10 @@ ${JSON.stringify({
 }, null, 2)}
 
 Your prior private memory:
-${JSON.stringify(actionMemory, null, 2)}`
+${JSON.stringify(actionMemory, null, 2)}
+
+Available outbound evidence catalog:
+${JSON.stringify(contributionEvidence, null, 2)}`
       },
       ...drawingVisualContext
     ];
@@ -540,7 +591,16 @@ ${JSON.stringify(actionMemory, null, 2)}`
           max_completion_tokens: tokenBudget
         });
         const parsed = parseJsonContent(response?.choices?.[0]?.message?.content);
-        drawingPlan = {
+        const contributionKind = OUTBOUND_CONTRIBUTION_KINDS.includes(parsed?.contributionKind)
+          ? parsed.contributionKind
+          : null;
+        const contributionEvidenceId = cleanString(parsed?.contributionEvidenceId, 80);
+        const contributionSummary = cleanString(parsed?.contributionSummary, 500);
+        const citedEvidence = contributionEvidence.find(item => item.id === contributionEvidenceId);
+        const candidateDrawingPlan = {
+          contributionKind,
+          contributionEvidenceId,
+          contributionSummary,
           drawingIntent: cleanString(parsed?.drawingIntent, 700),
           informationDelta: cleanString(parsed?.informationDelta, 700),
           continuityReason: cleanString(parsed?.continuityReason, 500),
@@ -550,9 +610,26 @@ ${JSON.stringify(actionMemory, null, 2)}`
           drawingPrompt: cleanString(parsed?.drawingPrompt, 2400),
           groundedFeatures: cleanStringList(parsed?.groundedFeatures, { limit: 6, maxLength: 180 })
         };
-        if (!drawingPlan.drawingIntent || !drawingPlan.informationDelta || !drawingPlan.messageAction || !drawingPlan.drawingPrompt) {
+        if (
+          !candidateDrawingPlan.contributionKind ||
+          !citedEvidence ||
+          !validContributionEvidencePrefix(
+            candidateDrawingPlan.contributionKind,
+            candidateDrawingPlan.contributionEvidenceId
+          )
+        ) {
+          throw new Error('Rendezvous drawing planner cited invalid outbound contribution evidence');
+        }
+        if (
+          !candidateDrawingPlan.contributionSummary ||
+          !candidateDrawingPlan.drawingIntent ||
+          !candidateDrawingPlan.informationDelta ||
+          !candidateDrawingPlan.messageAction ||
+          !candidateDrawingPlan.drawingPrompt
+        ) {
           throw new Error('Rendezvous drawing planner omitted its intended message, information delta, or dominant action');
         }
+        drawingPlan = candidateDrawingPlan;
         break;
       } catch (error) {
         lastError = error;
@@ -593,6 +670,9 @@ ${JSON.stringify(actionMemory, null, 2)}`
   async reviewDrawing({
     agentName,
     partnerName,
+    contributionKind = '',
+    contributionEvidenceId = '',
+    contributionSummary = '',
     drawingIntent,
     informationDelta = '',
     continuityReason = '',
@@ -681,7 +761,7 @@ Return only JSON:
 
     const systemPrompt = `You are ${agentName}, inspecting the actual wordless drawing that will be handed to ${partnerName}. Decide whether it visibly communicates what you intended.
 
-An independent recipient has already decoded the image without seeing your intent. Judge the drawing from that blind reading, not from what you hoped the composition would imply. Every key claim in your intended delta needs a visible cue a neutral observer could point to. Absence of motion does not communicate waiting when a prominent arrow communicates movement. Reject readable text, material omissions or distortions, contradictions, hidden deltas, and generic or accidental repetition. Repeated imagery is acceptable when the stated continuity reason makes that repetition intentional. Do not demand photorealism.
+An independent recipient has already decoded the image without seeing your intent. Judge the drawing from that blind reading, not from what you hoped the composition would imply. The outbound contribution is the sender's cited addition to the exchange. Reject a drawing that visually promotes received or remembered context into the sender's new observation, or whose dominant imagery hides the cited contribution. Every key claim in your intended delta needs a visible cue a neutral observer could point to. Absence of motion does not communicate waiting when a prominent arrow communicates movement. Reject readable text, material omissions or distortions, contradictions, hidden deltas, and generic or accidental repetition. Repeated imagery is acceptable when the stated continuity reason makes that repetition intentional. Do not demand photorealism.
 
 Return only JSON:
 {
@@ -701,7 +781,12 @@ Return only JSON:
               content: [
                 {
                   type: 'text',
-                  text: `My intended message:
+                  text: `My outbound contribution:
+Kind: ${contributionKind || 'legacy'}
+Evidence ID: ${contributionEvidenceId || 'legacy'}
+What my friend should learn: ${contributionSummary || 'Legacy message: no explicit contribution provenance was recorded.'}
+
+My intended message:
 ${drawingIntent}
 
 What should be new or deliberately repeated:

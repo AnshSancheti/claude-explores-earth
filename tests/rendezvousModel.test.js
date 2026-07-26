@@ -110,6 +110,9 @@ function routeResponse(overrides = {}) {
 
 function drawingResponse(overrides = {}) {
   return {
+    contributionKind: 'local_observation',
+    contributionEvidenceId: 'local:0',
+    contributionSummary: 'Ada can tell Theo that she currently sees three matching stone arches.',
     drawingIntent: 'Tell Theo that I see matching arches and intend to investigate them.',
     informationDelta: 'I now see three matching arches beside a suspended traffic light.',
     continuityReason: 'Repeating the arches links this observation to Theo’s earlier motif.',
@@ -177,6 +180,9 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(decision.memoryUpdate.partnerHypothesis.description, /Washington Square/);
   assert.match(decision.reasoning, /Theo may be describing/);
   assert.match(decision.drawingIntent, /intend to investigate/);
+  assert.equal(decision.contributionKind, 'local_observation');
+  assert.equal(decision.contributionEvidenceId, 'local:0');
+  assert.match(decision.contributionSummary, /three matching stone arches/);
   assert.match(decision.informationDelta, /three matching arches/);
   assert.equal(decision.messageAction, 'movement');
   assert.match(decision.drawingPrompt, /figure moving/);
@@ -186,6 +192,8 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(serialized, /intended movement/);
   assert.match(serialized, /frame of reference/);
   assert.match(serialized, /information delta/);
+  assert.match(serialized, /Available outbound evidence catalog/);
+  assert.match(serialized, /not a motif you just received/);
   assert.match(serialized, /highest-priority evidence.*current visible action/);
   assert.match(serialized, /strongest visual cue.*messageAction/);
   assert.match(serialized, /wordless drawing/);
@@ -201,6 +209,28 @@ test('a branch separates interpretation, route choice, and visual communication'
     .filter(item => item.type === 'image_url')
     .every(item => !item.image_url.url.startsWith('data:image/jpeg')));
   assert.doesNotMatch(serialized, /partnerPadText|ownPadText|distanceToFriend|-?\d+\.\d{4,}/);
+});
+
+test('drawing planner rejects contribution provenance that does not match its cited evidence', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      drawing: drawingResponse({
+        contributionKind: 'local_observation',
+        contributionEvidenceId: 'received:0',
+        contributionSummary: 'I am claiming the received arch motif as my own observation.'
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, 'drawing_plan_error');
+  assert.equal(decision.drawingPrompt, '');
+  assert.equal(requests.filter(request =>
+    /currently hold the one physical sheet/.test(request.messages[0].content)
+  ).length, 2);
 });
 
 test('an already interpreted sheet reuses durable memory without another perception call', async () => {

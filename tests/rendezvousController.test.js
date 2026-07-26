@@ -149,6 +149,9 @@ class FakeRendezvousModel {
       reasoning: `${input.agent.name} follows the clearest unfamiliar public route using only the sheet and the visible street.`,
       observation: `${input.agent.name} sees a broad public route beside a stone facade.`,
       observedFeatures: ['a broad public road', 'a stone facade beside it'],
+      contributionKind: 'local_observation',
+      contributionEvidenceId: 'local:0',
+      contributionSummary: `${input.agent.name} can show the broad public road now visible here.`,
       sheetInterpretation: `${input.agent.name} thinks the current sheet suggests convergence.`,
       sheetConfidence: 0.35,
       memoryUpdate: {

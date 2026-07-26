@@ -127,6 +127,9 @@ test('sent intentions are recorded only as bounded durable episodes', () => {
       sequence,
       to: 'theo',
       intent: `Intent ${sequence}`,
+      contributionKind: 'local_observation',
+      contributionEvidenceId: 'local:0',
+      contributionSummary: `I can show facade ${sequence}.`,
       informationDelta: `New evidence ${sequence}`,
       continuityReason: 'Keep the shared arch motif.',
       groundedFeatures: [`Facade ${sequence}`, 'traffic light'],
@@ -136,6 +139,9 @@ test('sent intentions are recorded only as bounded durable episodes', () => {
   assert.equal(memory.sentMessages.length, 10);
   assert.equal(memory.sentMessages[0].sequence, 11);
   assert.equal(memory.sentMessages.at(-1).intent, 'Intent 20');
+  assert.equal(memory.sentMessages.at(-1).contributionKind, 'local_observation');
+  assert.equal(memory.sentMessages.at(-1).contributionEvidenceId, 'local:0');
+  assert.equal(memory.sentMessages.at(-1).contributionSummary, 'I can show facade 20.');
   assert.equal(memory.sentMessages.at(-1).informationDelta, 'New evidence 20');
   assert.match(memory.sentMessages.at(-1).continuityReason, /shared arch/);
   assert.deepEqual(memory.sentMessages.at(-1).groundedFeatures, ['Facade 20', 'traffic light']);
