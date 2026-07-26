@@ -1,4 +1,4 @@
-export const RENDEZVOUS_MEMORY_VERSION = 3;
+export const RENDEZVOUS_MEMORY_VERSION = 4;
 
 const MAX_TEXT_CHARS = 700;
 const MAX_RECEIVED_SHEETS = 10;
@@ -136,6 +136,11 @@ function normalizeBelief(entry, kind) {
       .map(positiveInt)
       .filter(sequence => sequence > 0))]
       .slice(-8),
+    evidenceStatus: enumValue(
+      entry.evidenceStatus,
+      ['new_corroboration', 'repetition_only', 'weakened', 'unclear', 'legacy'],
+      'legacy'
+    ),
     updatedTurn: positiveInt(entry.updatedTurn),
     kind
   };
@@ -154,19 +159,24 @@ function migrateLegacyMemory(raw, recentNotes) {
     ...cleanList(recentNotes, { limit: 4, itemLength: 240 })
   ].filter(Boolean).join(' ');
   const memory = createAgentMemory();
+  const modernPlan = cleanString(raw?.currentPlan, 500);
+  if (modernPlan) memory.currentPlan = modernPlan;
+  memory.ownObservations = bounded(raw?.ownObservations, normalizeObservation, MAX_OBSERVATIONS);
   if (remembered) {
-    memory.ownObservations.push({
+    memory.ownObservations = [...memory.ownObservations, {
       turn: positiveInt(raw?.updatedTurn),
       description: `Legacy recollection, not yet reverified: ${remembered}`.slice(0, 500),
       sourcePanoId: null,
       createdAt: raw?.updatedAt || null
-    });
+    }].slice(-MAX_OBSERVATIONS);
   }
   memory.receivedSheets = bounded(raw?.receivedSheets, normalizeReceived, MAX_RECEIVED_SHEETS);
   memory.sentMessages = bounded(raw?.sentMessages, normalizeSent, MAX_SENT_MESSAGES);
   memory.visualConventions = bounded(raw?.visualConventions, entry => normalizeBelief(entry, 'convention'), MAX_CONVENTIONS);
   memory.partnerHypotheses = bounded(raw?.partnerHypotheses, entry => normalizeBelief(entry, 'hypothesis'), MAX_HYPOTHESES);
   memory.reconciliations = bounded(raw?.reconciliations, normalizeReconciliation, MAX_RECONCILIATIONS);
+  memory.updatedTurn = positiveInt(raw?.updatedTurn);
+  memory.updatedAt = raw?.updatedAt || null;
   return memory;
 }
 
@@ -225,9 +235,24 @@ function mergeBelief(memory, collectionName, update, turn) {
 
   const existing = memory[collectionName].find(entry => entry.key === candidate.key);
   if (existing) {
-    candidate.basisSequences = [...new Set([...existing.basisSequences, ...candidate.basisSequences])].slice(-8);
-    const combinedCap = kind === 'convention' ? 0.7 : 0.75;
-    candidate.confidence = Math.min(Math.max(existing.confidence, candidate.confidence), combinedCap);
+    if (candidate.evidenceStatus === 'new_corroboration' || candidate.evidenceStatus === 'legacy') {
+      candidate.basisSequences = [...new Set([...existing.basisSequences, ...candidate.basisSequences])].slice(-8);
+      const combinedCap = kind === 'convention' ? 0.7 : 0.75;
+      candidate.confidence = Math.min(Math.max(existing.confidence, candidate.confidence), combinedCap);
+    } else {
+      candidate.basisSequences = existing.basisSequences;
+      const decay = candidate.evidenceStatus === 'weakened'
+        ? 0.12
+        : (kind === 'hypothesis' ? (candidate.evidenceStatus === 'repetition_only' ? 0.05 : 0.025) : 0);
+      candidate.confidence = Math.max(
+        kind === 'convention' ? 0.2 : 0.1,
+        Math.min(candidate.confidence, existing.confidence - decay)
+      );
+    }
+  } else if (candidate.evidenceStatus !== 'new_corroboration' && candidate.evidenceStatus !== 'legacy') {
+    const unsupportedCap = candidate.evidenceStatus === 'weakened' ? 0.25 : 0.35;
+    candidate.confidence = Math.min(candidate.confidence, unsupportedCap);
+    if (candidate.evidenceStatus === 'repetition_only') candidate.basisSequences = [];
   }
   memory[collectionName] = [
     ...memory[collectionName].filter(entry => entry.key !== candidate.key),

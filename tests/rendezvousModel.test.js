@@ -71,13 +71,15 @@ function perceptionResponse() {
       key: 'circle-between-arches',
       description: 'A circle between arches may identify a shared visual target.',
       confidence: 0.55,
-      basisSequences: [5, 7]
+      basisSequences: [5, 7],
+      evidenceStatus: 'new_corroboration'
     },
     partnerHypothesis: {
       key: 'possible-washington-square-arcade',
       description: 'Theo may be near an arcade around Washington Square.',
       confidence: 0.45,
-      basisSequences: [7]
+      basisSequences: [7],
+      evidenceStatus: 'new_corroboration'
     }
   };
 }
@@ -366,6 +368,40 @@ test('a new contribution cannot echo the received multi-panel template', async (
   assert.doesNotMatch(decision.drawingPrompt, /panel|triptych/i);
 });
 
+test('drawing planner cannot promote an uncited recurring motif into a shared destination', async () => {
+  const requests = [];
+  let drawingAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      drawing(request) {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            drawingIntent: 'Show my arches leading to the star as our shared destination.',
+            drawingPrompt: 'Draw one street scene with arches and a star as the shared target.'
+          });
+        }
+        assert.match(
+          request.messages[1].content[0].text,
+          /AUTHORITATIVE PLANNING CORRECTION.*known shared destination/
+        );
+        return drawingResponse({
+          drawingIntent: 'Show my newly observed arches with a small uncertain star retained from earlier sheets.',
+          drawingPrompt: 'Draw one street scene centered on three arches, with a faint unresolved star in one corner.'
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(drawingAttempts, 2);
+  assert.doesNotMatch(decision.drawingIntent, /shared destination|shared target/);
+  assert.match(decision.drawingIntent, /uncertain star/);
+});
+
 test('drawing planner still rejects an unknown contribution evidence ID', async () => {
   const requests = [];
   const service = new RendezvousModelService({
@@ -457,6 +493,47 @@ test('route planning rejects partner-cue dependency but preserves evidence-based
   assert.equal(decision.action, 'wait');
   assert.match(decision.reasoning, /easy to recognize/);
   assert.doesNotMatch(decision.memoryUpdate.currentPlan, /Theo|cue|signal/);
+});
+
+test('repeated-only imagery cannot count as fresh support for the current plan', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route: routeResponse({
+        sheetReconciliation: {
+          currentSenderAction: 'movement',
+          currentSenderActionBasis: 'The same diagonal line and star appear again.',
+          informationNovelty: 'repeated',
+          newEvidenceIds: [],
+          repeatedEvidence: ['the diagonal line and star repeat'],
+          contradictions: [],
+          unresolvedQuestions: ['whether the star identifies any physical place'],
+          informationWorthSending: ['ask whether the star still matters'],
+          planAssessment: 'supporting',
+          conventionUpdate: {
+            key: 'star-route',
+            description: 'A star recurs at the end of a route line.',
+            confidence: 0.6,
+            basisSequences: [7],
+            evidenceStatus: 'repetition_only'
+          },
+          partnerHypothesis: {
+            key: 'star-destination',
+            description: 'The star may be a shared physical destination.',
+            confidence: 0.55,
+            basisSequences: [7],
+            evidenceStatus: 'repetition_only'
+          }
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
+  assert.equal(decision.memoryUpdate.partnerHypothesis.evidenceStatus, 'repetition_only');
 });
 
 test('route planning retries when the selected option contradicts its intended heading', async () => {

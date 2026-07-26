@@ -54,14 +54,20 @@ function cleanStringList(values, { limit = 5, maxLength = 180 } = {}) {
 
 function cleanBeliefUpdate(raw) {
   const numericConfidence = Number(raw?.confidence);
+  const key = cleanString(raw?.key, 80);
+  const evidenceStatus = ['new_corroboration', 'repetition_only', 'weakened', 'unclear']
+    .includes(raw?.evidenceStatus)
+    ? raw.evidenceStatus
+    : (key ? 'unclear' : '');
   return {
-    key: cleanString(raw?.key, 80),
+    key,
     description: cleanString(raw?.description, 500),
     confidence: Number.isFinite(numericConfidence) ? Math.min(1, Math.max(0, numericConfidence)) : 0,
     basisSequences: [...new Set((Array.isArray(raw?.basisSequences) ? raw.basisSequences : [])
       .map(value => Math.floor(Number(value)))
       .filter(value => Number.isFinite(value) && value > 0))]
-      .slice(-8)
+      .slice(-8),
+    evidenceStatus
   };
 }
 
@@ -219,6 +225,14 @@ function authoritativeContributionSummary(kind, description) {
 function usesMultiPanelTemplate(...descriptions) {
   return /\b(?:left|middle|right|three)[ -]?panel\b|\btriptych\b|\bpanel\s*[123]\b/i
     .test(descriptions.map(value => cleanString(value, 2400)).join(' '));
+}
+
+function assertsUncitedSharedDestination(...descriptions) {
+  const destinationClaim = /\b(?:shared|joint|mutual|anticipated|agreed|known)\s+(?:destination|target|waypoint|district|meeting place)\b|\b(?:destination|target|waypoint)\s+(?:for|shared by)\s+(?:both|us|the friends)\b/i;
+  const uncertainty = /\b(?:uncertain|possibly|possible|hypothesis|hypothetical|question|whether|maybe|might|could|perhaps|test|verify|clarify)\b/i;
+  return descriptions
+    .flatMap(value => cleanString(value, 2400).split(/[.!?;]+/))
+    .some(statement => destinationClaim.test(statement) && !uncertainty.test(statement));
 }
 
 export function reconcileRendezvousMessageAction(requestedAction, ...descriptions) {
@@ -476,7 +490,11 @@ You are at a genuine branch. Reconcile your current surroundings, private memory
 ${actionGuidance}
 Avoid indoor shops, private interiors, dead ends, and accidental immediate loops. Google headings are compass bearings clockwise from north.
 
-This call chooses your action, reconciles the clean first-look reading with history, and revises your private plan. You and your friend are peers searching independently; a drawing supplies evidence, questions, and hypotheses, never permission that must arrive before you can act. Remove any leader/follower or "await their cue" premise inherited from memory when revising your plan. The newest sheet's literal contents are the highest-priority evidence for your friend's current visible action. History may explain a recurring motif, but it cannot turn a currently still drawing into evidence that the sender is presently moving. "New evidence" means information directly visible in the newest first-look reading that is absent from earlier sheets; recurring imagery and history-only beliefs belong under repeated evidence even when freshly rendered. Do not turn repetition into confirmation or assume a sender-framed route is an instruction for you. A separate call will let you decide what to draw. Explain your actual thinking in first person, including how the drawing affected you when relevant. Do not claim certainty that the evidence does not support.
+This call chooses your action, reconciles the clean first-look reading with history, and revises your private plan. You and your friend are peers searching independently; a drawing supplies evidence, questions, and hypotheses, never permission that must arrive before you can act. Remove any leader/follower or "await their cue" premise inherited from memory when revising your plan. The newest sheet's literal contents are the highest-priority evidence for your friend's current visible action. History may explain a recurring motif, but it cannot turn a currently still drawing into evidence that the sender is presently moving. "New evidence" means information directly visible in the newest first-look reading that is absent from earlier sheets; recurring imagery and history-only beliefs belong under repeated evidence even when freshly rendered. Do not turn repetition into confirmation or assume a sender-framed route is an instruction for you.
+
+For every convention or partner hypothesis update, classify its evidence. "new_corroboration" requires an independently informative cue that supports the proposed meaning, not merely another appearance of the same symbol or your own motif echoed back to you. Use "repetition_only" when a motif recurs without new support for its meaning, "weakened" when new evidence conflicts with it or meaningful movement fails a concrete prediction, and "unclear" when the relationship cannot be assessed. A convention can remain useful visual vocabulary while the hypothesis about what it means weakens. Revise your current plan accordingly: an uncorroborated symbol may be tested as a hypothesis, but not treated as a known shared physical destination.
+
+A separate call will let you decide what to draw. Explain your actual thinking in first person, including how the drawing affected you when relevant. Do not claim certainty that the evidence does not support.
 
 Return only JSON:
 {
@@ -497,8 +515,8 @@ Return only JSON:
     "unresolvedQuestions": [],
     "informationWorthSending": [],
     "planAssessment": "supporting" | "weakening" | "inconclusive",
-    "conventionUpdate": {"key": "short-stable-key", "description": "possible meaning of a recurring visual convention", "confidence": <0.0-0.7>, "basisSequences": [<real sequence numbers>]},
-    "partnerHypothesis": {"key": "short-stable-key", "description": "current hypothesis about the sender's place or intention", "confidence": <0.0-0.75>, "basisSequences": [<real sequence numbers>]}
+    "conventionUpdate": {"key": "short-stable-key", "description": "possible meaning of a recurring visual convention", "confidence": <0.0-0.7>, "basisSequences": [<real sequence numbers>], "evidenceStatus": "new_corroboration" | "repetition_only" | "weakened" | "unclear"},
+    "partnerHypothesis": {"key": "short-stable-key", "description": "current hypothesis about the sender's place or intention", "confidence": <0.0-0.75>, "basisSequences": [<real sequence numbers>], "evidenceStatus": "new_corroboration" | "repetition_only" | "weakened" | "unclear"}
   },
   "memoryUpdate": {
     "currentPlan": "your current search strategy, revised by fresh local evidence"
@@ -606,16 +624,26 @@ ${recentFieldNotes}`
             .map(id => currentVisibleEvidence.find(item => item.id === id)?.description)
             .filter(Boolean);
           const evidenceDelta = sanitizeEvidenceDelta(rawReconciliation);
+          const conventionUpdate = cleanBeliefUpdate(rawReconciliation?.conventionUpdate);
+          const partnerHypothesis = cleanBeliefUpdate(rawReconciliation?.partnerHypothesis);
+          const normalizedPlanAssessment = (
+            informationNovelty === 'repeated' &&
+            groundedNewEvidence.length === 0 &&
+            evidenceDelta.planAssessment === 'supporting'
+          )
+            ? 'inconclusive'
+            : evidenceDelta.planAssessment;
           routeReconciliation = {
             currentSenderAction,
             currentSenderActionBasis,
             informationNovelty,
             evidenceDelta: {
               ...evidenceDelta,
-              newEvidence: groundedNewEvidence
+              newEvidence: groundedNewEvidence,
+              planAssessment: normalizedPlanAssessment
             },
-            conventionUpdate: cleanBeliefUpdate(rawReconciliation?.conventionUpdate),
-            partnerHypothesis: cleanBeliefUpdate(rawReconciliation?.partnerHypothesis)
+            conventionUpdate,
+            partnerHypothesis
           };
         }
         break;
@@ -658,6 +686,8 @@ ${recentFieldNotes}`
 Decide what wordless drawing would be most useful to send now. You may communicate anything you genuinely believe could help you find each other: what you see, a remembered place, uncertainty, a correction, intended movement, a request, relative spatial relationships, or an invented visual convention. You are not limited to an observational postcard and you may use arrows, diagrams, symbols, maps, perspective, or figurative imagery when you choose.
 
 First identify your outbound contribution: what this reply contributes from your own observation, chosen action, question, correction, acknowledgement, or deliberate repetition. Cite exactly one evidence ID from the supplied catalog. The cited evidence becomes the authoritative information delta; do not restate or enlarge it as a separate claim. Compose each handoff from a conceptually blank page. Make the cited contribution the largest, darkest, or otherwise unmistakable primary subject; prior visual language is optional supporting vocabulary, not a layout template. When the contribution is one simple observation or action, prefer one coherent composition. Use multiple panels only when the cited contribution itself needs a temporal, spatial, or comparative relationship; continuity alone does not justify copying a multi-panel itinerary. A received-sheet or prior-sent motif may be retained as context, acknowledgement, or deliberate repetition, but never relabel it as a new local observation. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and the cited evidence is visually dominant over that context. Repetition does not make a belief more certain. If you are asking your friend to clarify something, make the uncertainty, choice, or missing relationship visibly legible instead of drawing a confident route. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
+
+A recurring motif may remain part of your visual language without becoming a factual place claim. Unless the cited contribution itself grounds a correction or question about it, do not present an inherited symbol, route, district, target, or waypoint as a known shared destination. You may retain one as a subordinate uncertain hypothesis, deliberately repeat it, transform it, question it, or stop using it. Do not silently promote it into the goal of the search.
 
 Choose the image's dominant action honestly. The strongest visual cue in your drawing prompt must agree with "messageAction". If the message is stillness, movement or future-route cues may be present but must remain visibly subordinate to stopping, waiting, anchoring, or uncertainty. If the message is movement, do not let barriers or static figures dominate it. A transition may visibly contain both.
 
@@ -828,6 +858,13 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         ) {
           throw new Error('Rendezvous drawing planner echoed the received multi-panel template for a new contribution');
         }
+        if (assertsUncitedSharedDestination(
+          candidateDrawingPlan.drawingIntent,
+          candidateDrawingPlan.drawingPrompt,
+          candidateDrawingPlan.continuityReason
+        )) {
+          throw new Error('Rendezvous drawing planner promoted an uncited motif into a shared destination');
+        }
         drawingPlan = candidateDrawingPlan;
         break;
       } catch (error) {
@@ -835,7 +872,9 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         this.logger.warn?.(`Rendezvous drawing plan attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
         drawingRetryFeedback = /multi-panel template/i.test(error.message)
           ? 'Start from a blank page and use one coherent composition centered on the cited contribution. You may retain one small recurring symbol, but do not use panels, a triptych, or the received sheet layout.'
-          : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.';
+          : (/uncited motif/i.test(error.message)
+              ? 'Keep the cited contribution primary. Do not describe any inherited symbol, route, target, waypoint, district, or place as a known shared destination. If you retain one, make it subordinate and explicitly uncertain, questioned, tested, transformed, or deliberately repeated.'
+              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.');
         tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
       }
     }

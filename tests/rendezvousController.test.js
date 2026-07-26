@@ -14,6 +14,7 @@ import {
   createRasterScratchpad,
   queueRasterScratchpadMessage
 } from '../server/rendezvous/scratchpad.js';
+import { RENDEZVOUS_MEMORY_VERSION } from '../server/rendezvous/rendezvousMemory.js';
 
 function distance(pos1, pos2) {
   const lat1 = Number(pos1.lat);
@@ -1235,18 +1236,18 @@ test('an active run gains private memory with an exact pre-migration rollback sa
     await migrated.loadState();
 
     assert.equal(migrated.state.turn, 88);
-    assert.equal(migrated.state.agents.ada.privateMemory.version, 3);
-    assert.equal(migrated.state.agents.theo.privateMemory.version, 3);
+    assert.equal(migrated.state.agents.ada.privateMemory.version, RENDEZVOUS_MEMORY_VERSION);
+    assert.equal(migrated.state.agents.theo.privateMemory.version, RENDEZVOUS_MEMORY_VERSION);
     assert.match(migrated.state.agents.ada.privateMemory.ownObservations.at(-1).description, /unfamiliar Manhattan corner/);
     assert.equal(
       await fsp.readFile(
-        path.join(tempDir, 'rendezvous-runs', `${first.state.runId}-pre-memory-v3.json`),
+        path.join(tempDir, 'rendezvous-runs', `${first.state.runId}-pre-memory-v${RENDEZVOUS_MEMORY_VERSION}.json`),
         'utf8'
       ),
       original
     );
     const persisted = JSON.parse(await fsp.readFile(path.join(tempDir, 'rendezvous-current.json'), 'utf8'));
-    assert.equal(persisted.agents.ada.privateMemory.version, 3);
+    assert.equal(persisted.agents.ada.privateMemory.version, RENDEZVOUS_MEMORY_VERSION);
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
     else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;

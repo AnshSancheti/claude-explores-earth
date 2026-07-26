@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  RENDEZVOUS_MEMORY_VERSION,
   applyMemoryRevision,
   createAgentMemory,
   createMovementMemory,
@@ -18,13 +19,42 @@ test('legacy agents gain a provenance memory grounded in low-confidence recollec
   }, {
     recentNotes: ['I passed brick arches.', 'I kept north along a broad avenue.']
   });
-  assert.equal(memory.version, 3);
+  assert.equal(memory.version, RENDEZVOUS_MEMORY_VERSION);
   assert.match(memory.ownObservations.at(-1).description, /Legacy recollection/);
   assert.match(memory.ownObservations.at(-1).description, /brick arches/);
   assert.match(memory.currentPlan, /local evidence/);
   assert.doesNotMatch(memory.currentPlan, /arch belief/);
   assert.equal(memory.receivedSheets.length, 0);
   assert.equal(memory.sentMessages.length, 0);
+});
+
+test('v3 memory migration preserves the active plan, observations, and belief provenance', () => {
+  const memory = normalizeAgentMemory({
+    version: 3,
+    currentPlan: 'Test whether the recurring star predicts a real landmark.',
+    ownObservations: [{
+      turn: 12,
+      description: 'A median tree stands behind curb barriers.',
+      sourcePanoId: 'pano-12'
+    }],
+    partnerHypotheses: [{
+      key: 'star-destination',
+      description: 'The star may identify a shared destination.',
+      confidence: 0.63,
+      basisSequences: [8, 10],
+      updatedTurn: 12
+    }],
+    updatedTurn: 12,
+    updatedAt: '2026-07-26T04:00:00.000Z'
+  });
+
+  assert.equal(memory.version, RENDEZVOUS_MEMORY_VERSION);
+  assert.match(memory.currentPlan, /recurring star/);
+  assert.equal(memory.ownObservations[0].sourcePanoId, 'pano-12');
+  assert.equal(memory.partnerHypotheses[0].confidence, 0.63);
+  assert.equal(memory.partnerHypotheses[0].evidenceStatus, 'legacy');
+  assert.deepEqual(memory.partnerHypotheses[0].basisSequences, [8, 10]);
+  assert.equal(memory.updatedTurn, 12);
 });
 
 test('memory revision records sourced evidence and caps unsupported confidence', () => {
@@ -117,6 +147,92 @@ test('repetition preserves provenance without converting ambiguous sheets into c
   assert.equal(memory.visualConventions[0].confidence, 0.7);
   assert.equal(memory.partnerHypotheses[0].confidence, 0.75);
   assert.deepEqual(memory.visualConventions[0].basisSequences, [1, 2, 3, 4]);
+});
+
+test('echoed symbols preserve conventions while unsupported partner hypotheses decay', () => {
+  let memory = createAgentMemory();
+  memory = applyMemoryRevision(memory, {
+    conventionUpdate: {
+      key: 'star-route',
+      description: 'A star recurs at the end of a drawn path.',
+      confidence: 0.65,
+      basisSequences: [1],
+      evidenceStatus: 'new_corroboration'
+    },
+    partnerHypothesis: {
+      key: 'star-destination',
+      description: 'The star may be a shared physical destination.',
+      confidence: 0.65,
+      basisSequences: [1],
+      evidenceStatus: 'new_corroboration'
+    }
+  }, {
+    turn: 1,
+    sheetMessage: { sequence: 1, from: 'theo' },
+    sheetInterpretation: 'A star ends a drawn path.'
+  });
+  memory = applyMemoryRevision(memory, {
+    conventionUpdate: {
+      key: 'star-route',
+      description: 'A star recurs at the end of a drawn path.',
+      confidence: 0.68,
+      basisSequences: [1, 2],
+      evidenceStatus: 'repetition_only'
+    },
+    partnerHypothesis: {
+      key: 'star-destination',
+      description: 'The star may still be a shared physical destination.',
+      confidence: 0.68,
+      basisSequences: [1, 2],
+      evidenceStatus: 'repetition_only'
+    }
+  }, {
+    turn: 2,
+    sheetMessage: { sequence: 2, from: 'theo' },
+    sheetInterpretation: 'The same star and path appear again.'
+  });
+
+  assert.equal(memory.version, 4);
+  assert.equal(memory.visualConventions[0].confidence, 0.65);
+  assert.deepEqual(memory.visualConventions[0].basisSequences, [1]);
+  assert.equal(memory.visualConventions[0].evidenceStatus, 'repetition_only');
+  assert.equal(memory.partnerHypotheses[0].confidence, 0.6);
+  assert.deepEqual(memory.partnerHypotheses[0].basisSequences, [1]);
+  assert.equal(memory.partnerHypotheses[0].evidenceStatus, 'repetition_only');
+});
+
+test('explicitly weakened hypotheses lose confidence faster than an echo', () => {
+  let memory = createAgentMemory();
+  memory = applyMemoryRevision(memory, {
+    partnerHypothesis: {
+      key: 'arch-meeting-place',
+      description: 'The arch may be a meeting place.',
+      confidence: 0.7,
+      basisSequences: [1],
+      evidenceStatus: 'new_corroboration'
+    }
+  }, {
+    turn: 1,
+    sheetMessage: { sequence: 1, from: 'theo' },
+    sheetInterpretation: 'A figure waits beneath an arch.'
+  });
+  memory = applyMemoryRevision(memory, {
+    partnerHypothesis: {
+      key: 'arch-meeting-place',
+      description: 'The arch no longer appears to be a reliable meeting place.',
+      confidence: 0.7,
+      basisSequences: [2],
+      evidenceStatus: 'weakened'
+    }
+  }, {
+    turn: 2,
+    sheetMessage: { sequence: 2, from: 'theo' },
+    sheetInterpretation: 'The figure has moved away from the arch.'
+  });
+
+  assert.equal(memory.partnerHypotheses[0].confidence, 0.58);
+  assert.deepEqual(memory.partnerHypotheses[0].basisSequences, [1]);
+  assert.equal(memory.partnerHypotheses[0].evidenceStatus, 'weakened');
 });
 
 test('sent intentions are recorded only as bounded durable episodes', () => {
