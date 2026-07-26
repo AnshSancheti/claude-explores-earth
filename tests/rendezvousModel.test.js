@@ -451,6 +451,36 @@ test('drawing planner cannot use an unsupported partner motif as an implied dest
   assert.match(decision.drawingIntent, /questioning whether/);
 });
 
+test('drawing planner neutralizes one stubborn unsupported motif after retries', async () => {
+  const priorMemory = {
+    ...input().privateMemory,
+    partnerHypotheses: [{
+      key: 'star-destination',
+      description: 'Theo may intend the star to mark a physical destination.',
+      confidence: 0.4,
+      basisSequences: [5],
+      evidenceStatus: 'unclear'
+    }]
+  };
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing: drawingResponse({
+        drawingIntent: 'Show my arches leading toward the star.',
+        drawingPrompt: 'Draw one street scene with a path ending at a distant star.',
+        continuityReason: 'The star keeps our forward movement coherent.'
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({ privateMemory: priorMemory }));
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.drawingIntent, /leaving the inherited "star" motif unresolved/);
+  assert.match(decision.drawingPrompt, /Do not depict the inherited "star" motif as a destination/);
+  assert.match(decision.drawingPrompt, /three repeated stone arches/);
+});
+
 test('drawing planner still rejects an unknown contribution evidence ID', async () => {
   const requests = [];
   const service = new RendezvousModelService({
@@ -690,6 +720,36 @@ test('route planning cannot make an unsupported partner motif its movement goal'
   assert.equal(routeAttempts, 2);
   assert.equal(decision.fallbackCause, null);
   assert.match(decision.memoryUpdate.currentPlan, /testing whether/);
+});
+
+test('route planning neutralizes one stubborn unsupported motif after retries', async () => {
+  const priorMemory = {
+    ...input().privateMemory,
+    partnerHypotheses: [{
+      key: 'star-destination',
+      description: 'Theo may intend the star to mark a physical destination.',
+      confidence: 0.4,
+      basisSequences: [5],
+      evidenceStatus: 'unclear'
+    }]
+  };
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route: routeResponse({
+        memoryUpdate: {
+          currentPlan: 'Continue north toward the star as the destination.'
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({ privateMemory: priorMemory }));
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.memoryUpdate.currentPlan, /uncertain visual vocabulary/);
+  assert.match(decision.memoryUpdate.currentPlan, /not a known physical destination/);
+  assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
 });
 
 test('ordinary spatial language is not mistaken for an unsupported visual motif', async () => {

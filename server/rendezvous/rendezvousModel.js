@@ -755,7 +755,22 @@ ${recentFieldNotes}`
           );
         }
         if (validationErrors.length > 0) {
-          throw new Error(validationErrors.join('; '));
+          if (
+            attempt >= this.maxAttempts &&
+            validationErrors.length === 1 &&
+            unsupportedGoalTerm
+          ) {
+            routeDecision.memoryUpdate.currentPlan =
+              `Continue with the chosen locally justified action while treating the recurring "${unsupportedGoalTerm}" motif as uncertain visual vocabulary, not a known physical destination.`;
+            if (routeReconciliation.evidenceDelta.planAssessment === 'supporting') {
+              routeReconciliation.evidenceDelta.planAssessment = 'inconclusive';
+            }
+            this.logger.warn?.(
+              `Rendezvous normalized unsupported route motif "${unsupportedGoalTerm}" after ${attempt} attempts`
+            );
+          } else {
+            throw new Error(validationErrors.join('; '));
+          }
         }
         break;
       } catch (error) {
@@ -988,9 +1003,24 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           candidateDrawingPlan.continuityReason
         );
         if (unsupportedGoalTerm) {
-          throw new Error(
-            `Rendezvous drawing planner promoted an unsupported partner hypothesis motif "${unsupportedGoalTerm}" into a movement goal`
-          );
+          if (attempt >= this.maxAttempts) {
+            const visibleFeatures = candidateDrawingPlan.groundedFeatures.length > 0
+              ? candidateDrawingPlan.groundedFeatures.join('; ')
+              : candidateDrawingPlan.contributionSummary;
+            candidateDrawingPlan.drawingIntent =
+              `Send the cited contribution as primary evidence while leaving the inherited "${unsupportedGoalTerm}" motif unresolved rather than depicting it as a destination.`;
+            candidateDrawingPlan.continuityReason =
+              `The recurring "${unsupportedGoalTerm}" motif is omitted because its physical meaning remains unsupported.`;
+            candidateDrawingPlan.drawingPrompt =
+              `Create one coherent handmade, wordless drawing that makes this contribution unmistakably primary: ${candidateDrawingPlan.contributionSummary}. Represent it visually without rendering words. Use only these grounded features as context: ${visibleFeatures}. Do not depict the inherited "${unsupportedGoalTerm}" motif as a destination, waypoint, target, or goal. Include no readable text, letters, numbers, labels, logos, or watermarks.`;
+            this.logger.warn?.(
+              `Rendezvous normalized unsupported drawing motif "${unsupportedGoalTerm}" after ${attempt} attempts`
+            );
+          } else {
+            throw new Error(
+              `Rendezvous drawing planner promoted an unsupported partner hypothesis motif "${unsupportedGoalTerm}" into a movement goal`
+            );
+          }
         }
         drawingPlan = candidateDrawingPlan;
         break;
