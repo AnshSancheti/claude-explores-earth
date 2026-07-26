@@ -1437,6 +1437,9 @@ test('route planning rejects partner-cue dependency but preserves evidence-based
             }
           });
         }
+        const correction = requests.at(-1).messages[1].content[0].text;
+        assert.match(correction, /friend cannot cue, authorize, instruct, or grant permission/i);
+        assert.match(correction, /justify it only by a recognizable feature visible/i);
         return routeResponse({
           action: 'wait',
           reasoning: 'I will hold briefly because this distinctive arch is easy to recognize.',
