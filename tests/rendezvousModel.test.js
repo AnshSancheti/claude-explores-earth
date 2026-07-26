@@ -1,10 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  contaminatesRouteReasoning,
-  containsUnsupportedSheetGeography,
-  containsUnsupportedSheetInstruction,
-  projectsActionFromSheet,
   RendezvousModelService,
   sanitizeRendezvousDecision
 } from '../server/rendezvous/rendezvousModel.js';
@@ -32,349 +28,278 @@ function input(overrides = {}) {
       buffer: Buffer.from('older-sheet')
     }],
     privateMemory: {
-      version: 2,
+      version: 3,
       currentPlan: 'Test the circle convention at the next branch.',
       ownObservations: [{ description: 'I followed a row of stone arches.' }],
-      visualConventions: [{ key: 'yellow-circle', description: 'A yellow circle recurs beside stone arches.', confidence: 0.35, basisSequences: [5] }]
+      receivedSheets: [],
+      sentMessages: [],
+      reconciliations: [],
+      visualConventions: [{
+        key: 'yellow-circle',
+        description: 'A yellow circle recurs beside stone arches.',
+        confidence: 0.35,
+        basisSequences: [5]
+      }],
+      partnerHypotheses: []
     },
     movementSinceDecision: { steps: 4, distanceMeters: 90, headings: [0, 10], routeLabels: [] },
     ...overrides
   };
 }
 
-test('branch decision revises private memory and authors a grounded visual message without transcript channels', async () => {
-  let request;
-  const requests = [];
-  const client = {
-    chat: {
-      completions: {
-        async create(value) {
-          request = value;
-          requests.push(value);
-          return {
-            choices: [{
-              message: {
-                content: JSON.stringify({
-                  action: 'move',
-                  selectedIndex: 1,
-                  intendedHeading: 0,
-                  reasoning: 'The northern opening feels useful.',
-                  observation: 'Repeated stone arches line the northern opening.',
-                  observedFeatures: ['three repeated stone arches', 'a suspended traffic light beside them'],
-                  sheetInterpretation: 'A bright circle appears between two repeated arch forms; Theo may be near similar masonry.',
-                  sheetConfidence: 0.4,
-                  memoryUpdate: {
-                    currentPlan: 'Move through the arch-lined opening while testing the circle hypothesis.',
-                    conventionUpdate: {
-                      key: 'yellow-circle',
-                      description: 'A yellow circle recurs between repeated arch forms.',
-                      confidence: 0.5,
-                      basisSequences: [5, 7]
-                    },
-                    partnerHypothesis: {
-                      key: 'seeking-landmark',
-                      description: 'Theo may be looking for a visually memorable public place.',
-                      confidence: 0.35,
-                      basisSequences: [7]
-                    }
-                  },
-                  drawingIntent: 'Show Theo the repeated arches beside the suspended traffic light.',
-                  drawingPrompt: 'Sketch the repeated arches as a fading rhythm with a lone yellow circle.'
-                })
-              }
-            }]
-          };
-        }
-      }
+function perceptionResponse() {
+  return {
+    literalContents: ['a bright circle between two repeated arch forms'],
+    possiblePlaces: ['possibly an arcade near Washington Square, with low confidence'],
+    possibleIntentions: ['Theo may be asking Ada to compare or approach similar arches'],
+    sheetInterpretation: 'Theo may be near a recognizable arcade and may want me to answer with comparable evidence.',
+    sheetConfidence: 0.58,
+    evidenceDelta: {
+      newEvidence: ['the circle is now placed between arches'],
+      repeatedEvidence: ['the arch motif appeared before'],
+      contradictions: [],
+      unresolvedQuestions: ['whether the circle represents a lamp or destination'],
+      informationWorthSending: ['whether I also see repeated arches'],
+      planAssessment: 'supporting'
+    },
+    conventionUpdate: {
+      key: 'circle-between-arches',
+      description: 'A circle between arches may identify a shared visual target.',
+      confidence: 0.55,
+      basisSequences: [5, 7]
+    },
+    partnerHypothesis: {
+      key: 'possible-washington-square-arcade',
+      description: 'Theo may be near an arcade around Washington Square.',
+      confidence: 0.45,
+      basisSequences: [7]
     }
   };
-  const service = new RendezvousModelService({ client, logger: { warn() {} } });
-  const decision = await service.decide(input());
+}
 
-  assert.equal(decision.selectedIndex, 1);
-  assert.equal(decision.action, 'move');
-  assert.match(decision.drawingPrompt, /repeated arches/);
-  assert.match(decision.sheetInterpretation, /bright circle/);
-  assert.match(decision.memoryUpdate.conventionUpdate.description, /yellow circle/);
-  assert.equal(decision.observedFeatures.length, 2);
-  const serialized = JSON.stringify(requests);
-  assert.equal(requests.length, 2);
-  assert.match(serialized, /route-independent visual reading/);
-  assert.match(serialized, /no readable text/);
-  assert.match(serialized, /Symbols may support the observation, but they must not dominate it/);
-  assert.match(serialized, /not a passive target/);
-  assert.match(serialized, /evidence about the sender's surroundings and memory/);
-  assert.match(serialized, /wordless observational postcard/);
-  assert.match(serialized, /absence of a mark is not evidence/);
-  assert.match(serialized, /row of stone arches/);
-  assert.match(requests[0].messages[1].content[0].text, /History image 1: sheet sequence 5/);
-  assert.equal(requests[0].messages[1].content.length, 3);
-  assert.equal(request.messages[1].content.length, 3);
-  assert.doesNotMatch(JSON.stringify(request.messages[1].content), /c2hlZXQ=|b2xkZXItc2hlZXQ=/);
-  assert.match(request.messages[1].content[0].text, /"distanceMeters": 90/);
-  assert.doesNotMatch(serialized, /referenceViewIndices/);
-  assert.doesNotMatch(serialized, /partnerPadText|ownPadText|distanceToFriend|-?\d+\.\d{4,}/);
-});
-
-test('decision sanitizer reconciles an unambiguous intended heading', () => {
-  const decision = sanitizeRendezvousDecision({
-    selectedIndex: 0,
-    intendedHeading: 2,
-    drawingPrompt: 'draw a doorway'
-  }, input().options);
-  assert.equal(decision.selectedIndex, 1);
-});
-
-test('visual-channel geography guard rejects names and compass projection but permits literal features', () => {
-  assert.equal(containsUnsupportedSheetGeography('the E 13th St corridor'), true);
-  assert.equal(containsUnsupportedSheetGeography('Prince St beside Manhattan'), true);
-  assert.equal(containsUnsupportedSheetGeography('continue southeast'), true);
-  assert.equal(containsUnsupportedSheetGeography('three iron arches beside a suspended globe lamp'), false);
-});
-
-test('visual-channel instruction guard separates observation from motion commands', () => {
-  assert.equal(containsUnsupportedSheetInstruction('continue along the same forward axis'), true);
-  assert.equal(containsUnsupportedSheetInstruction('show a meetup corridor with motion toward its vanishing point'), true);
-  assert.equal(containsUnsupportedSheetInstruction('three iron arches beside a suspended globe lamp'), false);
-  assert.equal(containsUnsupportedSheetInstruction('a cyclist moving beside three parked taxis'), false);
-  assert.equal(projectsActionFromSheet('Theo\'s sheet reinforces that I should keep moving forward.'), true);
-  assert.equal(projectsActionFromSheet('I choose the open street because its facade is visually distinctive.'), false);
-  assert.equal(contaminatesRouteReasoning('The sheet suggests a continuation along a similar corridor.'), true);
-  assert.equal(contaminatesRouteReasoning('I will wait here to stay synchronized.'), true);
-  assert.equal(contaminatesRouteReasoning('I will wait while comparing local cues with the received visual memory.'), true);
-  assert.equal(contaminatesRouteReasoning('I will retrace to consolidate our joint plan.'), true);
-  assert.equal(contaminatesRouteReasoning('The unfamiliar opening has the most distinctive facade.'), false);
-});
-
-test('model retries when an ambiguous sheet is projected into a route instruction', async () => {
-  let calls = 0;
-  const baseDecision = {
+function routeResponse(overrides = {}) {
+  return {
     action: 'move',
     selectedIndex: 1,
     intendedHeading: 0,
-    observation: 'Three iron arches sit beside one suspended globe lamp.',
-    observedFeatures: ['three iron arches', 'one suspended globe lamp beside them'],
-    sheetConfidence: 0.35,
+    reasoning: 'Theo may be describing an arcade, and the northern opening has the closest matching repeated masonry.',
+    observation: 'Repeated stone arches line the northern opening.',
+    observedFeatures: ['three repeated stone arches', 'a suspended traffic light beside them'],
     memoryUpdate: {
-      currentPlan: 'Search for uncommon arrangements while avoiding immediate loops.',
-      conventionUpdate: {},
-      partnerHypothesis: {}
+      currentPlan: 'Test the possible arcade hypothesis while looking for stronger geographic evidence.'
     },
-    drawingIntent: 'Preserve the uncommon arch-and-lamp arrangement.',
-    drawingPrompt: 'Sketch three iron arches with one suspended globe lamp beside them.'
+    ...overrides
   };
-  const client = {
-    chat: {
-      completions: {
-        async create() {
-          calls += 1;
-          const content = calls === 1
-            ? {
-                ...baseDecision,
-                reasoning: 'Theo\'s sheet signals me to continue forward.',
-                sheetInterpretation: 'Theo wants me to continue along the same forward axis.'
-              }
-            : {
-                ...baseDecision,
-                reasoning: 'The unfamiliar opening has the most distinctive facade.',
-                sheetInterpretation: 'A row of dark vertical marks sits beneath a pale circular form; Theo may be near a strongly patterned facade.'
-              };
-          return { choices: [{ message: { content: JSON.stringify(content) } }] };
-        }
-      }
-    }
+}
+
+function drawingResponse(overrides = {}) {
+  return {
+    drawingIntent: 'Tell Theo that I see matching arches and intend to investigate them.',
+    drawingPrompt: 'Draw two groups of arches echoing each other, with one small figure moving toward the nearer group and a large uncertain circle above the distant group.',
+    groundedFeatures: ['three repeated stone arches', 'a suspended traffic light beside them'],
+    ...overrides
   };
-  const service = new RendezvousModelService({ client, logger: { warn() {} } });
-  const decision = await service.decide(input());
+}
 
-  assert.equal(calls, 3);
-  assert.match(decision.sheetInterpretation, /vertical marks/);
-  assert.doesNotMatch(decision.reasoning, /sheet signals/);
-});
-
-test('model retries when route reasoning merely associates motion with sheet context', async () => {
-  let calls = 0;
-  let actionCalls = 0;
-  const client = {
+function stagedClient(requests, overrides = {}) {
+  return {
     chat: {
       completions: {
         async create(request) {
-          calls += 1;
-          const isPerception = /route-independent visual reading/.test(request.messages[0].content);
-          if (!isPerception) actionCalls += 1;
-          return {
-            choices: [{
-              message: {
-                content: JSON.stringify({
-                  action: 'move',
-                  selectedIndex: 1,
-                  reasoning: !isPerception && actionCalls === 1
-                    ? 'Choosing a promising public route while interpreting the sheet context for alignment.'
-                    : 'The unfamiliar opening has a distinctive row of repeated arches.',
-                  observation: 'Three iron arches sit beside one suspended globe lamp.',
-                  observedFeatures: ['three iron arches', 'one suspended globe lamp beside them'],
-                  sheetInterpretation: 'Dark vertical marks sit beneath a pale circle; the sender may be near a strongly patterned facade.',
-                  sheetConfidence: 0.35,
-                  memoryUpdate: {
-                    currentPlan: 'Compare uncommon visual arrangements and avoid immediate loops.'
-                  },
-                  drawingIntent: 'Preserve the uncommon arch-and-lamp arrangement.',
-                  drawingPrompt: 'Sketch three iron arches with one suspended globe lamp beside them.'
-                })
-              }
-            }]
-          };
+          requests.push(request);
+          const prompt = request.messages[0].content;
+          let payload;
+          if (/privately interpreting the newest wordless drawing/.test(prompt)) {
+            payload = overrides.perception || perceptionResponse();
+          } else if (/inspecting the actual wordless drawing/.test(prompt)) {
+            payload = overrides.review || {
+              accepted: true,
+              assessment: 'The paired arches and intended movement are visually clear.',
+              revisionPrompt: ''
+            };
+          } else if (/currently hold the one physical sheet/.test(prompt)) {
+            payload = overrides.drawing || drawingResponse();
+          } else {
+            payload = overrides.route || routeResponse();
+          }
+          return { choices: [{ message: { content: JSON.stringify(payload) } }] };
         }
       }
     }
   };
-  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+}
+
+test('a branch separates interpretation, route choice, and visual communication', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests),
+    logger: { warn() {} }
+  });
   const decision = await service.decide(input());
 
-  assert.equal(calls, 3);
-  assert.equal(actionCalls, 2);
-  assert.match(decision.reasoning, /repeated arches/);
+  assert.equal(requests.length, 3);
+  assert.equal(decision.action, 'move');
+  assert.equal(decision.selectedIndex, 1);
+  assert.match(decision.sheetInterpretation, /recognizable arcade/);
+  assert.deepEqual(decision.reconciliation.newEvidence, ['the circle is now placed between arches']);
+  assert.match(decision.memoryUpdate.partnerHypothesis.description, /Washington Square/);
+  assert.match(decision.reasoning, /Theo may be describing/);
+  assert.match(decision.drawingIntent, /intend to investigate/);
+  assert.match(decision.drawingPrompt, /figure moving/);
+
+  const serialized = JSON.stringify(requests);
+  assert.match(serialized, /privately name possible landmarks/);
+  assert.match(serialized, /intended movement/);
+  assert.match(serialized, /wordless drawing/);
+  assert.match(serialized, /no readable text/);
+  assert.match(requests[0].messages[1].content[0].text, /History image 1: sheet sequence 5/);
+  assert.equal(requests[0].messages[1].content.length, 3);
+  assert.doesNotMatch(serialized, /partnerPadText|ownPadText|distanceToFriend|-?\d+\.\d{4,}/);
 });
 
-test('a blank first sheet cannot become invented partner evidence', async () => {
-  const client = {
-    chat: {
-      completions: {
-        async create() {
-          return {
-            choices: [{
-              message: {
-                content: JSON.stringify({
-                  action: 'move',
-                  selectedIndex: 1,
-                  reasoning: 'I choose the opening with the most distinctive facade.',
-                  observation: 'Three iron arches sit beside one suspended globe lamp.',
-                  observedFeatures: ['three iron arches', 'one suspended globe lamp beside them'],
-                  sheetInterpretation: 'The blank sheet tells me Theo is on Prince St heading southeast.',
-                  sheetConfidence: 0.9,
-                  memoryUpdate: {
-                    currentPlan: 'Keep comparing uncommon facade arrangements.',
-                    partnerHypothesis: {
-                      key: 'invented-location',
-                      description: 'Theo is on Prince St.',
-                      confidence: 0.9,
-                      basisSequences: []
-                    }
-                  },
-                  drawingIntent: 'Show the uncommon arch-and-lamp arrangement.',
-                  drawingPrompt: 'Sketch three iron arches with one suspended globe lamp beside them.'
-                })
-              }
-            }]
-          };
-        }
-      }
-    }
+test('an already interpreted sheet reuses durable memory without another perception call', async () => {
+  const requests = [];
+  const remembered = {
+    ...input().privateMemory,
+    receivedSheets: [{
+      sequence: 7,
+      from: 'theo',
+      interpretation: 'Theo may be near a recognizable arcade.',
+      confidence: 0.5,
+      literalContents: ['two arches and one circle'],
+      possiblePlaces: ['possibly Washington Square'],
+      possibleIntentions: ['possibly asking me to compare arches']
+    }],
+    reconciliations: [{
+      sheetSequence: 7,
+      newEvidence: ['an arch motif'],
+      planAssessment: 'supporting'
+    }]
   };
-  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  const service = new RendezvousModelService({
+    client: stagedClient(requests),
+    logger: { warn() {} }
+  });
+  const decision = await service.decide(input({ privateMemory: remembered }));
+
+  assert.equal(requests.length, 2);
+  assert.equal(requests.some(request =>
+    /privately interpreting the newest wordless drawing/.test(request.messages[0].content)
+  ), false);
+  assert.match(decision.sheetInterpretation, /recognizable arcade/);
+});
+
+test('a blank first sheet cannot create partner evidence', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests),
+    logger: { warn() {} }
+  });
   const decision = await service.decide(input({ sheetMessage: null, visualHistory: [] }));
 
+  assert.equal(requests.length, 2);
   assert.equal(decision.sheetInterpretation, '');
   assert.equal(decision.sheetConfidence, 0);
   assert.equal(decision.memoryUpdate.partnerHypothesis.description, '');
 });
 
-test('decision sanitizer bounds deliberate waiting and private memory fields', () => {
-  const decision = sanitizeRendezvousDecision({
-    action: 'wait',
-    waitTurns: 99,
-    selectedIndex: 0,
-    sheetInterpretation: 'A blue line sits beside a stone arch.',
-    observedFeatures: ['one stone arch', 'a traffic light beside the arch'],
-    drawingIntent: 'I will stay beside the arch.',
-    memoryUpdate: {
-      currentPlan: 'Wait here.',
-      conventionUpdate: {
-        key: 'blue-line',
-        description: 'A blue line recurs beside a stone arch.',
-        confidence: 0.4,
-        basisSequences: [7]
-      }
-    },
-    drawingPrompt: 'A still figure beneath one arch with a blue line beside it.'
-  }, input().options);
-  assert.equal(decision.action, 'wait');
-  assert.equal(decision.waitTurns, 6);
-  assert.equal(decision.memoryUpdate.currentPlan, 'Wait here.');
-  assert.match(decision.drawingIntent, /stay/);
-});
-
-test('expired local patience removes waiting from the model decision', async () => {
-  let request;
-  let calls = 0;
-  const client = {
-    chat: {
-      completions: {
-        async create(value) {
-          request = value;
-          calls += 1;
-          return {
-            choices: [{
-              message: {
-                content: JSON.stringify({
-                  action: 'move',
-                  selectedIndex: 1,
-                  reasoning: 'Holding this corner has taught me nothing new, so I will move.',
-                  observation: 'The northern public route remains open.',
-                  observedFeatures: ['a broad road opening', 'a stone facade on its corner'],
-                  sheetInterpretation: 'Two dark forms flank a pale circle; the sender may be near a symmetrical facade.',
-                  memoryUpdate: {
-                    currentPlan: 'Break a mutual pause by moving and showing the chosen route.'
-                  },
-                  drawingIntent: 'Preserve the broad opening beside the stone facade.',
-                  drawingPrompt: 'A hand sketch of a broad street opening beside a stone facade.'
-                })
-              }
-            }]
-          };
-        }
-      }
-    }
-  };
-  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+test('expired local patience removes waiting from route choice while preserving a drawing', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, { route: routeResponse({ action: 'move' }) }),
+    logger: { warn() {} }
+  });
   const decision = await service.decide(input({
     allowWait: false,
     consecutiveWaitDecisions: 2
   }));
 
-  assert.equal(calls, 2);
   assert.equal(decision.action, 'move');
-  const systemPrompt = request.messages[0].content;
-  assert.match(systemPrompt, /same branch 2 consecutive times/);
-  assert.match(systemPrompt, /Remaining here again is not available/);
-  assert.match(systemPrompt, /"action": "move" \| "retrace"/);
-  assert.doesNotMatch(systemPrompt, /"action": "move" \| "retrace" \| "wait"/);
+  assert.ok(decision.drawingPrompt);
+  const routeRequest = requests.find(request =>
+    !/privately interpreting|currently hold/.test(request.messages[0].content)
+  );
+  assert.match(routeRequest.messages[0].content, /same branch 2 consecutive times/);
+  assert.match(routeRequest.messages[0].content, /Remaining here again is not available/);
 });
 
-test('decision sanitizer rejects waiting when local patience has expired', () => {
-  const decision = sanitizeRendezvousDecision({
+test('model outage keeps the holder at the branch for a later retry', async () => {
+  const client = {
+    chat: {
+      completions: {
+        async create() {
+          throw Object.assign(new Error('offline'), { status: 503 });
+        }
+      }
+    }
+  };
+  const service = new RendezvousModelService({ client, logger: { warn() {} } });
+  service.maxAttempts = 1;
+  const decision = await service.decide(input());
+  assert.equal(decision.action, 'wait');
+  assert.equal(decision.waitTurns, 1);
+  assert.equal(decision.drawingPrompt, '');
+  assert.equal(decision.fallbackCause, 'sheet_perception_error');
+});
+
+test('sender reviews the actual generated image and can request a visual revision', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      review: {
+        accepted: false,
+        assessment: 'The two arch groups collapsed into one.',
+        revisionPrompt: 'Separate the arch groups clearly and retain the moving figure.'
+      }
+    }),
+    logger: { warn() {} }
+  });
+  const review = await service.reviewDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    drawingIntent: 'Show two matching places and my intended movement.',
+    drawingPrompt: 'Draw two arch groups and a moving figure.',
+    groundedFeatures: ['three repeated arches'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.revisionPrompt, /Separate the arch groups/);
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].messages[0].content, /inspecting the actual wordless drawing/);
+  assert.equal(requests[0].messages[1].content[1].type, 'image_url');
+});
+
+test('decision sanitizer reconciles heading and bounds deliberate waiting', () => {
+  const headingDecision = sanitizeRendezvousDecision({
+    selectedIndex: 0,
+    intendedHeading: 2
+  }, input().options);
+  assert.equal(headingDecision.selectedIndex, 1);
+
+  const waitDecision = sanitizeRendezvousDecision({
+    action: 'wait',
+    waitTurns: 99,
+    memoryUpdate: { currentPlan: 'Wait here.' }
+  }, input().options);
+  assert.equal(waitDecision.waitTurns, 6);
+  assert.equal(waitDecision.memoryUpdate.currentPlan, 'Wait here.');
+
+  const expired = sanitizeRendezvousDecision({
     action: 'wait',
     waitTurns: 4
   }, input().options, { allowWait: false });
-  assert.equal(decision.action, 'move');
-  assert.equal(decision.waitTurns, 0);
+  assert.equal(expired.action, 'move');
+  assert.equal(expired.waitTurns, 0);
 });
 
 test('model is rejected outside a genuine branch', async () => {
   const service = new RendezvousModelService({ client: {}, logger: { warn() {} } });
   await assert.rejects(
-    service.decide(input({ options: [{ panoId: 'only', heading: 90 }], screenshots: [Buffer.from('only')] })),
+    service.decide(input({
+      options: [{ panoId: 'only', heading: 90 }],
+      screenshots: [Buffer.from('only')]
+    })),
     /genuine route branch/
   );
-});
-
-test('model outage falls back to movement without fabricating a drawing', async () => {
-  const client = {
-    chat: { completions: { async create() { throw Object.assign(new Error('offline'), { status: 503 }); } } }
-  };
-  const service = new RendezvousModelService({ client, logger: { warn() {} } });
-  service.maxAttempts = 1;
-  const decision = await service.decide(input());
-  assert.equal(decision.drawingPrompt, '');
-  assert.equal(decision.fallbackCause, 'api_error_503');
 });

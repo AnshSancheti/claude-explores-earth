@@ -18,12 +18,13 @@ import {
 import {
   commitRasterScratchpadMessage,
   createRasterScratchpad,
-  failRasterScratchpadMessage,
+  markRasterScratchpadAttempt,
   normalizeScratchpad,
   normalizeRasterScratchpad,
   publicRasterScratchpad,
   publicRasterScratchpadHistory,
   queueRasterScratchpadMessage,
+  retryRasterScratchpadMessage,
   renderScratchpad
 } from './scratchpad.js';
 
@@ -394,6 +395,14 @@ export class RendezvousController {
     this.maxConsecutiveWaitDecisions = Math.max(
       1,
       parseIntOr(process.env.RENDEZVOUS_MAX_CONSECUTIVE_WAIT_DECISIONS, DEFAULT_MAX_CONSECUTIVE_WAIT_DECISIONS)
+    );
+    this.drawingRetryBaseMs = Math.max(
+      1000,
+      parseIntOr(process.env.RENDEZVOUS_DRAWING_RETRY_BASE_MS, 5000)
+    );
+    this.drawingRetryMaxMs = Math.max(
+      this.drawingRetryBaseMs,
+      parseIntOr(process.env.RENDEZVOUS_DRAWING_RETRY_MAX_MS, 120000)
     );
   }
 
@@ -870,6 +879,7 @@ export class RendezvousController {
     this.drawingInFlight = null;
     this.#updateMeetingMetrics();
     await this.saveState();
+    await this.#pruneArchivedDrawingDirectories();
   }
 
   #createAgent(agentId, pano, startLabel) {
@@ -1058,7 +1068,6 @@ export class RendezvousController {
             this.#readScratchpadImage(scratchpad),
             this.#readVisualHistory(agentId, scratchpad)
           ]);
-          agent.branchDecisionCount += 1;
           const decision = await this.agentModel.decide({
             agent: {
               id: agent.id,
@@ -1084,7 +1093,21 @@ export class RendezvousController {
             allowWait,
             consecutiveWaitDecisions: agent.consecutiveWaitDecisions
           });
-          if (!allowWait && decision.action === 'wait') {
+          decisionReason = decision.reasoning;
+          modelFallbackCause = decision.fallbackCause || null;
+          if (modelFallbackCause) {
+            waitingAtBranch = true;
+            mode = 'decision_retry';
+            agent.status = 'waiting';
+            agent.waitTurnsRemaining = 0;
+            selected = null;
+            this.#recordEvent('decision_retry_scheduled', {
+              agentId,
+              agentName: agent.name,
+              panoId: current.panoId,
+              cause: modelFallbackCause
+            });
+          } else if (!allowWait && decision.action === 'wait') {
             this.#recordEvent('wait_patience_expired', {
               agentId,
               agentName: agent.name,
@@ -1094,19 +1117,18 @@ export class RendezvousController {
             decision.action = 'move';
             decision.waitTurns = 0;
             decision.reasoning = 'I have learned nothing new by holding this corner, so I choose a public route and keep searching.';
-            decision.drawingIntent = '';
-            decision.drawingPrompt = '';
-            decision.fallbackCause = 'wait_patience_expired';
+            decisionReason = decision.reasoning;
           }
-          decisionReason = decision.reasoning;
-          modelFallbackCause = decision.fallbackCause || null;
           if (!modelFallbackCause) {
+            agent.branchDecisionCount += 1;
             hasFreshModelThought = true;
             agent.privateMemory = applyMemoryRevision(agent.privateMemory, decision.memoryUpdate, {
               turn: this.state.turn,
               sheetMessage: scratchpad.currentMessage,
               sheetInterpretation: decision.sheetInterpretation,
               sheetConfidence: decision.sheetConfidence,
+              sheetPerception: decision.sheetPerception,
+              reconciliation: decision.reconciliation,
               observation: decision.observation,
               sourcePanoId: current.panoId
             });
@@ -1114,7 +1136,10 @@ export class RendezvousController {
           }
 
           const requested = decisionPool[decision.selectedIndex] || decisionPool[0];
-          if (decision.action === 'wait') {
+          if (modelFallbackCause) {
+            // Keep the holder at the branch. A later turn retries the complete
+            // decision and message rather than advancing without a handoff.
+          } else if (decision.action === 'wait') {
             agent.consecutiveWaitDecisions += 1;
             deliberateWait = true;
             waitingAtBranch = true;
@@ -1341,6 +1366,35 @@ export class RendezvousController {
     return removed;
   }
 
+  async #pruneArchivedDrawingDirectories() {
+    const root = path.join(this.dataDir, 'rendezvous-drawings');
+    let entries;
+    try {
+      entries = await fsp.readdir(root, { withFileTypes: true });
+    } catch (error) {
+      if (error.code === 'ENOENT') return 0;
+      this.logger.warn?.(`Could not inspect archived rendezvous drawings: ${error.message}`);
+      return 0;
+    }
+
+    const activeRunId = String(this.state.runId || '');
+    const archived = entries.filter(entry =>
+      entry.isDirectory() &&
+      entry.name !== activeRunId &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.name)
+    );
+    let removed = 0;
+    for (const entry of archived) {
+      try {
+        await fsp.rm(path.join(root, entry.name), { recursive: true, force: true });
+        removed += 1;
+      } catch (error) {
+        this.logger.warn?.(`Could not remove archived rendezvous drawings ${entry.name}: ${error.message}`);
+      }
+    }
+    return removed;
+  }
+
   async #readScratchpadImage(scratchpad) {
     const message = normalizeRasterScratchpad(scratchpad).currentMessage;
     if (message?.imageFile) {
@@ -1399,13 +1453,57 @@ export class RendezvousController {
       ? normalizeRasterScratchpad(this.state.scratchpad).pendingMessage
       : null;
     if (!pending) return null;
+    const nextAttemptAt = Date.parse(pending.nextAttemptAt || '');
+    if (Number.isFinite(nextAttemptAt) && nextAttemptAt > Date.now()) return null;
 
     const work = (async () => {
       try {
-        const generated = await this.imageModel.generate({
+        this.state.scratchpad = markRasterScratchpadAttempt(this.state.scratchpad, {
+          pendingId: pending.id
+        });
+        await this.saveState();
+        let generated = await this.imageModel.generate({
           drawingPrompt: pending.drawingPrompt,
           groundedFeatures: pending.groundedFeatures
         });
+        let review = typeof this.agentModel.reviewDrawing === 'function'
+          ? await this.agentModel.reviewDrawing({
+              agentName: this.state.agents[pending.from]?.name || pending.from,
+              partnerName: this.state.agents[pending.to]?.name || pending.to,
+              drawingIntent: pending.drawingIntent,
+              drawingPrompt: pending.drawingPrompt,
+              groundedFeatures: pending.groundedFeatures,
+              imageBuffer: generated.buffer,
+              imageMimeType: generated.mimeType
+            })
+          : { accepted: true, assessment: 'Drawing review is not available in this model adapter.', revisionPrompt: '' };
+        let renderAttempts = 1;
+        if (!review.accepted) {
+          const revisionPrompt = review.revisionPrompt
+            ? `${pending.drawingPrompt} Revise the previous rendering as follows: ${review.revisionPrompt}`
+            : `${pending.drawingPrompt} Make the intended message more visually explicit and remove any readable text.`;
+          generated = await this.imageModel.generate({
+            drawingPrompt: revisionPrompt,
+            groundedFeatures: pending.groundedFeatures
+          });
+          renderAttempts += 1;
+          review = typeof this.agentModel.reviewDrawing === 'function'
+            ? await this.agentModel.reviewDrawing({
+                agentName: this.state.agents[pending.from]?.name || pending.from,
+                partnerName: this.state.agents[pending.to]?.name || pending.to,
+                drawingIntent: pending.drawingIntent,
+                drawingPrompt: revisionPrompt,
+                groundedFeatures: pending.groundedFeatures,
+                imageBuffer: generated.buffer,
+                imageMimeType: generated.mimeType
+              })
+            : { accepted: true, assessment: 'Drawing review is not available in this model adapter.', revisionPrompt: '' };
+        }
+        if (!review.accepted) {
+          const error = new Error(`Sender rejected the generated drawing: ${review.assessment}`);
+          error.retryable = true;
+          throw error;
+        }
         if (this.state.runId !== runId) return null;
         const currentPendingBeforeWrite = normalizeRasterScratchpad(this.state.scratchpad).pendingMessage;
         if (!currentPendingBeforeWrite || currentPendingBeforeWrite.id !== pending.id) return null;
@@ -1430,7 +1528,9 @@ export class RendezvousController {
           imageMimeType: generated.mimeType,
           imageSha256,
           imageModel: generated.model,
-          requestId: generated.requestId
+          requestId: generated.requestId,
+          reviewAssessment: review.assessment,
+          renderAttempts
         });
         const sent = this.state.scratchpad.currentMessage;
         const sender = this.state.agents[sent.from];
@@ -1450,7 +1550,9 @@ export class RendezvousController {
           from: sent.from,
           to: sent.to,
           sequence: sent.sequence,
-          imageSha256
+          imageSha256,
+          renderAttempts,
+          reviewAssessment: review.assessment
         });
         await this.saveState();
         this.emit('rendezvous-scratchpad', {
@@ -1467,20 +1569,29 @@ export class RendezvousController {
           ? normalizeRasterScratchpad(this.state.scratchpad).pendingMessage
           : null;
         if (currentPending?.id === pending.id) {
-          this.state.scratchpad = failRasterScratchpadMessage(this.state.scratchpad, {
+          const attempts = Math.max(1, currentPending.attempts);
+          const backoffMs = Math.min(
+            this.drawingRetryMaxMs,
+            this.drawingRetryBaseMs * (2 ** Math.min(6, attempts - 1))
+          );
+          const retryAt = new Date(Date.now() + backoffMs).toISOString();
+          this.state.scratchpad = retryRasterScratchpadMessage(this.state.scratchpad, {
             pendingId: pending.id,
-            error: error.message
+            error: error.message,
+            nextAttemptAt: retryAt
           });
-          this.#recordEvent('scratchpad_failed', {
+          this.#recordEvent('scratchpad_retry_scheduled', {
             id: pending.id,
             from: pending.from,
             to: pending.to,
-            error: error.message
+            error: error.message,
+            attempts,
+            retryAt
           });
           await this.saveState();
           this.broadcastState();
         }
-        this.logger.warn?.(`Rendezvous drawing ${pending.id} failed: ${error.message}`);
+        this.logger.warn?.(`Rendezvous drawing ${pending.id} will retry: ${error.message}`);
         return null;
       } finally {
         await this.#removePendingReferences(pending.id, runId);

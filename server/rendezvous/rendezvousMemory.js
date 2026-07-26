@@ -1,4 +1,4 @@
-export const RENDEZVOUS_MEMORY_VERSION = 2;
+export const RENDEZVOUS_MEMORY_VERSION = 3;
 
 const MAX_TEXT_CHARS = 700;
 const MAX_RECEIVED_SHEETS = 10;
@@ -6,6 +6,7 @@ const MAX_SENT_MESSAGES = 10;
 const MAX_OBSERVATIONS = 14;
 const MAX_CONVENTIONS = 8;
 const MAX_HYPOTHESES = 6;
+const MAX_RECONCILIATIONS = 8;
 const MAX_ODOMETRY_HEADINGS = 16;
 const MAX_ODOMETRY_LABELS = 8;
 
@@ -61,9 +62,38 @@ function normalizeReceived(entry) {
     sequence,
     from: entry.from === 'ada' || entry.from === 'theo' ? entry.from : null,
     interpretation,
-    confidence: Math.min(confidence(entry.confidence), 0.45),
+    confidence: Math.min(confidence(entry.confidence), 0.8),
+    literalContents: cleanList(entry.literalContents, { limit: 6, itemLength: 220 }),
+    possiblePlaces: cleanList(entry.possiblePlaces, { limit: 4, itemLength: 220 }),
+    possibleIntentions: cleanList(entry.possibleIntentions, { limit: 4, itemLength: 220 }),
     createdAt: entry.createdAt || null
   };
+}
+
+function normalizeReconciliation(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const planAssessment = ['supporting', 'weakening', 'inconclusive'].includes(entry.planAssessment)
+    ? entry.planAssessment
+    : 'inconclusive';
+  const normalized = {
+    turn: positiveInt(entry.turn),
+    sheetSequence: positiveInt(entry.sheetSequence),
+    newEvidence: cleanList(entry.newEvidence, { limit: 6, itemLength: 220 }),
+    repeatedEvidence: cleanList(entry.repeatedEvidence, { limit: 5, itemLength: 220 }),
+    contradictions: cleanList(entry.contradictions, { limit: 5, itemLength: 220 }),
+    unresolvedQuestions: cleanList(entry.unresolvedQuestions, { limit: 5, itemLength: 220 }),
+    informationWorthSending: cleanList(entry.informationWorthSending, { limit: 5, itemLength: 220 }),
+    planAssessment,
+    createdAt: entry.createdAt || null
+  };
+  const hasContent = [
+    normalized.newEvidence,
+    normalized.repeatedEvidence,
+    normalized.contradictions,
+    normalized.unresolvedQuestions,
+    normalized.informationWorthSending
+  ].some(values => values.length > 0);
+  return hasContent ? normalized : null;
 }
 
 function normalizeSent(entry) {
@@ -89,7 +119,7 @@ function normalizeBelief(entry, kind) {
   return {
     key,
     description,
-    confidence: Math.min(confidence(entry.confidence, 0.25), kind === 'convention' ? 0.45 : 0.35),
+    confidence: Math.min(confidence(entry.confidence, 0.25), kind === 'convention' ? 0.7 : 0.75),
     basisSequences: [...new Set((Array.isArray(entry.basisSequences) ? entry.basisSequences : [])
       .map(positiveInt)
       .filter(sequence => sequence > 0))]
@@ -122,6 +152,9 @@ function migrateLegacyMemory(raw, recentNotes) {
   }
   memory.receivedSheets = bounded(raw?.receivedSheets, normalizeReceived, MAX_RECEIVED_SHEETS);
   memory.sentMessages = bounded(raw?.sentMessages, normalizeSent, MAX_SENT_MESSAGES);
+  memory.visualConventions = bounded(raw?.visualConventions, entry => normalizeBelief(entry, 'convention'), MAX_CONVENTIONS);
+  memory.partnerHypotheses = bounded(raw?.partnerHypotheses, entry => normalizeBelief(entry, 'hypothesis'), MAX_HYPOTHESES);
+  memory.reconciliations = bounded(raw?.reconciliations, normalizeReconciliation, MAX_RECONCILIATIONS);
   return memory;
 }
 
@@ -140,6 +173,7 @@ export function createAgentMemory({ recentNotes = [] } = {}) {
     sentMessages: [],
     visualConventions: [],
     partnerHypotheses: [],
+    reconciliations: [],
     updatedTurn: 0,
     updatedAt: null
   };
@@ -158,6 +192,7 @@ export function normalizeAgentMemory(raw, { recentNotes = [] } = {}) {
     sentMessages: bounded(raw.sentMessages, normalizeSent, MAX_SENT_MESSAGES),
     visualConventions: bounded(raw.visualConventions, entry => normalizeBelief(entry, 'convention'), MAX_CONVENTIONS),
     partnerHypotheses: bounded(raw.partnerHypotheses, entry => normalizeBelief(entry, 'hypothesis'), MAX_HYPOTHESES),
+    reconciliations: bounded(raw.reconciliations, normalizeReconciliation, MAX_RECONCILIATIONS),
     updatedTurn: positiveInt(raw.updatedTurn),
     updatedAt: raw.updatedAt || null
   };
@@ -172,14 +207,14 @@ function mergeBelief(memory, collectionName, update, turn) {
   candidate.basisSequences = candidate.basisSequences.filter(sequence => known.has(sequence));
   const evidenceCount = candidate.basisSequences.length;
   const evidenceCap = evidenceCount > 0
-    ? (kind === 'convention' ? 0.45 : 0.35)
-    : 0.25;
+    ? (kind === 'convention' ? 0.7 : 0.75)
+    : 0.35;
   candidate.confidence = Math.min(candidate.confidence, evidenceCap);
 
   const existing = memory[collectionName].find(entry => entry.key === candidate.key);
   if (existing) {
     candidate.basisSequences = [...new Set([...existing.basisSequences, ...candidate.basisSequences])].slice(-8);
-    const combinedCap = kind === 'convention' ? 0.45 : 0.35;
+    const combinedCap = kind === 'convention' ? 0.7 : 0.75;
     candidate.confidence = Math.min(Math.max(existing.confidence, candidate.confidence), combinedCap);
   }
   memory[collectionName] = [
@@ -193,6 +228,8 @@ export function applyMemoryRevision(memory, revision, {
   sheetMessage = null,
   sheetInterpretation = '',
   sheetConfidence = 0.35,
+  sheetPerception = null,
+  reconciliation = null,
   observation = '',
   sourcePanoId = null,
   updatedAt = new Date().toISOString()
@@ -205,12 +242,16 @@ export function applyMemoryRevision(memory, revision, {
   const sequence = positiveInt(sheetMessage?.sequence);
   const interpreted = cleanString(sheetInterpretation, 500);
   if (interpreted && sequence > 0) {
+    const previous = normalized.receivedSheets.find(item => item.sequence === sequence);
     const entry = normalizeReceived({
       turn,
       sequence,
       from: sheetMessage?.from,
       interpretation: interpreted,
       confidence: sheetConfidence,
+      literalContents: sheetPerception?.literalContents || previous?.literalContents,
+      possiblePlaces: sheetPerception?.possiblePlaces || previous?.possiblePlaces,
+      possibleIntentions: sheetPerception?.possibleIntentions || previous?.possibleIntentions,
       createdAt: updatedAt
     });
     normalized.receivedSheets = [
@@ -224,6 +265,15 @@ export function applyMemoryRevision(memory, revision, {
 
   mergeBelief(normalized, 'visualConventions', update.conventionUpdate, turn);
   mergeBelief(normalized, 'partnerHypotheses', update.partnerHypothesis, turn);
+  const reconciled = normalizeReconciliation({
+    ...reconciliation,
+    turn,
+    sheetSequence: sequence,
+    createdAt: updatedAt
+  });
+  if (reconciled) {
+    normalized.reconciliations = [...normalized.reconciliations, reconciled].slice(-MAX_RECONCILIATIONS);
+  }
   normalized.updatedTurn = positiveInt(turn);
   normalized.updatedAt = updatedAt;
   return normalized;

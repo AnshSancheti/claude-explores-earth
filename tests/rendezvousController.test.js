@@ -508,7 +508,7 @@ test('private memory survives restart, stays out of public state, and supports d
   }
 });
 
-test('repeated same-branch waiting quietly yields to movement without sending a contradictory drawing', async () => {
+test('repeated same-branch waiting yields to movement while preserving the authored drawing', async () => {
   const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
   process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-wait-patience-test-'));
@@ -541,8 +541,9 @@ test('repeated same-branch waiting quietly yields to movement without sending a 
     assert.equal(controller.state.agents.ada.panoId, 'ada-mid');
     assert.equal(controller.state.agents.ada.stepCount, 1);
     assert.equal(controller.state.agents.ada.consecutiveWaitDecisions, 0);
-    assert.equal(controller.state.agents.ada.lastDecision.fallbackCause, 'wait_patience_expired');
-    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.agents.ada.lastDecision.fallbackCause, null);
+    assert.ok(controller.state.scratchpad.pendingMessage);
+    assert.match(controller.state.scratchpad.pendingMessage.drawingIntent, /remaining here/);
     assert.ok(controller.state.eventLog.some(event => event.type === 'wait_patience_expired'));
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
@@ -583,6 +584,9 @@ test('a model fallback does not replace the last genuine agent thought', async (
     await controller.tick();
 
     assert.equal(model.calls.length, 1);
+    assert.equal(controller.state.agents.ada.panoId, 'ada-start');
+    assert.equal(controller.state.agents.ada.stepCount, 0);
+    assert.equal(controller.state.agents.ada.lastDecision.mode, 'decision_retry');
     assert.equal(controller.state.agents.ada.lastDecision.fallbackCause, 'model_unavailable');
     assert.match(controller.state.agents.ada.lastDecision.reasoning, /Model unavailable/);
     assert.equal(
@@ -696,6 +700,111 @@ test('a persisted pending drawing resumes after controller restart', async () =>
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
     else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('the sender reviews a generated drawing and one rejection produces a revised render', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-review-test-'));
+  const reviews = [];
+  const agentModel = {
+    async reviewDrawing(input) {
+      reviews.push(input);
+      return reviews.length === 1
+        ? {
+            accepted: false,
+            assessment: 'The two landmarks collapsed into one.',
+            revisionPrompt: 'Separate the landmarks and make the moving figure visible.'
+          }
+        : {
+            accepted: true,
+            assessment: 'The two landmarks and intended movement are now clear.',
+            revisionPrompt: ''
+          };
+    }
+  };
+  const imageModel = new FakeImageModel();
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel,
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'reviewed-message',
+      agentId: 'ada',
+      turn: 2,
+      drawingIntent: 'Show two related landmarks and my intended movement.',
+      drawingPrompt: 'Draw two arch groups and a figure moving toward one.',
+      groundedFeatures: ['two arch groups']
+    });
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(imageModel.calls.length, 2);
+    assert.match(imageModel.calls[1].drawingPrompt, /Separate the landmarks/);
+    assert.equal(reviews.length, 2);
+    assert.equal(controller.state.scratchpad.owner, 'theo');
+    assert.equal(controller.state.scratchpad.currentMessage.id, 'reviewed-message');
+    assert.equal(controller.state.scratchpad.messageAudit[0].renderAttempts, 2);
+    assert.match(controller.state.scratchpad.messageAudit[0].reviewAssessment, /now clear/);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('drawing failure preserves a retryable handoff across controller restart', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-drawing-retry-test-'));
+  try {
+    const first = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel: {
+        async generate() {
+          throw new Error('temporary image outage');
+        }
+      },
+      logger: { warn() {}, error() {} }
+    });
+    await first.createRun();
+    first.state.scratchpad = queueRasterScratchpadMessage(first.state.scratchpad, {
+      id: 'retry-message',
+      agentId: 'ada',
+      turn: 3,
+      drawingIntent: 'Preserve this message until it can cross.',
+      drawingPrompt: 'Draw two circles separated by an arch.'
+    });
+
+    await first.resumePendingDrawing();
+
+    assert.equal(first.state.scratchpad.owner, 'ada');
+    assert.equal(first.state.scratchpad.pendingMessage.id, 'retry-message');
+    assert.equal(first.state.scratchpad.pendingMessage.status, 'retrying');
+    assert.equal(first.state.scratchpad.pendingMessage.attempts, 1);
+    assert.match(first.state.scratchpad.pendingMessage.lastError, /temporary image outage/);
+    assert.equal(first.state.scratchpad.messageAudit.length, 0);
+
+    first.state.scratchpad.pendingMessage.nextAttemptAt = new Date(0).toISOString();
+    await first.saveState();
+    const restarted = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await restarted.loadState();
+    await restarted.resumePendingDrawing();
+
+    assert.equal(restarted.state.scratchpad.pendingMessage, null);
+    assert.equal(restarted.state.scratchpad.currentMessage.id, 'retry-message');
+    assert.equal(restarted.state.scratchpad.owner, 'theo');
+    assert.equal(restarted.state.scratchpad.messageAudit[0].status, 'sent');
+  } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
 });
@@ -882,6 +991,34 @@ test('drawing cleanup removes only raster files no longer referenced by durable 
   }
 });
 
+test('starting a successor run removes UUID-named drawing directories from archived runs', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-archive-drawing-cleanup-test-'));
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: new FakeRendezvousModel(),
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    const archivedRunId = controller.state.runId;
+    const archivedDir = path.join(tempDir, 'rendezvous-drawings', archivedRunId);
+    await fsp.mkdir(archivedDir, { recursive: true });
+    await fsp.writeFile(path.join(archivedDir, 'old.webp'), 'archived raster');
+    const nonRunDir = path.join(tempDir, 'rendezvous-drawings', 'operator-assets');
+    await fsp.mkdir(nonRunDir, { recursive: true });
+    await fsp.writeFile(path.join(nonRunDir, 'keep.webp'), 'operator raster');
+
+    await controller.createRun();
+
+    await assert.rejects(fsp.access(archivedDir), { code: 'ENOENT' });
+    assert.equal(await fsp.readFile(path.join(nonRunDir, 'keep.webp'), 'utf8'), 'operator raster');
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a live v4 run migrates in place with an exact rollback save and rasterized current sheet', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-v4-migration-test-'));
   const runId = 'active-v4-run';
@@ -971,18 +1108,18 @@ test('an active run gains private memory with an exact pre-migration rollback sa
     await migrated.loadState();
 
     assert.equal(migrated.state.turn, 88);
-    assert.equal(migrated.state.agents.ada.privateMemory.version, 2);
-    assert.equal(migrated.state.agents.theo.privateMemory.version, 2);
+    assert.equal(migrated.state.agents.ada.privateMemory.version, 3);
+    assert.equal(migrated.state.agents.theo.privateMemory.version, 3);
     assert.match(migrated.state.agents.ada.privateMemory.ownObservations.at(-1).description, /unfamiliar Manhattan corner/);
     assert.equal(
       await fsp.readFile(
-        path.join(tempDir, 'rendezvous-runs', `${first.state.runId}-pre-memory-v2.json`),
+        path.join(tempDir, 'rendezvous-runs', `${first.state.runId}-pre-memory-v3.json`),
         'utf8'
       ),
       original
     );
     const persisted = JSON.parse(await fsp.readFile(path.join(tempDir, 'rendezvous-current.json'), 'utf8'));
-    assert.equal(persisted.agents.ada.privateMemory.version, 2);
+    assert.equal(persisted.agents.ada.privateMemory.version, 3);
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
     else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;

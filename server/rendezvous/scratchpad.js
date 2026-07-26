@@ -143,8 +143,10 @@ function normalizePendingRasterMessage(raw) {
       : [],
     sourcePanoId: cleanString(raw.sourcePanoId, 240) || null,
     snapshot: normalizeRasterSnapshot(raw.snapshot),
-    status: 'generating',
+    status: cleanString(raw.status, 40) || 'generating',
     attempts: Math.max(0, Math.floor(Number(raw.attempts) || 0)),
+    lastError: cleanString(raw.lastError, 500) || null,
+    nextAttemptAt: raw.nextAttemptAt || null,
     createdAt: raw.createdAt || new Date().toISOString()
   };
 }
@@ -189,6 +191,8 @@ export function normalizeRasterScratchpad(raw, { turn = 0 } = {}) {
         snapshot: normalizeRasterSnapshot(entry?.snapshot),
         imageModel: cleanString(entry?.imageModel, 120) || null,
         requestId: cleanString(entry?.requestId, 240) || null,
+        reviewAssessment: cleanString(entry?.reviewAssessment, 500) || null,
+        renderAttempts: Math.max(0, Math.floor(Number(entry?.renderAttempts) || 0)),
         status: cleanString(entry?.status, 40) || 'sent',
         error: cleanString(entry?.error, 500) || null,
         createdAt: entry?.createdAt || null,
@@ -248,6 +252,8 @@ export function commitRasterScratchpadMessage(scratchpad, {
   imageSha256 = null,
   imageModel = null,
   requestId = null,
+  reviewAssessment = null,
+  renderAttempts = 1,
   sentAt = new Date().toISOString()
 }) {
   const normalized = normalizeRasterScratchpad(scratchpad);
@@ -276,10 +282,45 @@ export function commitRasterScratchpadMessage(scratchpad, {
     imageSha256,
     imageModel,
     requestId,
+    reviewAssessment: cleanString(reviewAssessment, 500) || null,
+    renderAttempts: Math.max(1, Math.floor(Number(renderAttempts) || 1)),
     status: 'sent',
     sentAt
   }].slice(-RASTER_SCRATCHPAD_MAX_MESSAGES);
   normalized.updatedAt = sentAt;
+  return normalized;
+}
+
+export function markRasterScratchpadAttempt(scratchpad, { pendingId }) {
+  const normalized = normalizeRasterScratchpad(scratchpad);
+  const pending = normalized.pendingMessage;
+  if (!pending || pending.id !== pendingId) return normalized;
+  normalized.pendingMessage = {
+    ...pending,
+    status: 'generating',
+    attempts: pending.attempts + 1,
+    lastError: null,
+    nextAttemptAt: null
+  };
+  normalized.updatedAt = new Date().toISOString();
+  return normalized;
+}
+
+export function retryRasterScratchpadMessage(scratchpad, {
+  pendingId,
+  error,
+  nextAttemptAt
+}) {
+  const normalized = normalizeRasterScratchpad(scratchpad);
+  const pending = normalized.pendingMessage;
+  if (!pending || pending.id !== pendingId) return normalized;
+  normalized.pendingMessage = {
+    ...pending,
+    status: 'retrying',
+    lastError: cleanString(error, 500),
+    nextAttemptAt: nextAttemptAt || null
+  };
+  normalized.updatedAt = new Date().toISOString();
   return normalized;
 }
 

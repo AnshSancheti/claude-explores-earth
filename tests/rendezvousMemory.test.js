@@ -18,7 +18,7 @@ test('legacy agents gain a provenance memory grounded in low-confidence recollec
   }, {
     recentNotes: ['I passed brick arches.', 'I kept north along a broad avenue.']
   });
-  assert.equal(memory.version, 2);
+  assert.equal(memory.version, 3);
   assert.match(memory.ownObservations.at(-1).description, /Legacy recollection/);
   assert.match(memory.ownObservations.at(-1).description, /brick arches/);
   assert.match(memory.currentPlan, /local evidence/);
@@ -36,12 +36,29 @@ test('memory revision records sourced evidence and caps unsupported confidence',
       description: 'A yellow circle may indicate convergence.',
       confidence: 0.95,
       basisSequences: [4, 999]
+    },
+    partnerHypothesis: {
+      key: 'possible-union-square',
+      description: 'The sender may be near Union Square and may intend to wait.',
+      confidence: 0.8,
+      basisSequences: [4]
     }
   }, {
     turn: 12,
     sheetMessage: { sequence: 4, from: 'theo' },
     sheetInterpretation: 'A yellow circle between two paths may mean converge.',
-    sheetConfidence: 0.4,
+    sheetConfidence: 0.6,
+    sheetPerception: {
+      literalContents: ['a yellow circle between two paths'],
+      possiblePlaces: ['possibly Union Square'],
+      possibleIntentions: ['possibly asking me to converge']
+    },
+    reconciliation: {
+      newEvidence: ['the circle now sits between paths'],
+      unresolvedQuestions: ['whether it means a place or a plan'],
+      informationWorthSending: ['my own nearest distinctive landmark'],
+      planAssessment: 'supporting'
+    },
     observation: 'Three stone arches stand beside a broad northbound street.',
     sourcePanoId: 'pano-12',
     updatedAt: '2026-07-15T12:00:00.000Z'
@@ -57,8 +74,11 @@ test('memory revision records sourced evidence and caps unsupported confidence',
   assert.equal(memory.receivedSheets[0].sequence, 4);
   assert.match(memory.receivedSheets[0].interpretation, /place to wait/);
   assert.match(memory.currentPlan, /Test the circle/);
-  assert.equal(memory.visualConventions[0].confidence, 0.45);
+  assert.equal(memory.visualConventions[0].confidence, 0.7);
   assert.deepEqual(memory.visualConventions[0].basisSequences, [4]);
+  assert.equal(memory.partnerHypotheses[0].confidence, 0.75);
+  assert.deepEqual(memory.receivedSheets[0].possiblePlaces, ['possibly Union Square']);
+  assert.equal(memory.reconciliations[0].planAssessment, 'supporting');
   assert.equal(memory.ownObservations.length, 1);
   assert.equal(memory.ownObservations[0].sourcePanoId, 'pano-12');
 });
@@ -87,9 +107,9 @@ test('repetition preserves provenance without converting ambiguous sheets into c
     });
   }
 
-  assert.equal(memory.receivedSheets.at(-1).confidence, 0.45);
-  assert.equal(memory.visualConventions[0].confidence, 0.45);
-  assert.equal(memory.partnerHypotheses[0].confidence, 0.35);
+  assert.equal(memory.receivedSheets.at(-1).confidence, 0.8);
+  assert.equal(memory.visualConventions[0].confidence, 0.7);
+  assert.equal(memory.partnerHypotheses[0].confidence, 0.75);
   assert.deepEqual(memory.visualConventions[0].basisSequences, [1, 2, 3, 4]);
 });
 

@@ -5,7 +5,7 @@ import {
   scaffoldDrawingPrompt
 } from '../server/rendezvous/rendezvousImage.js';
 
-test('image scaffolding constrains the medium without authoring the clue', () => {
+test('image scaffolding preserves a sender-authored visual language without text', () => {
   const prompt = scaffoldDrawingPrompt(
     'A charcoal skyline reflected in three puddles like three possible futures.',
     ['three shallow curbside puddles', 'a narrow tower reflected in them']
@@ -13,19 +13,18 @@ test('image scaffolding constrains the medium without authoring the clue', () =>
   assert.match(prompt, /Sender's drawing instructions/);
   assert.match(prompt, /three possible futures/);
   assert.match(prompt, /no readable words, letters, numbers/);
-  assert.match(prompt, /stable visible features/);
-  assert.match(prompt, /not become a literal camera reproduction/);
-  assert.match(prompt, /not become.*purely decorative abstraction/);
-  assert.match(prompt, /never exaggerate a vanishing point into a directional cue/);
-  assert.match(prompt, /postcard about what the sender sees/);
-  assert.doesNotMatch(prompt, /Manhattan|north|south|find Theo/);
+  assert.match(prompt, /Visual anchors available/);
+  assert.match(prompt, /symbolic, diagrammatic, map-like/);
+  assert.match(prompt, /Arrows, paths, motion/);
 });
 
-test('image scaffolding refuses an ungrounded route diagram', () => {
-  assert.throws(
-    () => scaffoldDrawingPrompt('A blue arrow pointing forward.', ['one road']),
-    /two grounded visible features/
+test('image scaffolding permits a sender-authored symbolic route message', () => {
+  const prompt = scaffoldDrawingPrompt(
+    'A blue arrow bends toward two circles that nearly meet.',
+    []
   );
+  assert.match(prompt, /blue arrow/);
+  assert.match(prompt, /None specified/);
 });
 
 test('image service generates from the sender prompt without Street View attachments', async () => {

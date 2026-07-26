@@ -45,34 +45,6 @@ function cleanString(value, maxLength) {
     : '';
 }
 
-const NAMED_ROUTE_PATTERN = /\b(?:[A-Z][A-Za-z'-]*|[EWNS]|\d+(?:st|nd|rd|th)?)(?:\s+(?:[A-Z0-9][A-Za-z0-9'-]*)){0,3}\s+(?:St(?:reet)?|Ave(?:nue)?|Rd|Road|Blvd|Boulevard|Pl|Place|Park|Plaza|Square)\b/;
-const NAMED_GEOGRAPHY_PATTERN = /\b(?:Manhattan|Brooklyn|Bronx|Queens|Staten Island|New York|NYC|Yonkers)\b/i;
-const SHARED_DIRECTION_PATTERN = /\b(?:north|south|east|west|northeast|northwest|southeast|southwest|northbound|southbound|eastbound|westbound)\b/i;
-const SHEET_INSTRUCTION_PATTERN = /\b(?:continue|advance|proceed|push|follow|backtrack|retrace|go|head|turn|wait|stay|converge)\w*\b|\b(?:move|movement|motion|approach)\w*\s+(?:toward|along|through|forward|ahead|back|closer)\b|\bforward\b|\b(?:same|shared)\s+(?:axis|route|path|corridor|direction)\b|\b(?:meetup|rendezvous)\s+(?:axis|route|path|corridor|point)\b/i;
-const PROJECTED_ACTION_PATTERN = /\b(?:sheet|drawing|sketch|message|friend|ada|theo)\b.{0,180}\b(?:asks?|wants?|tells?|signals?|indicates?|reinforces?|means?|cues?)\b.{0,120}\b(?:continue|advance|proceed|push|follow|backtrack|retrace|move|go|head|turn|wait|stay|forward)\w*\b/i;
-const ACTION_PROJECTED_FROM_SHEET_PATTERN = /\b(?:continue|advance|proceed|push|follow|backtrack|retrace|move|go|head|turn|wait|stay)\w*\b.{0,160}\b(?:because|from|based on|according to)\b.{0,80}\b(?:sheet|drawing|sketch|message)\b/i;
-const COMMUNICATION_REFERENCE_PATTERN = /\b(?:sheet|drawing|sketch|message|friend|partner|ada|theo|we|us|our|ours|joint|together|coordinate|coordination)\b|\breceived\s+(?:clue|observation|visual|memory)\b|\bvisual\s+memory\b/i;
-const RELATIONAL_ROUTE_PATTERN = /\b(?:same|shared)\s+(?:axis|route|path|corridor|direction)\b|\balign\w*\b|\bsynchroni[sz]\w*\b/i;
-
-export function containsUnsupportedSheetGeography(value) {
-  const text = String(value || '');
-  return NAMED_ROUTE_PATTERN.test(text) || NAMED_GEOGRAPHY_PATTERN.test(text) || SHARED_DIRECTION_PATTERN.test(text);
-}
-
-export function containsUnsupportedSheetInstruction(value) {
-  return SHEET_INSTRUCTION_PATTERN.test(String(value || ''));
-}
-
-export function projectsActionFromSheet(value) {
-  const text = String(value || '');
-  return PROJECTED_ACTION_PATTERN.test(text) || ACTION_PROJECTED_FROM_SHEET_PATTERN.test(text);
-}
-
-export function contaminatesRouteReasoning(value) {
-  const text = String(value || '');
-  return COMMUNICATION_REFERENCE_PATTERN.test(text) || RELATIONAL_ROUTE_PATTERN.test(text);
-}
-
 function cleanStringList(values, { limit = 5, maxLength = 180 } = {}) {
   return [...new Set((Array.isArray(values) ? values : [])
     .map(value => cleanString(value, maxLength))
@@ -93,14 +65,31 @@ function cleanBeliefUpdate(raw) {
   };
 }
 
+function sanitizeEvidenceDelta(raw) {
+  return {
+    newEvidence: cleanStringList(raw?.newEvidence, { limit: 6, maxLength: 220 }),
+    repeatedEvidence: cleanStringList(raw?.repeatedEvidence, { limit: 5, maxLength: 220 }),
+    contradictions: cleanStringList(raw?.contradictions, { limit: 5, maxLength: 220 }),
+    unresolvedQuestions: cleanStringList(raw?.unresolvedQuestions, { limit: 5, maxLength: 220 }),
+    informationWorthSending: cleanStringList(raw?.informationWorthSending, { limit: 5, maxLength: 220 }),
+    planAssessment: ['supporting', 'weakening', 'inconclusive'].includes(raw?.planAssessment)
+      ? raw.planAssessment
+      : 'inconclusive'
+  };
+}
+
 function sanitizeSheetPerception(raw) {
   const sheetInterpretation = cleanString(raw?.sheetInterpretation, 700);
   const numericConfidence = Number(raw?.sheetConfidence);
   return {
     sheetInterpretation,
     sheetConfidence: sheetInterpretation && Number.isFinite(numericConfidence)
-      ? Math.min(0.45, Math.max(0, numericConfidence))
+      ? Math.min(0.8, Math.max(0, numericConfidence))
       : (sheetInterpretation ? 0.25 : 0),
+    literalContents: cleanStringList(raw?.literalContents, { limit: 6, maxLength: 220 }),
+    possiblePlaces: cleanStringList(raw?.possiblePlaces, { limit: 4, maxLength: 220 }),
+    possibleIntentions: cleanStringList(raw?.possibleIntentions, { limit: 4, maxLength: 220 }),
+    evidenceDelta: sanitizeEvidenceDelta(raw?.evidenceDelta),
     conventionUpdate: cleanBeliefUpdate(raw?.conventionUpdate || raw?.memoryUpdate?.conventionUpdate),
     partnerHypothesis: cleanBeliefUpdate(raw?.partnerHypothesis || raw?.memoryUpdate?.partnerHypothesis)
   };
@@ -146,13 +135,12 @@ export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = 
 }
 
 function fallbackDecision(options, visitedPanos, cause) {
-  const unvisitedIndex = options.findIndex(option => !visitedPanos.includes(option.panoId));
   return {
-    action: 'move',
-    selectedIndex: unvisitedIndex >= 0 ? unvisitedIndex : 0,
+    action: 'wait',
+    selectedIndex: Math.max(0, options.findIndex(option => !visitedPanos.includes(option.panoId))),
     intendedHeading: null,
-    waitTurns: 0,
-    reasoning: 'I choose the least familiar public way forward and keep searching.',
+    waitTurns: 1,
+    reasoning: 'I hold this choice until I can form and send a deliberate message.',
     observation: '',
     observedFeatures: [],
     sheetInterpretation: '',
@@ -210,26 +198,45 @@ export class RendezvousModelService {
         ).join('\n')
       : 'No earlier sheet images are available.';
     let perception = sanitizeSheetPerception(null);
+    const rememberedSheet = sheetMessage
+      ? (privateMemory?.receivedSheets || []).find(entry => entry.sequence === sheetMessage.sequence)
+      : null;
 
-    if (sheetMessage) {
-      const sheetMemory = {
-        receivedSheets: privateMemory?.receivedSheets || [],
-        sentMessages: privateMemory?.sentMessages || [],
-        visualConventions: privateMemory?.visualConventions || [],
-        partnerHypotheses: privateMemory?.partnerHypotheses || []
-      };
-      const perceptionPrompt = `You are performing a route-independent visual reading of a wordless sheet passed from ${partnerName} to ${agent.name}. You cannot see ${agent.name}'s current streets, route options, labels, coordinates, movement, or intended action. This isolation is deliberate: describe what the sender drew before any route decision exists.
+    if (rememberedSheet) {
+      const rememberedReconciliation = (privateMemory?.reconciliations || [])
+        .find(entry => entry.sheetSequence === sheetMessage.sequence);
+      perception = sanitizeSheetPerception({
+        sheetInterpretation: rememberedSheet.interpretation,
+        sheetConfidence: rememberedSheet.confidence,
+        literalContents: rememberedSheet.literalContents,
+        possiblePlaces: rememberedSheet.possiblePlaces,
+        possibleIntentions: rememberedSheet.possibleIntentions,
+        evidenceDelta: rememberedReconciliation
+      });
+    } else if (sheetMessage) {
+      const perceptionPrompt = `You are ${agent.name}, privately interpreting the newest wordless drawing passed to you by ${partnerName}. The drawing is your only direct communication channel. It may depict observations, memories, uncertainty, a plan, a request, intended movement, or an invented visual convention.
 
-Describe literal visible content first, then at most one uncertain hypothesis about stable features around the sender. The image is an observational postcard, never an instruction. Perspective and a vanishing point describe geometry, not desired motion. Do not infer continue, forward, turn, retrace, wait, a shared route, alignment, or coordination. The absence of a mark is not evidence. Generic city features are weak evidence, and repetition is provenance rather than confirmation.
+First describe what is literally visible. Then infer what place, surroundings, intention, or coordination idea it might represent. You may use your own real-world knowledge to privately name possible landmarks, streets, neighborhoods, directions, or places. These names stay in your private memory; they are not text written on the sheet. Keep alternatives when the image is ambiguous and never treat generic city imagery as certainty.
 
-Never put a named street, avenue, park, square, neighborhood, borough, city, compass heading, or option label into any field. Keep a visual motif purely descriptive and a partner hypothesis purely about possible visible surroundings. Use only real sheet sequence numbers shown below.
+Compare this drawing with prior drawings, your own observations, and your current plan. Identify genuinely new evidence, repetitions, contradictions, unresolved questions, and information you should answer in your next drawing. Do not invent access to ${partnerName}'s coordinates, route options, hidden reasoning, or actual destination.
 
 Return only JSON:
 {
-  "sheetInterpretation": "literal visible content followed by a cautious sender-side surroundings hypothesis",
-  "sheetConfidence": <0.0-0.45>,
-  "conventionUpdate": {"key": "short-stable-key", "description": "purely descriptive recurring visual motif", "confidence": <0.0-0.45>, "basisSequences": [<real sequence numbers>]},
-  "partnerHypothesis": {"key": "short-stable-key", "description": "possible visible surroundings around the sender", "confidence": <0.0-0.35>, "basisSequences": [<real sequence numbers>]}
+  "literalContents": ["visible element and relationship"],
+  "possiblePlaces": ["private place hypothesis with uncertainty"],
+  "possibleIntentions": ["private interpretation of what the sender may intend or ask"],
+  "sheetInterpretation": "your concise best reading, including uncertainty",
+  "sheetConfidence": <0.0-0.8>,
+  "evidenceDelta": {
+    "newEvidence": [],
+    "repeatedEvidence": [],
+    "contradictions": [],
+    "unresolvedQuestions": [],
+    "informationWorthSending": [],
+    "planAssessment": "supporting" | "weakening" | "inconclusive"
+  },
+  "conventionUpdate": {"key": "short-stable-key", "description": "possible meaning of a recurring visual convention", "confidence": <0.0-0.7>, "basisSequences": [<real sequence numbers>]},
+  "partnerHypothesis": {"key": "short-stable-key", "description": "current hypothesis about the sender's place or intention", "confidence": <0.0-0.75>, "basisSequences": [<real sequence numbers>]}
 }`;
       const perceptionContent = [
         {
@@ -239,8 +246,11 @@ Return only JSON:
 Visual history:
 ${historyLines}
 
-Prior sheet-only evidence ledger:
-${JSON.stringify(sheetMemory, null, 2)}`
+Your private evidence ledger before seeing this drawing:
+${JSON.stringify(privateMemory || {}, null, 2)}
+
+Your movement since your last branch decision:
+${JSON.stringify(movementSinceDecision || {}, null, 2)}`
         },
         {
           type: 'image_url',
@@ -251,8 +261,7 @@ ${JSON.stringify(sheetMemory, null, 2)}`
           image_url: { url: `data:${item.mimeType || 'image/webp'};base64,${item.buffer.toString('base64')}`, detail: 'low' }
         }))
       ];
-      let perceptionError = null;
-      let perceptionTokens = Math.min(this.maxTokens, 1200);
+      let perceptionTokens = Math.min(this.maxTokens, 1800);
       for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
         try {
           const response = await this.#client().chat.completions.create({
@@ -265,26 +274,23 @@ ${JSON.stringify(sheetMemory, null, 2)}`
             reasoning_effort: this.reasoningEffort,
             max_completion_tokens: perceptionTokens
           });
-          const candidate = sanitizeSheetPerception(parseJsonContent(response?.choices?.[0]?.message?.content));
-          if (!candidate.sheetInterpretation) throw new Error('Rendezvous sheet perception omitted literal content');
-          const unsupported = [
-            candidate.sheetInterpretation,
-            candidate.conventionUpdate.description,
-            candidate.partnerHypothesis.description
-          ].find(value => containsUnsupportedSheetGeography(value) || containsUnsupportedSheetInstruction(value));
-          if (unsupported) throw new Error(`Rendezvous sheet perception invented route semantics: ${unsupported.slice(0, 120)}`);
-          perception = candidate;
-          perceptionError = null;
+          perception = sanitizeSheetPerception(parseJsonContent(response?.choices?.[0]?.message?.content));
+          if (!perception.sheetInterpretation || perception.literalContents.length === 0) {
+            throw new Error('Rendezvous sheet perception omitted its grounded reading');
+          }
           break;
         } catch (error) {
-          perceptionError = error;
           this.logger.warn?.(`Rendezvous sheet perception attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
-          perceptionTokens = Math.min(this.maxRetryTokens, Math.max(perceptionTokens * 2, 1800));
+          perceptionTokens = Math.min(this.maxRetryTokens, Math.max(perceptionTokens * 2, 2600));
+          if (attempt >= this.maxAttempts) {
+            this.logger.warn?.(`Rendezvous sheet perception unavailable; preserving the sheet for a later retry: ${error.message}`);
+            return {
+              ...fallbackDecision(options, agent.visitedPanos || [], 'sheet_perception_error'),
+              sheetPerception: perception,
+              reconciliation: perception.evidenceDelta
+            };
+          }
         }
-      }
-      if (perceptionError) {
-        this.logger.warn?.(`Rendezvous sheet perception unavailable; continuing without a received clue: ${perceptionError.message}`);
-        perception = sanitizeSheetPerception(null);
       }
     }
     const optionLines = options.map((option, index) => {
@@ -295,7 +301,6 @@ ${JSON.stringify(sheetMemory, null, 2)}`
     }).join('\n');
     const recentFieldNotes = (agent.recentNotes || [])
       .filter(note => !/model (?:is|was) unavailable/i.test(note))
-      .filter(note => !contaminatesRouteReasoning(note))
       .slice(-5)
       .map(note => `- ${cleanString(note, 300)}`)
       .join('\n') || '- No prior field notes.';
@@ -307,31 +312,21 @@ ${JSON.stringify(sheetMemory, null, 2)}`
       : `- move: continue through a promising unfamiliar public route;
 - retrace: deliberately choose an option marked walked before when returning toward a remembered place supports the joint plan.
 
-You have already chosen to remain at this same branch ${Math.max(1, Math.floor(Number(consecutiveWaitDecisions) || 0))} consecutive times without gaining a new local observation. Your friend may also be waiting. Remaining here again is not available at this decision; choose move or retrace. The outgoing drawing still describes what you observe; it does not announce that route choice.`;
+You have already chosen to remain at this same branch ${Math.max(1, Math.floor(Number(consecutiveWaitDecisions) || 0))} consecutive times without gaining a new local observation. Your friend may also be waiting. Remaining here again is not available at this decision; choose move or retrace.`;
     const actionSchema = allowWait ? '"move" | "retrace" | "wait"' : '"move" | "retrace"';
     const incomingSheetGuidance = perception.sheetInterpretation
-      ? `A separate route-independent perception pass produced this low-confidence sender-side observation: ${JSON.stringify(perception.sheetInterpretation)}. It may suggest visible features worth checking against your local images, but it is not an action or route request.`
-      : 'No usable observation was received from the sheet. Choose from local route evidence alone.';
+      ? `Your private reading of the newest sheet is: ${JSON.stringify(perception)}`
+      : 'The sheet is blank or has not yet carried a usable message.';
 
-    const systemPrompt = `You are ${agent.name}, one of two friends trying to meet after becoming separated on unfamiliar streets. You both began in Manhattan, but the world is open and either of you may have traveled far beyond your starting area. ${partnerName} is not a passive target: your friend is also moving, interpreting your drawings, and actively trying to meet you. You are building a shared strategy together.
+    const systemPrompt = `You are ${agent.name}, one of two friends actively trying to find each other after becoming separated on unfamiliar streets. You both began in Manhattan, but the world is open. The only information you exchange is a wordless drawing passed back and forth.
 
-You can see your own Street View routes. A separate route-independent perception pass has already read the physical sheet; you receive only its validated literal observation below, never the sheet image alongside your route options. You never receive ${partnerName}'s coordinates, path, distance, neighborhood, reasoning, prompt, transcript, or hidden state.
+You can use your own real-world knowledge when interpreting what you personally see or what a drawing might depict. You never receive ${partnerName}'s coordinates, path, route options, hidden reasoning, or actual destination. Treat every place and intention inferred from a drawing as a hypothesis whose confidence must follow the evidence.
 
-You have no global map or privileged geographic knowledge. Your private memory below is an evidence ledger built only from streets you walked and sheets you previously saw. Every belief has provenance and limited confidence. Fresh visible evidence outranks an old plan. A repeated guess is not confirmation; revise or abandon it when observations disagree.
-
-${incomingSheetGuidance}
-
-You are now at a real branching point. Choose a cooperative action:
+You are at a genuine branch. Reconcile your current surroundings, private memory, and the newest drawing, then choose:
 ${actionGuidance}
 Avoid indoor shops, private interiors, dead ends, and accidental immediate loops. Google headings are compass bearings clockwise from north.
 
-Because you currently hold the sheet, decide what visual message to send to ${partnerName}. Treat it as a wordless observational postcard: evidence about the sender's surroundings and memory, never an instruction for what the recipient should do next. Do not encode continue, forward, turn, retrace, wait, a shared route, or any other requested motion. A street's perspective and vanishing point describe its shape; they are not an arrow. Base the drawing on at least two stable features visible in the current route images, including at least one discriminative feature when one is available, and preserve their spatial relationship. Examples include unusual facade geometry, a distinctive awning arrangement, scaffolding structure, road geometry, trees relative to buildings, towers, stairs, traffic lights, sculpture, or uncommon street furniture. Symbols may support the observation, but they must not dominate it. Do not encode private option numbers, an imagined compass agreement, or a place name. Reuse a visual motif only as a tentative descriptive vocabulary, never as a movement command.
-
-Street names and geographic labels visible in your route-option images are private local navigation evidence for you alone. The no-text sheet cannot transmit them. Never put a named street, avenue, park, square, neighborhood, borough, city, compass heading, or option label into observedFeatures, drawingIntent, drawingPrompt, sheetInterpretation, conventionUpdate, or partnerHypothesis. You may mention a visible local label only in your private observation, reasoning, or currentPlan.
-
-The resulting picture must contain no readable text, letters, numbers, labels, captions, signatures, logos, or watermarks. Express everything visually. Do not put those prohibitions into drawingPrompt; simply describe the picture you want.
-
-Choose your route from your own current observations and search strategy. A received observation may suggest visible features worth checking, but it cannot select one of your private route options. reasoning must justify the selected action using only features visible in your current route images and your private exploration history. Write it in first-person singular. It must not mention the sheet, any drawing or message, received visual memory, your friend, a joint plan, or coordination; do not use we, us, or our. Any street label in your current route images belongs to your surroundings. drawingIntent is your private record of which sender-side observation or memory the outgoing picture preserves; only drawingPrompt and the grounded visible features are sent to the image renderer.
+This call chooses your action and revises your private plan. A separate call will let you decide what to draw. Explain your actual thinking in first person, including how the drawing affected you when relevant. Do not claim certainty that the evidence does not support.
 
 Return only JSON:
 {
@@ -339,22 +334,17 @@ Return only JSON:
   "selectedIndex": <0-${options.length - 1}>,
   "intendedHeading": <the numeric heading you intend, or null>,
   "waitTurns": <1-6 when action is wait, otherwise 0>,
-  "reasoning": "one concise first-person singular action justification using only local route evidence, with no collective plan or communication reference",
+  "reasoning": "one concise first-person account of why this action best supports finding your friend",
   "observation": "a grounded description of what you currently notice and want to remember",
-  "observedFeatures": ["stable visible feature one", "stable visible feature two"],
+  "observedFeatures": ["stable visible feature that may be useful to remember or draw"],
   "memoryUpdate": {
     "currentPlan": "your current search strategy, revised by fresh local evidence"
-  },
-  "drawingIntent": "which sender-side observation or memory the next drawing preserves",
-  "drawingPrompt": "complete instructions for an observational sketch that visually encodes that intent without text"
+  }
 }`;
 
     const actionMemory = {
       ...(privateMemory || {}),
-      currentPlan: contaminatesRouteReasoning(privateMemory?.currentPlan)
-        ? 'Keep gathering local evidence, avoid loops, and revise uncertain visual hypotheses.'
-        : privateMemory?.currentPlan,
-      sentMessages: (privateMemory?.sentMessages || []).map(({ intent, ...entry }) => entry)
+      currentPlan: privateMemory?.currentPlan
     };
     const userContent = [
       {
@@ -381,6 +371,7 @@ ${recentFieldNotes}`
     ];
 
     let lastError = null;
+    let routeDecision = null;
     let tokenBudget = this.maxTokens;
     for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
       try {
@@ -399,61 +390,198 @@ ${recentFieldNotes}`
         if (!allowWait && cleanString(parsed?.action, 20).toLowerCase() === 'wait') {
           throw new Error('Rendezvous model chose waiting after local patience expired');
         }
-        const decision = sanitizeRendezvousDecision(parsed, options, { allowWait });
-        decision.sheetInterpretation = perception.sheetInterpretation;
-        decision.sheetConfidence = perception.sheetConfidence;
-        decision.memoryUpdate.conventionUpdate = perception.conventionUpdate;
-        decision.memoryUpdate.partnerHypothesis = perception.partnerHypothesis;
-        if (!decision.drawingPrompt) throw new Error('Rendezvous model omitted its drawing prompt');
-        if (!decision.drawingIntent) throw new Error('Rendezvous model omitted its private drawing intent');
-        if (decision.observedFeatures.length < 2) throw new Error('Rendezvous model omitted two grounded visible features');
-        if (!decision.memoryUpdate.currentPlan) {
+        routeDecision = sanitizeRendezvousDecision(parsed, options, { allowWait });
+        if (!routeDecision.observation || routeDecision.observedFeatures.length === 0) {
+          throw new Error('Rendezvous route decision omitted its current observation');
+        }
+        if (!routeDecision.memoryUpdate.currentPlan) {
           throw new Error('Rendezvous model omitted its private memory revision');
         }
-        const unsupportedGeography = [
-          ...decision.observedFeatures,
-          decision.sheetInterpretation,
-          decision.drawingIntent,
-          decision.drawingPrompt,
-          decision.memoryUpdate.conventionUpdate.description,
-          decision.memoryUpdate.partnerHypothesis.description
-        ].find(containsUnsupportedSheetGeography);
-        if (unsupportedGeography) {
-          throw new Error(`Rendezvous model put unsupported named geography into the visual channel: ${unsupportedGeography.slice(0, 120)}`);
-        }
-        const unsupportedInstruction = [
-          decision.sheetInterpretation,
-          decision.drawingIntent,
-          decision.drawingPrompt,
-          decision.memoryUpdate.conventionUpdate.description,
-          decision.memoryUpdate.partnerHypothesis.description
-        ].find(containsUnsupportedSheetInstruction);
-        if (unsupportedInstruction) {
-          throw new Error(`Rendezvous model turned the sheet into a movement instruction: ${unsupportedInstruction.slice(0, 120)}`);
-        }
-        const projectedAction = [decision.reasoning, decision.memoryUpdate.currentPlan]
-          .find(projectsActionFromSheet);
-        if (projectedAction) {
-          throw new Error(`Rendezvous model projected an action from the sheet: ${projectedAction.slice(0, 120)}`);
-        }
-        if (contaminatesRouteReasoning(decision.reasoning)) {
-          throw new Error(`Rendezvous model contaminated route reasoning with communication: ${decision.reasoning.slice(0, 120)}`);
-        }
-        return decision;
+        break;
       } catch (error) {
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
-        if (/blank content|drawing prompt|drawing intent|memory revision|named geography|movement instruction|projected an action|contaminated route reasoning|json/i.test(error.message)) {
+        if (/blank content|observation|memory revision|json/i.test(error.message)) {
           tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 3200));
         }
       }
     }
+    if (!routeDecision) {
+      const status = lastError?.status ?? lastError?.response?.status;
+      return {
+        ...fallbackDecision(options, agent.visitedPanos || [], status ? `api_error_${status}` : 'route_model_error'),
+        sheetInterpretation: perception.sheetInterpretation,
+        sheetConfidence: perception.sheetConfidence,
+        sheetPerception: perception,
+        reconciliation: perception.evidenceDelta
+      };
+    }
 
-    const status = lastError?.status ?? lastError?.response?.status;
-    return fallbackDecision(
-      options,
-      agent.visitedPanos || [],
-      status ? `api_error_${status}` : 'model_error'
-    );
+    const drawingSystemPrompt = `You are ${agent.name}. You have reached a real choice while trying to find ${partnerName}, and you currently hold the one physical sheet you pass back and forth.
+
+Decide what wordless drawing would be most useful to send now. You may communicate anything you genuinely believe could help you find each other: what you see, a remembered place, uncertainty, a correction, intended movement, a request, relative spatial relationships, or an invented visual convention. You are not limited to an observational postcard and you may use arrows, diagrams, symbols, maps, perspective, or figurative imagery when you choose.
+
+Do not include readable text, letters, numbers, captions, street labels, signatures, logos, or watermarks in the intended image. Do not encode exact coordinates or information you do not possess. The image renderer receives only your drawing prompt and the visual anchors you list.
+
+Return only JSON:
+{
+  "drawingIntent": "your private account of what you are trying to tell ${partnerName}",
+  "drawingPrompt": "complete visual instructions for one coherent handmade drawing with no readable text",
+  "groundedFeatures": ["visible or remembered visual anchor included in the drawing"]
+}`;
+    const drawingContent = [
+      {
+        type: 'text',
+        text: `Your private reading and evidence delta:
+${JSON.stringify(perception, null, 2)}
+
+Your route decision and near-term intention:
+${JSON.stringify({
+  action: routeDecision.action,
+  intendedHeading: routeDecision.intendedHeading,
+  reasoning: routeDecision.reasoning,
+  observation: routeDecision.observation,
+  observedFeatures: routeDecision.observedFeatures,
+  currentPlan: routeDecision.memoryUpdate.currentPlan
+}, null, 2)}
+
+Your prior private memory:
+${JSON.stringify(actionMemory, null, 2)}`
+      },
+      ...screenshots.map(buffer => ({
+        type: 'image_url',
+        image_url: { url: `data:image/jpeg;base64,${buffer.toString('base64')}`, detail: 'low' }
+      }))
+    ];
+    let drawingPlan = null;
+    tokenBudget = Math.min(this.maxTokens, 1800);
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+      try {
+        const response = await this.#client().chat.completions.create({
+          model: this.model,
+          messages: [
+            { role: 'system', content: drawingSystemPrompt },
+            { role: 'user', content: drawingContent }
+          ],
+          response_format: { type: 'json_object' },
+          reasoning_effort: this.reasoningEffort,
+          max_completion_tokens: tokenBudget
+        });
+        const parsed = parseJsonContent(response?.choices?.[0]?.message?.content);
+        drawingPlan = {
+          drawingIntent: cleanString(parsed?.drawingIntent, 700),
+          drawingPrompt: cleanString(parsed?.drawingPrompt, 2400),
+          groundedFeatures: cleanStringList(parsed?.groundedFeatures, { limit: 6, maxLength: 180 })
+        };
+        if (!drawingPlan.drawingIntent || !drawingPlan.drawingPrompt) {
+          throw new Error('Rendezvous drawing planner omitted its intended message');
+        }
+        break;
+      } catch (error) {
+        lastError = error;
+        this.logger.warn?.(`Rendezvous drawing plan attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
+        tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
+      }
+    }
+    if (!drawingPlan) {
+      const status = lastError?.status ?? lastError?.response?.status;
+      return {
+        ...fallbackDecision(options, agent.visitedPanos || [], status ? `api_error_${status}` : 'drawing_plan_error'),
+        sheetInterpretation: perception.sheetInterpretation,
+        sheetConfidence: perception.sheetConfidence,
+        sheetPerception: perception,
+        reconciliation: perception.evidenceDelta
+      };
+    }
+
+    return {
+      ...routeDecision,
+      ...drawingPlan,
+      observedFeatures: drawingPlan.groundedFeatures.length > 0
+        ? drawingPlan.groundedFeatures
+        : routeDecision.observedFeatures,
+      sheetInterpretation: perception.sheetInterpretation,
+      sheetConfidence: perception.sheetConfidence,
+      sheetPerception: perception,
+      reconciliation: perception.evidenceDelta,
+      memoryUpdate: {
+        ...routeDecision.memoryUpdate,
+        conventionUpdate: perception.conventionUpdate,
+        partnerHypothesis: perception.partnerHypothesis
+      },
+      fallbackCause: null
+    };
+  }
+
+  async reviewDrawing({
+    agentName,
+    partnerName,
+    drawingIntent,
+    drawingPrompt,
+    groundedFeatures = [],
+    imageBuffer,
+    imageMimeType = 'image/webp'
+  }) {
+    if (!Buffer.isBuffer(imageBuffer) || imageBuffer.length === 0) {
+      throw new Error('Rendezvous drawing review requires the generated image');
+    }
+    const systemPrompt = `You are ${agentName}, inspecting the actual wordless drawing that will be handed to ${partnerName}. Decide whether it visibly communicates what you intended.
+
+Reject it when it contains readable text, materially omits or distorts the intended idea, contradicts your intent, or is so generic or opaque that it would not help your friend. Do not demand photorealism. A handmade, symbolic, diagrammatic, or imperfect drawing is acceptable when its meaning survives.
+
+Return only JSON:
+{
+  "accepted": true | false,
+  "assessment": "concise private assessment",
+  "revisionPrompt": "when rejected, concrete visual corrections for the next rendering; otherwise empty"
+}`;
+    let lastError = null;
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+      try {
+        const response = await this.#client().chat.completions.create({
+          model: this.model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            {
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: `My intended message:
+${drawingIntent}
+
+My rendering instructions:
+${drawingPrompt}
+
+Visual anchors:
+${JSON.stringify(groundedFeatures)}`
+                },
+                {
+                  type: 'image_url',
+                  image_url: { url: `data:${imageMimeType};base64,${imageBuffer.toString('base64')}`, detail: 'high' }
+                }
+              ]
+            }
+          ],
+          response_format: { type: 'json_object' },
+          reasoning_effort: this.reasoningEffort,
+          max_completion_tokens: 1400
+        });
+        const parsed = parseJsonContent(response?.choices?.[0]?.message?.content);
+        const assessment = cleanString(parsed?.assessment, 500);
+        if (typeof parsed?.accepted !== 'boolean' || !assessment) {
+          throw new Error('Rendezvous drawing review omitted its verdict');
+        }
+        return {
+          accepted: parsed.accepted,
+          assessment,
+          revisionPrompt: cleanString(parsed?.revisionPrompt, 1200)
+        };
+      } catch (error) {
+        lastError = error;
+        this.logger.warn?.(`Rendezvous drawing review attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
+      }
+    }
+    throw lastError || new Error('Rendezvous drawing review failed');
   }
 }
