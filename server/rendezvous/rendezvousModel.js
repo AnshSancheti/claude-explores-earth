@@ -1343,15 +1343,41 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
     pending,
     privateMemory = null
   }) {
-    const localEvidence = cleanStringList(pending?.groundedFeatures, {
+    const durableLocalEvidence = cleanStringList(
+      (privateMemory?.ownObservations || [])
+        .slice(-6)
+        .map(observation => observation?.description),
+      {
+        limit: 6,
+        maxLength: 220
+      }
+    );
+    const compatiblePendingEvidence = ['local_observation', 'own_action']
+      .includes(pending?.contributionKind)
+      ? cleanStringList(pending?.groundedFeatures, {
+          limit: 6,
+          maxLength: 220
+        })
+      : [];
+    const localEvidence = cleanStringList([
+      ...durableLocalEvidence,
+      ...compatiblePendingEvidence
+    ], {
       limit: 6,
       maxLength: 220
     })
       .filter(isConcreteLocalEvidence)
       .map(description => sanitizeOutboundPlaceNames(description, [], 220))
       .filter(Boolean);
+    const latestReconciliation = (privateMemory?.reconciliations || []).at(-1);
     const latestQuestions = cleanStringList(
-      (privateMemory?.reconciliations || []).at(-1)?.unresolvedQuestions,
+      latestReconciliation?.unresolvedQuestions,
+      { limit: 3, maxLength: 220 }
+    )
+      .map(description => sanitizeOutboundPlaceNames(description, [], 220))
+      .filter(Boolean);
+    const latestCorrections = cleanStringList(
+      latestReconciliation?.contradictions,
       { limit: 3, maxLength: 220 }
     )
       .map(description => sanitizeOutboundPlaceNames(description, [], 220))
@@ -1366,13 +1392,18 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         id: `question:${index}`,
         kind: 'question',
         description
+      })),
+      ...latestCorrections.map((description, index) => ({
+        id: `contradiction:${index}`,
+        kind: 'correction',
+        description
       }))
     ];
     if (catalog.length === 0) return null;
 
     const systemPrompt = `You are ${agentName}, reconsidering only the drawing you are about to pass to ${partnerName}. Your route choice is already made and does not change.
 
-Your prior contribution could not be rendered so a context-free recipient could tell whose action it depicted. Choose a different useful contribution from the supplied evidence catalog rather than retrying the same claim. Start from a conceptually blank page. Do not retain the prior person, arrow, path, route, directional cue, movement scene, or composition unless the newly cited alternative itself requires that element. This is not a request to adopt a prescribed code or strategy: decide what grounded observation or genuine question is most worth communicating now.
+Your prior contribution repeatedly failed because a context-free recipient could not see its intended communicative function. Choose a different useful contribution from the supplied evidence catalog rather than retrying the same visual proposition. Start from a conceptually blank page. Do not retain the prior subject, relationship, symbol, person, arrow, path, route, directional cue, movement scene, or composition unless the newly cited alternative itself requires that element. This is not a request to adopt a prescribed code or strategy: decide which grounded observation, genuine question, or correction is most worth communicating now.
 
 Use one coherent, wordless composition. Do not include readable text, letters, numbers, captions, street names, coordinates, labels, signatures, logos, or watermarks. Do not invent evidence or enlarge the cited claim.
 

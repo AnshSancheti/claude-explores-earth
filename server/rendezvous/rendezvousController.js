@@ -1534,7 +1534,6 @@ export class RendezvousController {
       this.state.scratchpad = normalizedScratchpad;
     }
     if (
-      pending.contributionKind === 'own_action' &&
       pending.attempts >= 6 &&
       pending.replanCount < 1 &&
       typeof this.agentModel.replanUnrenderableDrawing === 'function'

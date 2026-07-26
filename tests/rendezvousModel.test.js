@@ -589,6 +589,48 @@ test('an unrenderable action can be replanned into a grounded contribution', asy
   assert.equal(requests.length, 1);
 });
 
+test('an acknowledgement replan does not relabel received imagery as a local observation', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      replan: {
+        contributionEvidenceId: 'question:0',
+        drawingIntent: 'Ask whether the repeated arch is still useful.',
+        messageAction: 'unclear',
+        drawingPrompt: 'Draw one solid arch beside a faint uncertain echo, with no words.',
+        groundedFeatureEvidenceIds: ['question:0']
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const replan = await service.replanUnrenderableDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    pending: {
+      contributionKind: 'acknowledgement',
+      contributionSummary: 'Acknowledging Theo’s long sidewalk and footprints.',
+      drawingIntent: 'Acknowledge Theo’s path.',
+      groundedFeatures: ['a long sidewalk, footprints, and a large tree']
+    },
+    privateMemory: {
+      ownObservations: [{
+        description: 'three dark arches beside a public plaza',
+        sourcePanoId: 'ada-current'
+      }],
+      reconciliations: [{
+        unresolvedQuestions: ['whether the repeated arch is still useful']
+      }]
+    }
+  });
+
+  assert.equal(replan.contributionKind, 'question');
+  assert.equal(replan.contributionEvidenceId, 'question:0');
+  const requestText = requests[0].messages.at(-1).content;
+  assert.match(requestText, /three dark arches beside a public plaza/);
+  assert.doesNotMatch(requestText, /long sidewalk, footprints, and a large tree/);
+});
+
 test('own-action evidence uses the executed option bearing without leaking its route label', async () => {
   const requests = [];
   const service = new RendezvousModelService({

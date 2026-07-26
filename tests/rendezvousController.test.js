@@ -1005,6 +1005,79 @@ test('a repeatedly unrenderable action is replanned without changing the run or 
   }
 });
 
+test('a repeatedly unrenderable acknowledgement gets one bounded replan', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-ack-replan-test-'));
+  const replans = [];
+  const agentModel = {
+    async replanUnrenderableDrawing(input) {
+      replans.push(input);
+      return {
+        contributionKind: 'question',
+        contributionEvidenceId: 'question:0',
+        contributionSummary: 'Question I am sending: whether the arch is repeated ahead.',
+        drawingIntent: 'Ask whether the arch appears again.',
+        informationDelta: 'Question I am sending: whether the arch is repeated ahead.',
+        continuityReason: '',
+        messageAction: 'unclear',
+        drawingPrompt: 'Draw one arch beside its faint uncertain echo.',
+        groundedFeatures: ['whether the arch is repeated ahead']
+      };
+    },
+    async reviewDrawing() {
+      return {
+        accepted: true,
+        assessment: 'The drawing reads as an unresolved visual question.',
+        blindRead: {
+          dominantAction: 'unclear',
+          frameOfReference: 'recipient',
+          communicationFunction: 'question',
+          readableText: false,
+          likelyMessage: 'Does this arch appear again?'
+        }
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    const runId = controller.state.runId;
+    const senderPano = controller.state.agents.ada.panoId;
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'unrenderable-acknowledgement',
+      agentId: 'ada',
+      turn: 7,
+      contributionKind: 'acknowledgement',
+      contributionEvidenceId: 'received:0',
+      contributionSummary: 'Acknowledging received visual evidence: a path and footprints.',
+      drawingIntent: 'Acknowledge the path and footprints.',
+      informationDelta: 'Acknowledging received visual evidence: a path and footprints.',
+      messageAction: 'movement',
+      drawingPrompt: 'Draw a path and footprints.',
+      groundedFeatures: ['a path and footprints']
+    });
+    controller.state.scratchpad.pendingMessage.attempts = 6;
+
+    await Promise.all(Array.from({ length: 4 }, () => controller.resumePendingDrawing()));
+
+    assert.equal(replans.length, 1);
+    assert.equal(replans[0].pending.contributionKind, 'acknowledgement');
+    assert.equal(controller.state.runId, runId);
+    assert.equal(controller.state.agents.ada.panoId, senderPano);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.currentMessage.id, 'unrenderable-acknowledgement');
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).contributionKind, 'question');
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).replanCount, 1);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('drawing failure preserves a retryable handoff across controller restart', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-drawing-retry-test-'));
   try {
