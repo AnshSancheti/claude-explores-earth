@@ -238,9 +238,10 @@ function assertsUncitedSharedDestination(...descriptions) {
 const BELIEF_TERM_STOPWORDS = new Set([
   'about', 'across', 'ada', 'along', 'anchor', 'appears', 'area', 'arrow', 'belief',
   'central', 'convention', 'current', 'diagonal', 'district', 'friend', 'from',
-  'intend', 'intention', 'landmark', 'mark', 'meaning', 'movement', 'partner', 'path', 'physical',
-  'place', 'possible', 'recurring', 'right', 'route', 'sender', 'shared',
-  'street', 'symbol', 'target', 'theo', 'toward', 'visual', 'waypoint', 'with'
+  'hand', 'intend', 'intention', 'landmark', 'mark', 'marks', 'meaning', 'movement',
+  'partner', 'path', 'physical', 'place', 'possible', 'progression', 'recurring',
+  'right', 'right-hand', 'route', 'sender', 'shared', 'street', 'symbol', 'target',
+  'theo', 'toward', 'using', 'visual', 'waypoint', 'with'
 ]);
 
 function unsupportedPartnerHypothesisTerms(privateMemory, candidateUpdate = null) {
@@ -262,22 +263,25 @@ function unsupportedPartnerHypothesisTerms(privateMemory, candidateUpdate = null
     .filter(term => !BELIEF_TERM_STOPWORDS.has(term)))];
 }
 
-function assertsUnsupportedPartnerHypothesisAsGoal(
+function unsupportedPartnerHypothesisGoalTerm(
   privateMemory,
   candidateUpdate,
   ...descriptions
 ) {
   const terms = unsupportedPartnerHypothesisTerms(privateMemory, candidateUpdate);
-  if (terms.length === 0) return false;
+  if (terms.length === 0) return '';
   const goalLanguage = /\b(?:approach|destination|ending?|goal|head(?:ing)?|progress(?:ion)?|reach|target|toward|towards|waypoint)\b/i;
   const uncertainty = /\b(?:uncertain|unresolved|possibly|possible|hypothesis|hypothetical|question|whether|maybe|might|could|perhaps|test|verify|clarify|investigate|explore)\b/i;
-  return descriptions
-    .flatMap(value => cleanString(value, 2400).split(/[.!?;]+/))
-    .some(statement => {
-      if (!goalLanguage.test(statement) || uncertainty.test(statement)) return false;
-      const lower = statement.toLowerCase();
-      return terms.some(term => new RegExp(`\\b${escapeRegExp(term)}\\b`, 'i').test(lower));
-    });
+  for (const statement of descriptions
+    .flatMap(value => cleanString(value, 2400).split(/[.!?;]+/))) {
+    if (!goalLanguage.test(statement) || uncertainty.test(statement)) continue;
+    const lower = statement.toLowerCase();
+    const matchedTerm = terms.find(term =>
+      new RegExp(`\\b${escapeRegExp(term)}\\b`, 'i').test(lower)
+    );
+    if (matchedTerm) return matchedTerm;
+  }
+  return '';
 }
 
 export function reconcileRendezvousMessageAction(requestedAction, ...descriptions) {
@@ -643,6 +647,7 @@ ${recentFieldNotes}`
           throw new Error('Rendezvous model made independent movement contingent on a partner cue');
         }
         routeDecision = sanitizeRendezvousDecision(parsed, options, { allowWait });
+        const validationErrors = [];
         if (
           routeDecision.action !== 'wait' &&
           routeDecision.intendedHeading !== null &&
@@ -651,7 +656,7 @@ ${recentFieldNotes}`
             routeDecision.intendedHeading
           ) > 45
         ) {
-          throw new Error('Rendezvous selected route contradicts its intended heading');
+          validationErrors.push('Rendezvous selected route contradicts its intended heading');
         }
         if (!routeDecision.observation || routeDecision.observedFeatures.length === 0) {
           throw new Error('Rendezvous route decision omitted its current observation');
@@ -702,12 +707,18 @@ ${recentFieldNotes}`
             partnerHypothesis
           };
         }
-        if (assertsUnsupportedPartnerHypothesisAsGoal(
+        const unsupportedGoalTerm = unsupportedPartnerHypothesisGoalTerm(
           privateMemory,
           routeReconciliation.partnerHypothesis,
           routeDecision.memoryUpdate.currentPlan
-        )) {
-          throw new Error('Rendezvous route plan promoted an unsupported partner hypothesis into a movement goal');
+        );
+        if (unsupportedGoalTerm) {
+          validationErrors.push(
+            `Rendezvous route plan promoted an unsupported partner hypothesis motif "${unsupportedGoalTerm}" into a movement goal`
+          );
+        }
+        if (validationErrors.length > 0) {
+          throw new Error(validationErrors.join('; '));
         }
         break;
       } catch (error) {
@@ -715,7 +726,7 @@ ${recentFieldNotes}`
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
         routeRetryFeedback = /unsupported partner hypothesis/i.test(error.message)
-          ? 'Your currentPlan promoted a distinctive motif from an unsupported partner hypothesis into the endpoint of movement. You may preserve an action justified by current local evidence, but rewrite the plan so that motif’s physical meaning is explicitly uncertain, questioned, or being tested.'
+          ? `Your currentPlan promoted a distinctive motif from an unsupported partner hypothesis into the endpoint of movement. You may preserve an action justified by current local evidence, but rewrite the plan so that motif’s physical meaning is explicitly uncertain, questioned, or being tested. Correct every other validation issue named here too: ${error.message}`
           : `Correct this validation error without inventing new evidence: ${error.message}`;
         if (/blank content|observation|memory revision|json/i.test(error.message)) {
           tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 3200));
@@ -932,14 +943,17 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         )) {
           throw new Error('Rendezvous drawing planner promoted an uncited motif into a shared destination');
         }
-        if (assertsUnsupportedPartnerHypothesisAsGoal(
+        const unsupportedGoalTerm = unsupportedPartnerHypothesisGoalTerm(
           actionMemory,
           routeReconciliation.partnerHypothesis,
           candidateDrawingPlan.drawingIntent,
           candidateDrawingPlan.drawingPrompt,
           candidateDrawingPlan.continuityReason
-        )) {
-          throw new Error('Rendezvous drawing planner promoted an unsupported partner hypothesis into a movement goal');
+        );
+        if (unsupportedGoalTerm) {
+          throw new Error(
+            `Rendezvous drawing planner promoted an unsupported partner hypothesis motif "${unsupportedGoalTerm}" into a movement goal`
+          );
         }
         drawingPlan = candidateDrawingPlan;
         break;

@@ -632,9 +632,13 @@ test('route planning cannot make an unsupported partner motif its movement goal'
           const correction = requests.at(-1).messages[1].content[0].text;
           assert.match(correction, /AUTHORITATIVE ROUTE CORRECTION/);
           assert.match(correction, /explicitly uncertain, questioned, or being tested/);
+          assert.match(correction, /selected route contradicts its intended heading/);
+          assert.match(correction, /motif "star"/);
         }
         return routeAttempts === 1
           ? routeResponse({
+              selectedIndex: 0,
+              intendedHeading: 90,
               memoryUpdate: {
                 currentPlan: 'Continue north toward the star while preserving the shared visual language.'
               }
