@@ -692,6 +692,44 @@ test('route planning cannot make an unsupported partner motif its movement goal'
   assert.match(decision.memoryUpdate.currentPlan, /testing whether/);
 });
 
+test('ordinary spatial language is not mistaken for an unsupported visual motif', async () => {
+  const priorMemory = {
+    ...input().privateMemory,
+    partnerHypotheses: [{
+      key: 'routecontinuation-se-block',
+      description: 'Theo signaling continued inland movement with inland reorientation via the grid, star as waypoint.',
+      confidence: 0.4,
+      basisSequences: [5],
+      evidenceStatus: 'unclear'
+    }]
+  };
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route: routeResponse({
+        sheetReconciliation: {
+          ...routeResponse().sheetReconciliation,
+          partnerHypothesis: {
+            key: 'routecontinuation-se-block',
+            description: 'Theo may be continuing inland while the star remains ambiguous.',
+            confidence: 0.35,
+            basisSequences: [5],
+            evidenceStatus: 'unclear'
+          }
+        },
+        memoryUpdate: {
+          currentPlan: 'Continue inland using current local evidence while testing whether the star has physical meaning.'
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({ privateMemory: priorMemory }));
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.memoryUpdate.currentPlan, /Continue inland/);
+});
+
 test('a route response that fails every validation attempt cannot leak through', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {

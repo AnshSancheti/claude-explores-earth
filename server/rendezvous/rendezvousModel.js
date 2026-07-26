@@ -262,11 +262,12 @@ function assertsUncitedSharedDestination(...descriptions) {
 
 const BELIEF_TERM_STOPWORDS = new Set([
   'about', 'across', 'ada', 'along', 'anchor', 'appears', 'area', 'arrow', 'belief',
-  'central', 'convention', 'current', 'diagonal', 'district', 'friend', 'from',
-  'hand', 'intend', 'intention', 'landmark', 'mark', 'marks', 'meaning', 'movement',
-  'partner', 'path', 'physical', 'place', 'possible', 'progression', 'recurring',
-  'right', 'right-hand', 'route', 'sender', 'shared', 'street', 'symbol', 'target',
-  'theo', 'toward', 'using', 'visual', 'waypoint', 'with'
+  'central', 'continued', 'convention', 'current', 'diagonal', 'district', 'friend',
+  'from', 'grid', 'hand', 'inland', 'intend', 'intends', 'intention', 'landmark',
+  'mark', 'marks', 'meaning', 'move', 'moves', 'movement', 'partner', 'path',
+  'physical', 'place', 'possible', 'progression', 'recurring', 'reorientation',
+  'right', 'right-hand', 'route', 'sender', 'shared', 'signaling', 'storefront',
+  'street', 'symbol', 'target', 'theo', 'toward', 'using', 'visual', 'waypoint', 'with'
 ]);
 
 function unsupportedPartnerHypothesisTerms(privateMemory, candidateUpdate = null) {
