@@ -1673,6 +1673,40 @@ test('ordinary spatial language is not mistaken for an unsupported visual motif'
   assert.match(decision.memoryUpdate.currentPlan, /Continue inland/);
 });
 
+test('public-route boilerplate is not mistaken for an unsupported visual motif', async () => {
+  let routeAttempts = 0;
+  const warnings = [];
+  const priorMemory = {
+    ...input().privateMemory,
+    partnerHypotheses: [{
+      key: 'fork-coordination',
+      description: 'Continue along public route while seeking a joint decision at the fork.',
+      confidence: 0.1,
+      basisSequences: [5],
+      evidenceStatus: 'unclear'
+    }]
+  };
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route() {
+        routeAttempts += 1;
+        return routeResponse({
+          memoryUpdate: {
+            currentPlan: 'Approach the locally visible arches on this public street.'
+          }
+        });
+      }
+    }),
+    logger: { warn(message) { warnings.push(message); } }
+  });
+
+  const decision = await service.decide(input({ privateMemory: priorMemory }));
+
+  assert.equal(routeAttempts, 1, warnings.join('\n'));
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.memoryUpdate.currentPlan, /public street/);
+});
+
 test('a route response that fails every validation attempt cannot leak through', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {

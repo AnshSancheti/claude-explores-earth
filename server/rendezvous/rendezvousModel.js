@@ -406,7 +406,7 @@ const BELIEF_TERM_STOPWORDS = new Set([
   'guiding', 'hand', 'inland', 'intend', 'intends', 'intention', 'interpretation',
   'landmark', 'mark', 'marks', 'meaning', 'meeting', 'move', 'moves', 'movement',
   'partner', 'path', 'physical', 'place', 'point', 'possible', 'progression',
-  'recurring', 'reorientation', 'right', 'right-hand', 'route', 'sender', 'shared',
+  'public', 'recurring', 'reorientation', 'right', 'right-hand', 'route', 'sender', 'shared',
   'rendezvous', 'signaling', 'specifying', 'storefront', 'street', 'symbol',
   'target', 'theo', 'toward', 'using', 'visual', 'waypoint', 'with', 'without'
 ]);
