@@ -1381,9 +1381,23 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           candidateDrawingPlan.contributionKind === 'local_observation' &&
           unsupportedRouteCues.length > 0
         ) {
-          throw new Error(
-            'Rendezvous drawing planner added route-command imagery unrelated to its local observation'
-          );
+          if (attempt >= this.maxAttempts) {
+            const visibleFeatures = candidateDrawingPlan.groundedFeatures.length > 0
+              ? candidateDrawingPlan.groundedFeatures.join('; ')
+              : candidateDrawingPlan.contributionSummary;
+            candidateDrawingPlan.drawingIntent =
+              `Show the cited local observation as the complete message: ${candidateDrawingPlan.contributionSummary}.`;
+            candidateDrawingPlan.messageAction = 'unclear';
+            candidateDrawingPlan.drawingPrompt =
+              `Create one coherent handmade, wordless observational sketch centered only on this cited local evidence: ${visibleFeatures}. Make the observed place itself visually primary. Include no readable text, letters, numbers, labels, logos, or watermarks.`;
+            this.logger.warn?.(
+              `Rendezvous normalized uncited route imagery from local observation after ${attempt} attempts`
+            );
+          } else {
+            throw new Error(
+              'Rendezvous drawing planner added route-command imagery unrelated to its local observation'
+            );
+          }
         }
         drawingPlan = candidateDrawingPlan;
         break;
