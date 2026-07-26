@@ -668,6 +668,34 @@ test('newest evidence and an ambiguous motif cannot jointly justify movement', a
   assert.doesNotMatch(decision.reasoning, /following the newest evidence|aligns with/i);
 });
 
+test('a sheet cannot frame forward motion as the locally justified path', async () => {
+  const copiedReasoning = 'The newest sheet presents a calm, tree-lined street with a clear central corridor and a distant vanishing point, suggesting forward motion along the public avenue as the most locally justified path. Previous local notes indicate an unexplored continuation, and the current surroundings visually align with moving northeast.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'The sender reports a calm tree-lined sidewalk.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /suggesting forward motion/i);
+});
+
 test('a sender report can still support an explicit interception inference', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {

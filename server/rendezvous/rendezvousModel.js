@@ -555,6 +555,8 @@ function copiesSheetRoute(...descriptions) {
         .test(statement) ||
       /\b(?:latest|newest|new)\s+sheet\b[^.!;]{0,160}\b(?:align|favor|hint|point|reinforce|support|suggest)\w*\b[^.!;]{0,100}\b(?:advanc|continu|head|move|proceed)\w*\b/i
         .test(statement) ||
+      /\b(?:latest|newest|new)\s+(?:drawing|sheet)\b[^.!;]{0,160}\b(?:frame|indicate|invite|point|present|reinforce|show|suggest)\w*\b[^.!;]{0,120}\b(?:avenue|continuation|corridor|direction|forward|motion|path|route|vanishing point|way)\b/i
+        .test(statement) ||
       /\b(?:latest|newest|new)\s+sheet\b[^.!;]{0,160}\b(?:align|correspond|fit|match)\w*\s+with\b[^.!;]{0,100}\b(?:continuation|corridor|direction|forward|path|route|street|stretch|way)\b/i
         .test(statement) ||
       /\b(?:follow|following|use|using|based on)\b[^.!;]{0,40}\b(?:latest|newest|new)\s+(?:drawing|evidence|sheet)\b[^.!;]{0,120}\b(?:advanc|continu|head|move|proceed)\w*\b/i
