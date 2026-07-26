@@ -298,6 +298,25 @@ test('abstract sheet-language residue is excluded from local outbound evidence',
   assert.doesNotMatch(catalogText, /star waypoint implied by the prior sheet cue/);
 });
 
+test('a paused route drawing is reconciled to transition before image review', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      drawing: drawingResponse({
+        messageAction: 'stillness',
+        drawingIntent: 'Hold at the tree anchor while keeping the diagonal route toward the storefront visible.',
+        drawingPrompt: 'Draw a waiting figure at a tree anchor with a diagonal path toward a distant storefront.'
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.messageAction, 'transition');
+});
+
 test('an already interpreted sheet reuses durable memory without another perception call', async () => {
   const requests = [];
   const remembered = {

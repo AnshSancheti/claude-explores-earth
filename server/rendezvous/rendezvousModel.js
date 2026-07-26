@@ -151,6 +151,16 @@ function authoritativeContributionSummary(kind, description) {
   return evidence;
 }
 
+function reconcileMessageAction(requestedAction, ...descriptions) {
+  if (requestedAction === 'transition' || requestedAction === 'unclear') return requestedAction;
+  const text = descriptions.map(value => cleanString(value, 2400)).join(' ');
+  const movementCues = text.match(/\b(?:arrow|diagonal|journey|move|movement|path|progression|route|toward|travel)\b/gi) || [];
+  const stillnessCues = text.match(/\b(?:anchor|hold|pause|remain|stationary|still|stillness|wait|waiting)\b/gi) || [];
+  if (requestedAction === 'stillness' && movementCues.length >= 2) return 'transition';
+  if (requestedAction === 'movement' && stillnessCues.length >= 2) return 'transition';
+  return requestedAction;
+}
+
 function sanitizeSheetPerception(raw) {
   const sheetInterpretation = cleanString(raw?.sheetInterpretation, 700);
   const numericConfidence = Number(raw?.sheetConfidence);
@@ -670,17 +680,25 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
             contributionEvidence.find(item => item.id === id)?.description
           )
         ].filter(Boolean);
+        const drawingIntent = cleanString(parsed?.drawingIntent, 700);
+        const drawingPrompt = cleanString(parsed?.drawingPrompt, 2400);
+        const requestedMessageAction = ['movement', 'stillness', 'transition', 'unclear']
+          .includes(parsed?.messageAction)
+          ? parsed.messageAction
+          : null;
         const candidateDrawingPlan = {
           contributionKind,
           contributionEvidenceId,
           contributionSummary,
-          drawingIntent: cleanString(parsed?.drawingIntent, 700),
+          drawingIntent,
           informationDelta: contributionSummary,
           continuityReason: cleanString(parsed?.continuityReason, 500),
-          messageAction: ['movement', 'stillness', 'transition', 'unclear'].includes(parsed?.messageAction)
-            ? parsed.messageAction
-            : null,
-          drawingPrompt: cleanString(parsed?.drawingPrompt, 2400),
+          messageAction: reconcileMessageAction(
+            requestedMessageAction,
+            drawingIntent,
+            drawingPrompt
+          ),
+          drawingPrompt,
           groundedFeatures: [...new Set(groundedFeatures)].slice(0, 6)
         };
         if (
