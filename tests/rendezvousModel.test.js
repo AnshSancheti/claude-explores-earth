@@ -1707,6 +1707,39 @@ test('public-route boilerplate is not mistaken for an unsupported visual motif',
   assert.match(decision.memoryUpdate.currentPlan, /public street/);
 });
 
+test('connective planning words are not treated as current-sheet motifs', async () => {
+  let routeAttempts = 0;
+  const priorMemory = {
+    ...input().privateMemory,
+    partnerHypotheses: [{
+      key: 'fork-coordination',
+      description: 'Continue along a public route while seeking a joint decision from a directional cue at the fork.',
+      confidence: 0.1,
+      basisSequences: [5],
+      evidenceStatus: 'unclear'
+    }]
+  };
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route() {
+        routeAttempts += 1;
+        return routeResponse({
+          memoryUpdate: {
+            currentPlan: 'The newest sheet remains inconclusive while its directional quality remains uncertain and my local plan stays anchored to visible arches.'
+          }
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({ privateMemory: priorMemory }));
+
+  assert.equal(routeAttempts, 1);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.memoryUpdate.currentPlan, /directional quality remains uncertain/);
+});
+
 test('a route response that fails every validation attempt cannot leak through', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {
