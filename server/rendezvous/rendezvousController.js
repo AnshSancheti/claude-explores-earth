@@ -59,7 +59,12 @@ function composeDrawingRevisionPrompt(
   return `${RENDER_REVISION_MARKER} ${correction} ${contributionConstraint} ${actionConstraint} Rebuild the image from these instructions and the compatible visual anchors supplied separately. Do not reuse the rejected composition or any earlier instruction that conflicts with this correction.`;
 }
 
-function compatibleRevisionFeatures(drawingPrompt, groundedFeatures, messageAction) {
+function compatibleRevisionFeatures(
+  drawingPrompt,
+  groundedFeatures,
+  messageAction,
+  contributionKind = ''
+) {
   if (!String(drawingPrompt || '').startsWith(RENDER_REVISION_MARKER)) return groundedFeatures;
   const explicitlyRemoved = ['arrow', 'barrier', 'figure', 'line', 'motion', 'path', 'route', 'star']
     .filter(term => new RegExp(`\\bremove\\b[^.!;]{0,120}\\b${term}s?\\b`, 'i').test(drawingPrompt));
@@ -68,10 +73,14 @@ function compatibleRevisionFeatures(drawingPrompt, groundedFeatures, messageActi
     : messageAction === 'movement'
       ? /\b(?:halt|pause|remain|still|stop|wait)\b/i
       : null;
+  const senderFrameConflict = contributionKind === 'own_action'
+    ? /\b(?:ahead|avenue|continuation|fork|path|route|toward|vanishing)\b/i
+    : null;
   return (Array.isArray(groundedFeatures) ? groundedFeatures : [])
     .filter(feature => {
       const value = String(feature || '');
       if (conflictPattern?.test(value)) return false;
+      if (senderFrameConflict?.test(value)) return false;
       return !explicitlyRemoved.some(term => new RegExp(`\\b${term}s?\\b`, 'i').test(value));
     });
 }
@@ -1668,7 +1677,8 @@ export class RendezvousController {
           groundedFeatures: compatibleRevisionFeatures(
             pending.drawingPrompt,
             pending.groundedFeatures,
-            pending.messageAction
+            pending.messageAction,
+            pending.contributionKind
           )
         });
         let review = typeof this.agentModel.reviewDrawing === 'function'
@@ -1702,7 +1712,8 @@ export class RendezvousController {
             groundedFeatures: compatibleRevisionFeatures(
               revisionPrompt,
               pending.groundedFeatures,
-              pending.messageAction
+              pending.messageAction,
+              pending.contributionKind
             )
           });
           renderAttempts += 1;

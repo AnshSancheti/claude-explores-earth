@@ -1009,12 +1009,13 @@ test('a durable retry cannot waive an own-action sender-frame failure', async ()
       };
     }
   };
+  const imageModel = new FakeImageModel();
   try {
     const controller = new RendezvousController({
       dataDir: tempDir,
       streetView: new FakeStreetView(),
       agentModel,
-      imageModel: new FakeImageModel(),
+      imageModel,
       logger: { warn() {}, error() {} }
     });
     await controller.createRun();
@@ -1025,7 +1026,12 @@ test('a durable retry cannot waive an own-action sender-frame failure', async ()
       contributionKind: 'own_action',
       messageAction: 'movement',
       drawingIntent: 'Report my own southeast movement.',
-      drawingPrompt: 'Draw my movement southeast.'
+      drawingPrompt: 'Draw my movement southeast.',
+      groundedFeatures: [
+        'I chose to move south along the selected public route.',
+        'a long avenue toward a distant vanishing point',
+        'a steel bridge visible to the left'
+      ]
     });
     controller.state.scratchpad.pendingMessage.attempts = 3;
 
@@ -1035,6 +1041,7 @@ test('a durable retry cannot waive an own-action sender-frame failure', async ()
     assert.equal(controller.state.scratchpad.pendingMessage.id, 'sender-frame-message');
     assert.equal(controller.state.scratchpad.pendingMessage.attempts, 4);
     assert.match(controller.state.scratchpad.pendingMessage.lastError, /command to the recipient/);
+    assert.deepEqual(imageModel.calls[1].groundedFeatures, ['a steel bridge visible to the left']);
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
