@@ -174,6 +174,11 @@ function authoritativeContributionSummary(kind, description) {
   return evidence;
 }
 
+function usesMultiPanelTemplate(...descriptions) {
+  return /\b(?:left|middle|right|three)[ -]?panel\b|\btriptych\b|\bpanel\s*[123]\b/i
+    .test(descriptions.map(value => cleanString(value, 2400)).join(' '));
+}
+
 export function reconcileRendezvousMessageAction(requestedAction, ...descriptions) {
   if (requestedAction === 'transition' || requestedAction === 'unclear') return requestedAction;
   const text = descriptions.map(value => cleanString(value, 2400)).join(' ');
@@ -680,6 +685,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
       ...drawingVisualContext
     ];
     let drawingPlan = null;
+    let drawingRetryFeedback = '';
     tokenBudget = Math.min(this.maxTokens, 1800);
     for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
       try {
@@ -687,7 +693,15 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           model: this.model,
           messages: [
             { role: 'system', content: drawingSystemPrompt },
-            { role: 'user', content: drawingContent }
+            {
+              role: 'user',
+              content: drawingRetryFeedback
+                ? [{
+                    type: 'text',
+                    text: `AUTHORITATIVE PLANNING CORRECTION FROM THE PRIOR ATTEMPT: ${drawingRetryFeedback}`
+                  }, ...drawingContent]
+                : drawingContent
+            }
           ],
           response_format: { type: 'json_object' },
           reasoning_effort: this.reasoningEffort,
@@ -764,11 +778,21 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         ) {
           throw new Error('Rendezvous drawing planner omitted its intended message, information delta, or dominant action');
         }
+        if (
+          !['acknowledgement', 'deliberate_repetition'].includes(candidateDrawingPlan.contributionKind) &&
+          usesMultiPanelTemplate(...perception.literalContents, perception.sheetInterpretation) &&
+          usesMultiPanelTemplate(candidateDrawingPlan.drawingIntent, candidateDrawingPlan.drawingPrompt)
+        ) {
+          throw new Error('Rendezvous drawing planner echoed the received multi-panel template for a new contribution');
+        }
         drawingPlan = candidateDrawingPlan;
         break;
       } catch (error) {
         lastError = error;
         this.logger.warn?.(`Rendezvous drawing plan attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
+        drawingRetryFeedback = /multi-panel template/i.test(error.message)
+          ? 'Start from a blank page and use one coherent composition centered on the cited contribution. You may retain one small recurring symbol, but do not use panels, a triptych, or the received sheet layout.'
+          : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.';
         tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
       }
     }

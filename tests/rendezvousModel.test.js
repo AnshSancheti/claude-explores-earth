@@ -152,7 +152,9 @@ function stagedClient(requests, overrides = {}) {
               revisionPrompt: ''
             };
           } else if (/currently hold the one physical sheet/.test(prompt)) {
-            payload = overrides.drawing || drawingResponse();
+            payload = typeof overrides.drawing === 'function'
+              ? overrides.drawing(request)
+              : (overrides.drawing || drawingResponse());
           } else {
             payload = typeof overrides.route === 'function'
               ? overrides.route(request)
@@ -288,6 +290,47 @@ test('own-action evidence uses the executed option bearing without leaking its r
   );
   assert.match(catalogText, /move north/);
   assert.doesNotMatch(catalogText, /north route/);
+});
+
+test('a new contribution cannot echo the received multi-panel template', async () => {
+  const requests = [];
+  let drawingAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      perception: {
+        ...perceptionResponse(),
+        literalContents: [
+          'Three panels show an arch, a central star map, and a destination street.'
+        ],
+        sheetInterpretation: 'A triptych links three scenes with one arrow.'
+      },
+      drawing(request) {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            drawingIntent: 'Repeat the three-panel route with my current arches.',
+            drawingPrompt: 'Draw a triptych with left, middle, and right panels.'
+          });
+        }
+        assert.match(
+          request.messages[1].content[0].text,
+          /AUTHORITATIVE PLANNING CORRECTION.*one coherent composition/
+        );
+        return drawingResponse({
+          drawingIntent: 'Show my current arches as the primary reply.',
+          drawingPrompt: 'Draw one coherent street scene centered on three stone arches.'
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.drawingPrompt, /one coherent street scene/);
+  assert.doesNotMatch(decision.drawingPrompt, /panel|triptych/i);
 });
 
 test('drawing planner still rejects an unknown contribution evidence ID', async () => {
