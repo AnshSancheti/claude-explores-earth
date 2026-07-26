@@ -710,6 +710,77 @@ test('drawing review rejects an accidental near-copy even when the model accepts
   assert.match(review.revisionPrompt, /one small recurring symbol/);
 });
 
+test('drawing review does not redraw a legible contribution only to reproduce inherited layout', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: ['a figure and arrow move southeast around a median tree'],
+        likelyMessage: 'Move southeast past the median tree.',
+        dominantAction: 'movement',
+        movementCues: ['southeast arrow'],
+        stillnessCues: [],
+        readableText: false
+      },
+      review: {
+        accepted: false,
+        contributionPrimary: true,
+        materialContributionConflict: false,
+        visualNovelty: 'distinct',
+        assessment: 'The movement is clear, but the old grid and star triptych are absent.',
+        revisionPrompt: 'Restore all three panels and the star.'
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'own_action',
+    contributionSummary: 'My current chosen action: I chose to move southeast.',
+    drawingIntent: 'Show southeast movement from a median tree.',
+    informationDelta: 'My current chosen action: I chose to move southeast.',
+    messageAction: 'movement',
+    drawingPrompt: 'Draw southeast movement from a median tree.',
+    groundedFeatures: ['move southeast', 'median tree'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, true);
+  assert.match(review.assessment, /layout-only objection ignored/);
+});
+
+test('drawing review still rejects a material contribution conflict', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      review: {
+        accepted: false,
+        contributionPrimary: true,
+        materialContributionConflict: true,
+        visualNovelty: 'distinct',
+        assessment: 'The route points northeast instead of southeast.',
+        revisionPrompt: 'Point the movement southeast.'
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'own_action',
+    contributionSummary: 'My current chosen action: I chose to move southeast.',
+    drawingIntent: 'Show southeast movement.',
+    informationDelta: 'My current chosen action: I chose to move southeast.',
+    messageAction: 'movement',
+    drawingPrompt: 'Draw southeast movement.',
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.revisionPrompt, /Point the movement southeast/);
+});
+
 test('blind recipient action overrides a sender review biased by intent', async () => {
   const requests = [];
   const service = new RendezvousModelService({

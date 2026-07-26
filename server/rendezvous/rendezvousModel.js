@@ -966,12 +966,13 @@ Return only JSON:
       .slice(-2);
     const systemPrompt = `You are ${agentName}, inspecting the actual wordless drawing that will be handed to ${partnerName}. Decide whether it visibly communicates what you intended.
 
-An independent recipient has already decoded the image without seeing your intent. Judge the drawing from that blind reading, not from what you hoped the composition would imply. The outbound contribution is the sender's cited addition to the exchange. Reject a drawing that visually promotes received or remembered context into the sender's new observation, or whose dominant imagery hides the cited contribution. If the information delta is one concrete observation but the blind reading primarily describes an inherited route, destination, or multi-stage itinerary, reject it even when the observation appears somewhere in the image. Every key claim in your intended delta needs a visible cue a neutral observer could point to, and that delta must read as the image's primary message. Compare against the labeled recent sheets when supplied. Reusing a symbol is not itself a near-copy, but repeating substantially the same layout and visual hierarchy without making the current contribution primary is. Absence of motion does not communicate waiting when a prominent arrow communicates movement. Reject readable text, material omissions or distortions, contradictions, hidden deltas, and generic or accidental repetition. Repeated imagery is acceptable when the stated continuity reason makes that repetition intentional and subordinate to the current contribution. Do not demand photorealism.
+An independent recipient has already decoded the image without seeing your intent. Judge the drawing from that blind reading, not from what you hoped the composition would imply. The outbound contribution is the sender's cited addition to the exchange. Reject a drawing that visually promotes received or remembered context into the sender's new observation, or whose dominant imagery hides the cited contribution. If the information delta is one concrete observation but the blind reading primarily describes an inherited route, destination, or multi-stage itinerary, reject it even when the observation appears somewhere in the image. Every key claim in your intended delta needs a visible cue a neutral observer could point to, and that delta must read as the image's primary message. Compare against the labeled recent sheets when supplied. Reusing a symbol is not itself a near-copy, but repeating substantially the same layout and visual hierarchy without making the current contribution primary is. Absence of motion does not communicate waiting when a prominent arrow communicates movement. Reject readable text, material omissions or distortions of the outbound contribution itself, contradictions, hidden deltas, and generic or accidental repetition. The rendering instructions and recurring motifs are means, not a contract: do not reject an otherwise legible contribution merely because the image omits, changes, or simplifies inherited panels, grids, stars, destinations, or other supporting layout details. Repeated imagery is acceptable when the stated continuity reason makes that repetition intentional and subordinate to the current contribution. Do not demand photorealism.
 
 Return only JSON:
 {
   "accepted": true | false,
   "contributionPrimary": true | false,
+  "materialContributionConflict": true | false,
   "visualNovelty": "distinct" | "intentional_repetition" | "near_copy" | "unclear",
   "assessment": "concise private assessment",
   "revisionPrompt": "when rejected, concrete visual corrections for the next rendering; otherwise empty"
@@ -1047,16 +1048,25 @@ ${JSON.stringify(groundedFeatures)}`
         const accidentalNearCopy = comparisonSheets.length > 0
           && visualNovelty === 'near_copy'
           && !['acknowledgement', 'deliberate_repetition'].includes(contributionKind);
-        const accepted = parsed.accepted && contributionPrimary && !accidentalNearCopy;
-        const forcedRevision = !contributionPrimary
+        const materialContributionConflict = parsed?.materialContributionConflict === true;
+        const layoutOnlyRejection = parsed.accepted === false
+          && parsed?.materialContributionConflict === false;
+        const accepted = (parsed.accepted || layoutOnlyRejection)
+          && contributionPrimary
+          && !materialContributionConflict
+          && !accidentalNearCopy
+          && !blindRead.readableText;
+        const forcedRevision = blindRead.readableText
+          ? 'Remove every readable word, letter, number, caption, street label, logo, signature, and watermark. Communicate only through visible objects, spatial relationships, symbols, and tone.'
+          : (!contributionPrimary
           ? 'Start from a blank composition and make the cited current contribution the largest and darkest primary subject. Reduce inherited route, destination, and multi-panel context to at most one subordinate supporting motif.'
           : (accidentalNearCopy
               ? 'Replace the repeated layout and visual hierarchy. Start from a blank composition centered on the cited current contribution; retain only one small recurring symbol if it is essential for continuity.'
-              : '');
+              : ''));
         return {
           accepted,
           assessment: cleanString(
-            `Blind read (${blindRead.dominantAction}): ${blindRead.likelyMessage} Sender review (${visualNovelty}, contribution ${contributionPrimary ? 'primary' : 'secondary'}): ${assessment}`,
+            `Blind read (${blindRead.dominantAction}): ${blindRead.likelyMessage} Sender review (${visualNovelty}, contribution ${contributionPrimary ? 'primary' : 'secondary'}${layoutOnlyRejection ? ', layout-only objection ignored' : ''}): ${assessment}`,
             700
           ),
           revisionPrompt: cleanString(forcedRevision || parsed?.revisionPrompt, 1200),
