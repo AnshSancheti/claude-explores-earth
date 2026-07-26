@@ -1090,6 +1090,8 @@ Return only JSON:
   "literalContents": ["visible element and relationship"],
   "likelyMessage": "best context-free interpretation, including uncertainty",
   "dominantAction": "movement" | "stillness" | "transition" | "unclear",
+  "frameOfReference": "sender" | "recipient" | "shared" | "unclear",
+  "frameBasis": "specific visible cue establishing whose action, observation, or route this is",
   "movementCues": ["visible cue suggesting movement or direction"],
   "stillnessCues": ["visible cue suggesting waiting, stopping, anchoring, or no movement"],
   "readableText": true | false
@@ -1121,6 +1123,10 @@ Return only JSON:
           dominantAction: ['movement', 'stillness', 'transition', 'unclear'].includes(parsed?.dominantAction)
             ? parsed.dominantAction
             : 'unclear',
+          frameOfReference: ['sender', 'recipient', 'shared', 'unclear'].includes(parsed?.frameOfReference)
+            ? parsed.frameOfReference
+            : 'unclear',
+          frameBasis: cleanString(parsed?.frameBasis, 400),
           movementCues: cleanStringList(parsed?.movementCues, { limit: 6, maxLength: 220 }),
           stillnessCues: cleanStringList(parsed?.stillnessCues, { limit: 6, maxLength: 220 }),
           readableText: parsed?.readableText === true
@@ -1153,6 +1159,17 @@ Return only JSON:
         accepted: false,
         assessment: `Blind recipient read the drawing as ${blindRead.dominantAction}, but the intended message is ${normalizedMessageAction}: ${blindRead.likelyMessage}`,
         revisionPrompt,
+        blindRead
+      };
+    }
+    if (
+      contributionKind === 'own_action' &&
+      blindRead.frameOfReference !== 'sender'
+    ) {
+      return {
+        accepted: false,
+        assessment: `Blind recipient read the action frame as ${blindRead.frameOfReference}, not clearly the sender's own action: ${blindRead.likelyMessage}`,
+        revisionPrompt: 'Make it visually clear that the depicted movement belongs to the sender reporting what they chose or did. Avoid a standalone command-like arrow aimed at the viewer. Use a visible acting subject, a path clearly trailing from that subject, or another self-authored scene relationship of your choice. Do not add text, labels, or a prescribed identity symbol.',
         blindRead
       };
     }

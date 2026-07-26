@@ -143,6 +143,8 @@ function stagedClient(requests, overrides = {}) {
               literalContents: ['two separated arch groups and a moving figure'],
               likelyMessage: 'The sender sees matching arches and is moving toward one group.',
               dominantAction: 'movement',
+              frameOfReference: 'sender',
+              frameBasis: 'A moving figure is embedded in the observed scene.',
               movementCues: ['a small figure approaches the nearer arches'],
               stillnessCues: [],
               readableText: false
@@ -1039,6 +1041,8 @@ test('drawing review does not redraw a legible contribution only to reproduce in
         literalContents: ['a figure and arrow move southeast around a median tree'],
         likelyMessage: 'Move southeast past the median tree.',
         dominantAction: 'movement',
+        frameOfReference: 'sender',
+        frameBasis: 'The route visibly trails from the depicted sender figure.',
         movementCues: ['southeast arrow'],
         stillnessCues: [],
         readableText: false
@@ -1101,6 +1105,42 @@ test('drawing review still rejects a material contribution conflict', async () =
 
   assert.equal(review.accepted, false);
   assert.match(review.revisionPrompt, /Point the movement southeast/);
+});
+
+test('own-action drawing review rejects a recipient-framed command', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      blindRead: {
+        literalContents: ['a large arrow points away from the viewer'],
+        likelyMessage: 'The recipient should proceed in the arrow direction.',
+        dominantAction: 'movement',
+        frameOfReference: 'recipient',
+        frameBasis: 'The arrow is aimed outward from the viewer with no acting subject.',
+        movementCues: ['large outward arrow'],
+        stillnessCues: [],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'own_action',
+    contributionSummary: 'My current chosen action: I chose to move southeast.',
+    drawingIntent: 'Show the movement I chose.',
+    informationDelta: 'My current chosen action: I chose to move southeast.',
+    messageAction: 'movement',
+    drawingPrompt: 'Draw a large southeast arrow.',
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /recipient.*not clearly the sender's own action/);
+  assert.match(review.revisionPrompt, /Avoid a standalone command-like arrow/);
+  assert.equal(requests.length, 1);
 });
 
 test('blind recipient action overrides a sender review biased by intent', async () => {
