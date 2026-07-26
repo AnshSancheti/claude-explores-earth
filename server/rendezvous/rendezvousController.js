@@ -1207,7 +1207,7 @@ export class RendezvousController {
               informationDelta: decision.informationDelta,
               continuityReason: decision.continuityReason,
               messageAction: decision.messageAction,
-              groundedFeatures: decision.observedFeatures,
+              groundedFeatures: decision.drawingGroundedFeatures,
               sourcePanoId: current.panoId,
               snapshot: this.#captureSheetSnapshot(agentId, {
                 reasoning: decision.reasoning,

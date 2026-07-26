@@ -149,6 +149,7 @@ class FakeRendezvousModel {
       reasoning: `${input.agent.name} follows the clearest unfamiliar public route using only the sheet and the visible street.`,
       observation: `${input.agent.name} sees a broad public route beside a stone facade.`,
       observedFeatures: ['a broad public road', 'a stone facade beside it'],
+      drawingGroundedFeatures: ['a broad public road', 'a stone facade beside it'],
       contributionKind: 'local_observation',
       contributionEvidenceId: 'local:0',
       contributionSummary: `${input.agent.name} can show the broad public road now visible here.`,
@@ -184,6 +185,7 @@ class ScriptedRendezvousModel extends FakeRendezvousModel {
       reasoning: 'I make a cooperative choice from what I remember.',
       observation: 'A grounded public landmark is visible at this branch.',
       observedFeatures: ['a grounded public landmark', 'a traffic light beside it'],
+      drawingGroundedFeatures: ['a grounded public landmark', 'a traffic light beside it'],
       sheetInterpretation: 'The received drawing may indicate convergence near a landmark.',
       sheetConfidence: 0.35,
       memoryUpdate: {
@@ -1009,6 +1011,7 @@ test('reset waits for an active step before replacing run state', async () => {
         reasoning: 'I choose the locally distinctive open street.',
         observation: 'A stone facade stands beside a broad public road.',
         observedFeatures: ['a stone facade', 'a broad public road beside it'],
+        drawingGroundedFeatures: ['a stone facade', 'a broad public road beside it'],
         sheetInterpretation: '',
         sheetConfidence: 0,
         memoryUpdate: { currentPlan: 'Keep gathering local evidence.' },

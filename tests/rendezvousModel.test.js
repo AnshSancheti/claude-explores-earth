@@ -92,6 +92,7 @@ function routeResponse(overrides = {}) {
       currentSenderAction: 'movement',
       currentSenderActionBasis: 'A small figure visibly approaches the nearer arches.',
       informationNovelty: 'mixed',
+      newEvidenceIds: ['visible:0'],
       newEvidence: ['the circle is now placed between arches'],
       repeatedEvidence: ['the arch motif appeared before'],
       contradictions: [],
@@ -176,14 +177,24 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.equal(decision.sheetPerception.currentSenderAction, 'movement');
   assert.match(decision.sheetPerception.currentSenderActionBasis, /approaches/);
   assert.equal(decision.sheetPerception.informationNovelty, 'mixed');
-  assert.deepEqual(decision.reconciliation.newEvidence, ['the circle is now placed between arches']);
+  assert.deepEqual(decision.reconciliation.newEvidence, [
+    'a bright circle between two repeated arch forms'
+  ]);
   assert.match(decision.memoryUpdate.partnerHypothesis.description, /Washington Square/);
   assert.match(decision.reasoning, /Theo may be describing/);
   assert.match(decision.drawingIntent, /intend to investigate/);
   assert.equal(decision.contributionKind, 'local_observation');
   assert.equal(decision.contributionEvidenceId, 'local:0');
-  assert.match(decision.contributionSummary, /three matching stone arches/);
-  assert.match(decision.informationDelta, /three matching arches/);
+  assert.equal(decision.contributionSummary, 'New local observation: three repeated stone arches');
+  assert.equal(decision.informationDelta, decision.contributionSummary);
+  assert.deepEqual(decision.observedFeatures, [
+    'three repeated stone arches',
+    'a suspended traffic light beside them'
+  ]);
+  assert.deepEqual(decision.drawingGroundedFeatures, [
+    'three repeated stone arches',
+    'a suspended traffic light beside them'
+  ]);
   assert.equal(decision.messageAction, 'movement');
   assert.match(decision.drawingPrompt, /figure moving/);
 
@@ -193,7 +204,8 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(serialized, /frame of reference/);
   assert.match(serialized, /information delta/);
   assert.match(serialized, /Available outbound evidence catalog/);
-  assert.match(serialized, /not a motif you just received/);
+  assert.match(serialized, /Newest-sheet visible evidence catalog/);
+  assert.match(serialized, /never relabel it as a new local observation/);
   assert.match(serialized, /highest-priority evidence.*current visible action/);
   assert.match(serialized, /strongest visual cue.*messageAction/);
   assert.match(serialized, /wordless drawing/);
@@ -211,7 +223,7 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.doesNotMatch(serialized, /partnerPadText|ownPadText|distanceToFriend|-?\d+\.\d{4,}/);
 });
 
-test('drawing planner rejects contribution provenance that does not match its cited evidence', async () => {
+test('drawing planner normalizes a mismatched contribution kind to its cited evidence', async () => {
   const requests = [];
   const service = new RendezvousModelService({
     client: stagedClient(requests, {
@@ -219,6 +231,32 @@ test('drawing planner rejects contribution provenance that does not match its ci
         contributionKind: 'local_observation',
         contributionEvidenceId: 'received:0',
         contributionSummary: 'I am claiming the received arch motif as my own observation.'
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'acknowledgement');
+  assert.equal(decision.contributionEvidenceId, 'received:0');
+  assert.match(decision.contributionSummary, /without claiming it as my own/);
+  assert.match(decision.contributionSummary, /bright circle/);
+  assert.equal(decision.informationDelta, decision.contributionSummary);
+  assert.match(decision.drawingPrompt, /figure moving/);
+  assert.equal(requests.filter(request =>
+    /currently hold the one physical sheet/.test(request.messages[0].content)
+  ).length, 1);
+});
+
+test('drawing planner still rejects an unknown contribution evidence ID', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      drawing: drawingResponse({
+        contributionKind: 'local_observation',
+        contributionEvidenceId: 'local:99'
       })
     }),
     logger: { warn() {} }

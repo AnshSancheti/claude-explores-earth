@@ -118,6 +118,32 @@ function validContributionEvidencePrefix(kind, evidenceId) {
   return false;
 }
 
+function contributionKindForEvidenceId(evidenceId) {
+  const prefix = String(evidenceId || '').split(':')[0];
+  if (prefix === 'local') return 'local_observation';
+  if (prefix === 'action') return 'own_action';
+  if (prefix === 'question') return 'question';
+  if (prefix === 'contradiction') return 'correction';
+  if (prefix === 'received') return 'acknowledgement';
+  if (prefix === 'prior_sent') return 'deliberate_repetition';
+  return null;
+}
+
+function authoritativeContributionSummary(kind, description) {
+  const evidence = cleanString(description, 300);
+  if (kind === 'local_observation') return `New local observation: ${evidence}`;
+  if (kind === 'own_action') return `My current chosen action: ${evidence}`;
+  if (kind === 'question') return `Question I am sending: ${evidence}`;
+  if (kind === 'correction') return `Correction I am sending: ${evidence}`;
+  if (kind === 'acknowledgement') {
+    return `Acknowledging received visual evidence without claiming it as my own: ${evidence}`;
+  }
+  if (kind === 'deliberate_repetition') {
+    return `Deliberately repeating existing visual evidence without treating it as new: ${evidence}`;
+  }
+  return evidence;
+}
+
 function sanitizeSheetPerception(raw) {
   const sheetInterpretation = cleanString(raw?.sheetInterpretation, 700);
   const numericConfidence = Number(raw?.sheetConfidence);
@@ -346,6 +372,10 @@ You have already chosen to remain at this same branch ${Math.max(1, Math.floor(N
 
 Only use a depicted route as a direct instruction for your own movement when the image or an established convention supports a recipient or shared frame. Sender-framed or unclear movement is evidence about your friend's behavior, not automatically a command to reproduce it locally.`
       : 'The sheet is blank or has not yet carried a usable message.';
+    const currentVisibleEvidence = perception.literalContents.map((description, index) => ({
+      id: `visible:${index}`,
+      description
+    }));
 
     const systemPrompt = `You are ${agent.name}, one of two friends actively trying to find each other after becoming separated on unfamiliar streets. You both began in Manhattan, but the world is open. The only information you exchange is a wordless drawing passed back and forth.
 
@@ -370,7 +400,7 @@ Return only JSON:
     "currentSenderAction": "movement" | "stillness" | "transition" | "unclear",
     "currentSenderActionBasis": "specific literal cue in the newest sheet, or why it remains unclear",
     "informationNovelty": "new" | "mixed" | "repeated" | "unclear",
-    "newEvidence": [],
+    "newEvidenceIds": ["zero or more exact IDs from the newest-sheet visible evidence catalog"],
     "repeatedEvidence": [],
     "contradictions": [],
     "unresolvedQuestions": [],
@@ -402,6 +432,9 @@ ${JSON.stringify(actionMemory, null, 2)}
 
 Your own movement since your last successful branch decision:
 ${JSON.stringify(movementSinceDecision || {}, null, 2)}
+
+Newest-sheet visible evidence catalog:
+${JSON.stringify(currentVisibleEvidence, null, 2)}
 
 Recent private field notes:
 ${recentFieldNotes}`
@@ -458,11 +491,22 @@ ${recentFieldNotes}`
           if (!informationNovelty || !currentSenderAction || !currentSenderActionBasis) {
             throw new Error('Rendezvous route decision omitted its sheet reconciliation');
           }
+          const requestedNewEvidenceIds = cleanStringList(rawReconciliation?.newEvidenceIds, {
+            limit: 6,
+            maxLength: 80
+          });
+          const groundedNewEvidence = requestedNewEvidenceIds
+            .map(id => currentVisibleEvidence.find(item => item.id === id)?.description)
+            .filter(Boolean);
+          const evidenceDelta = sanitizeEvidenceDelta(rawReconciliation);
           routeReconciliation = {
             currentSenderAction,
             currentSenderActionBasis,
             informationNovelty,
-            evidenceDelta: sanitizeEvidenceDelta(rawReconciliation),
+            evidenceDelta: {
+              ...evidenceDelta,
+              newEvidence: groundedNewEvidence
+            },
             conventionUpdate: cleanBeliefUpdate(rawReconciliation?.conventionUpdate),
             partnerHypothesis: cleanBeliefUpdate(rawReconciliation?.partnerHypothesis)
           };
@@ -505,7 +549,7 @@ ${recentFieldNotes}`
 
 Decide what wordless drawing would be most useful to send now. You may communicate anything you genuinely believe could help you find each other: what you see, a remembered place, uncertainty, a correction, intended movement, a request, relative spatial relationships, or an invented visual convention. You are not limited to an observational postcard and you may use arrows, diagrams, symbols, maps, perspective, or figurative imagery when you choose.
 
-First identify your outbound contribution: what this reply contributes from your own observation, chosen action, question, correction, acknowledgement, or deliberate repetition. Cite exactly one evidence ID from the supplied catalog. The information delta is what ${partnerName} can learn from your reply, not a motif you just received. A received-sheet or prior-sent motif may be retained as context, acknowledgement, or deliberate repetition, but never relabel it as a new local observation. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and your information delta names what the recipient can actually see as different. Repetition does not make a belief more certain. If you are asking your friend to clarify something, make the uncertainty, choice, or missing relationship visibly legible instead of drawing a confident route. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
+First identify your outbound contribution: what this reply contributes from your own observation, chosen action, question, correction, acknowledgement, or deliberate repetition. Cite exactly one evidence ID from the supplied catalog. The cited evidence becomes the authoritative information delta; do not restate or enlarge it as a separate claim. A received-sheet or prior-sent motif may be retained as context, acknowledgement, or deliberate repetition, but never relabel it as a new local observation. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and the cited evidence is visibly distinguishable from context. Repetition does not make a belief more certain. If you are asking your friend to clarify something, make the uncertainty, choice, or missing relationship visibly legible instead of drawing a confident route. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
 
 Choose the image's dominant action honestly. The strongest visual cue in your drawing prompt must agree with "messageAction". If the message is stillness, movement or future-route cues may be present but must remain visibly subordinate to stopping, waiting, anchoring, or uncertainty. If the message is movement, do not let barriers or static figures dominate it. A transition may visibly contain both.
 
@@ -515,9 +559,7 @@ Return only JSON:
 {
   "contributionKind": "local_observation" | "own_action" | "question" | "correction" | "acknowledgement" | "deliberate_repetition",
   "contributionEvidenceId": "one exact ID from the available outbound evidence catalog",
-  "contributionSummary": "what your friend can learn from this contribution, stated without promoting received or remembered imagery into new evidence",
   "drawingIntent": "your private account of what you are trying to tell ${partnerName}",
-  "informationDelta": "the genuinely new information, question, correction, or deliberate repetition this sheet contributes",
   "continuityReason": "why recurring motifs are worth retaining, or empty when they are not",
   "messageAction": "movement" | "stillness" | "transition" | "unclear",
   "drawingPrompt": "complete visual instructions for one coherent handmade drawing with no readable text",
@@ -591,18 +633,32 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           max_completion_tokens: tokenBudget
         });
         const parsed = parseJsonContent(response?.choices?.[0]?.message?.content);
-        const contributionKind = OUTBOUND_CONTRIBUTION_KINDS.includes(parsed?.contributionKind)
+        const requestedContributionKind = OUTBOUND_CONTRIBUTION_KINDS.includes(parsed?.contributionKind)
           ? parsed.contributionKind
           : null;
         const contributionEvidenceId = cleanString(parsed?.contributionEvidenceId, 80);
-        const contributionSummary = cleanString(parsed?.contributionSummary, 500);
         const citedEvidence = contributionEvidence.find(item => item.id === contributionEvidenceId);
+        const contributionKind = citedEvidence && validContributionEvidencePrefix(
+          requestedContributionKind,
+          contributionEvidenceId
+        )
+          ? requestedContributionKind
+          : contributionKindForEvidenceId(contributionEvidenceId);
+        if (requestedContributionKind && contributionKind !== requestedContributionKind) {
+          this.logger.warn?.(
+            `Rendezvous drawing planner contribution normalized from ${requestedContributionKind} to ${contributionKind || 'invalid'} for ${contributionEvidenceId || 'missing evidence'}`
+          );
+        }
+        const contributionSummary = authoritativeContributionSummary(
+          contributionKind,
+          citedEvidence?.description
+        );
         const candidateDrawingPlan = {
           contributionKind,
           contributionEvidenceId,
           contributionSummary,
           drawingIntent: cleanString(parsed?.drawingIntent, 700),
-          informationDelta: cleanString(parsed?.informationDelta, 700),
+          informationDelta: contributionSummary,
           continuityReason: cleanString(parsed?.continuityReason, 500),
           messageAction: ['movement', 'stillness', 'transition', 'unclear'].includes(parsed?.messageAction)
             ? parsed.messageAction
@@ -651,9 +707,8 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
     return {
       ...routeDecision,
       ...drawingPlan,
-      observedFeatures: drawingPlan.groundedFeatures.length > 0
-        ? drawingPlan.groundedFeatures
-        : routeDecision.observedFeatures,
+      observedFeatures: routeDecision.observedFeatures,
+      drawingGroundedFeatures: drawingPlan.groundedFeatures,
       sheetInterpretation: perception.sheetInterpretation,
       sheetConfidence: perception.sheetConfidence,
       sheetPerception: perception,
