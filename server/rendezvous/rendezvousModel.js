@@ -89,9 +89,21 @@ const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
 
 function isConcreteLocalEvidence(description) {
   const value = cleanString(description, 220);
-  if (!value) return false;
+  if (!value || value.toLowerCase() === 'context') return false;
   return !/\b(?:arrow|implied|suggests?|cue|motif|route|waypoint|shared|prior|sheet|partner|destination|coordinate|map|grid|star|intersection context)\b/i
     .test(value);
+}
+
+function sanitizeOutboundLocalEvidence(description) {
+  return cleanString(description, 220)
+    .replace(/\b[A-Z][A-Za-z0-9'.-]*\/[A-Z][A-Za-z0-9'.-]*\s+intersection\b/g, ' ')
+    .replace(
+      /\b(?:[A-Z][A-Za-z0-9'.-]*\s+){1,3}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Place|Pl|Parkway|Pkwy|Highway|Hwy)\b/g,
+      ' '
+    )
+    .replace(/^(?:at|in|near|the|with)\s+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export function isCueDependentSearchPlan(...descriptions) {
@@ -126,7 +138,9 @@ function buildContributionEvidence({ routeDecision, perception, privateMemory, o
       catalog.push({ id: `${prefix}:${index}`, description });
     });
   };
-  add('local', routeDecision.observedFeatures.filter(isConcreteLocalEvidence));
+  add('local', routeDecision.observedFeatures
+    .map(sanitizeOutboundLocalEvidence)
+    .filter(isConcreteLocalEvidence));
   add('action', [describeChosenAction(routeDecision, options)]);
   add('received', perception.literalContents);
   add('question', perception.evidenceDelta.unresolvedQuestions);

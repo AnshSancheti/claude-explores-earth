@@ -362,6 +362,8 @@ test('abstract sheet-language residue is excluded from local outbound evidence',
         observedFeatures: [
           'three repeated stone arches',
           'a suspended traffic light beside them',
+          'Bowery/Prince intersection with central median tree',
+          'FDR Drive beside the river',
           'a star waypoint implied by the prior sheet cue',
           'Bowery/Prince intersection context',
           'bold diagonal route arrow toward the right'
@@ -383,6 +385,9 @@ test('abstract sheet-language residue is excluded from local outbound evidence',
   assert.doesNotMatch(catalogText, /star waypoint implied by the prior sheet cue/);
   assert.doesNotMatch(catalogText, /Bowery\/Prince intersection context/);
   assert.doesNotMatch(catalogText, /bold diagonal route arrow/);
+  assert.match(catalogText, /central median tree/);
+  assert.match(catalogText, /beside the river/);
+  assert.doesNotMatch(catalogText, /Bowery|Prince|FDR Drive/);
 });
 
 test('route planning rejects partner-cue dependency but preserves evidence-based waiting', async () => {
