@@ -1511,6 +1511,9 @@ export class RendezvousController {
         if (!review.accepted) {
           const error = new Error(`Sender rejected the generated drawing: ${review.assessment}`);
           error.retryable = true;
+          error.nextDrawingPrompt = review.revisionPrompt
+            ? `${pending.drawingPrompt} For the next rendering, correct the rejected image as follows: ${review.revisionPrompt}`
+            : `${pending.drawingPrompt} For the next rendering, make the intended information delta and dominant action unmistakable without readable text.`;
           throw error;
         }
         if (this.state.runId !== runId) return null;
@@ -1589,7 +1592,8 @@ export class RendezvousController {
           this.state.scratchpad = retryRasterScratchpadMessage(this.state.scratchpad, {
             pendingId: pending.id,
             error: error.message,
-            nextAttemptAt: retryAt
+            nextAttemptAt: retryAt,
+            drawingPrompt: error.nextDrawingPrompt
           });
           this.#recordEvent('scratchpad_retry_scheduled', {
             id: pending.id,

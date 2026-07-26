@@ -451,6 +451,8 @@ Decide what wordless drawing would be most useful to send now. You may communica
 
 First identify the information delta: the belief, observation, question, correction, or intentional repetition that makes this message different from the sheets already exchanged. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. Repetition is allowed when you deliberately believe repetition itself communicates something; state that private reason. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
 
+Choose the image's dominant action honestly. The strongest visual cue in your drawing prompt must agree with "messageAction". If the message is stillness, movement or future-route cues may be present but must remain visibly subordinate to stopping, waiting, anchoring, or uncertainty. If the message is movement, do not let barriers or static figures dominate it. A transition may visibly contain both.
+
 Do not include readable text, letters, numbers, captions, street labels, signatures, logos, or watermarks in the intended image. Do not encode exact coordinates or information you do not possess. The image renderer receives only your drawing prompt and the visual anchors you list.
 
 Return only JSON:

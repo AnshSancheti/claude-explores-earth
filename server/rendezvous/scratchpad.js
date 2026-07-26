@@ -325,13 +325,15 @@ export function markRasterScratchpadAttempt(scratchpad, { pendingId }) {
 export function retryRasterScratchpadMessage(scratchpad, {
   pendingId,
   error,
-  nextAttemptAt
+  nextAttemptAt,
+  drawingPrompt = null
 }) {
   const normalized = normalizeRasterScratchpad(scratchpad);
   const pending = normalized.pendingMessage;
   if (!pending || pending.id !== pendingId) return normalized;
   normalized.pendingMessage = {
     ...pending,
+    drawingPrompt: cleanString(drawingPrompt, 2400) || pending.drawingPrompt,
     status: 'retrying',
     lastError: cleanString(error, 500),
     nextAttemptAt: nextAttemptAt || null

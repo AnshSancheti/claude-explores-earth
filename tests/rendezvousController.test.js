@@ -757,6 +757,72 @@ test('the sender reviews a generated drawing and one rejection produces a revise
   }
 });
 
+test('sender revision feedback survives a durable retry and controller restart', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-review-retry-test-'));
+  const rejectingModel = {
+    async reviewDrawing() {
+      return {
+        accepted: false,
+        assessment: 'The large arrow still makes this stillness message read as movement.',
+        revisionPrompt: 'Remove the large arrow and make the stopped figure behind the barrier dominant.'
+      };
+    }
+  };
+  try {
+    const first = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: rejectingModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await first.createRun();
+    first.state.scratchpad = queueRasterScratchpadMessage(first.state.scratchpad, {
+      id: 'revision-retry-message',
+      agentId: 'ada',
+      turn: 3,
+      drawingIntent: 'Show that I am holding this corner.',
+      informationDelta: 'I am deliberately waiting rather than advancing.',
+      messageAction: 'stillness',
+      drawingPrompt: 'Draw a stopped figure beside a route arrow.'
+    });
+
+    await first.resumePendingDrawing();
+
+    assert.equal(first.state.scratchpad.pendingMessage.status, 'retrying');
+    assert.match(first.state.scratchpad.pendingMessage.drawingPrompt, /Remove the large arrow/);
+    first.state.scratchpad.pendingMessage.nextAttemptAt = new Date(0).toISOString();
+    await first.saveState();
+
+    const acceptingModel = {
+      async reviewDrawing() {
+        return {
+          accepted: true,
+          assessment: 'The stopped figure and barrier now dominate the image.',
+          revisionPrompt: ''
+        };
+      }
+    };
+    const recoveredImageModel = new FakeImageModel();
+    const restarted = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: acceptingModel,
+      imageModel: recoveredImageModel,
+      logger: { warn() {}, error() {} }
+    });
+    await restarted.loadState();
+    await restarted.resumePendingDrawing();
+
+    assert.match(recoveredImageModel.calls[0].drawingPrompt, /Remove the large arrow/);
+    assert.equal(restarted.state.scratchpad.pendingMessage, null);
+    assert.equal(restarted.state.scratchpad.currentMessage.id, 'revision-retry-message');
+    assert.equal(restarted.state.scratchpad.owner, 'theo');
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('drawing failure preserves a retryable handoff across controller restart', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-drawing-retry-test-'));
   try {

@@ -182,6 +182,7 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(serialized, /intended movement/);
   assert.match(serialized, /frame of reference/);
   assert.match(serialized, /information delta/);
+  assert.match(serialized, /strongest visual cue.*messageAction/);
   assert.match(serialized, /wordless drawing/);
   assert.match(serialized, /no readable text/);
   assert.match(requests[0].messages[1].content[0].text, /Inspect this image on its own/);
