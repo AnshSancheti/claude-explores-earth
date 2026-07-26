@@ -396,8 +396,8 @@ const BELIEF_TERM_STOPWORDS = new Set([
   'landmark', 'mark', 'marks', 'meaning', 'meeting', 'move', 'moves', 'movement',
   'partner', 'path', 'physical', 'place', 'point', 'possible', 'progression',
   'recurring', 'reorientation', 'right', 'right-hand', 'route', 'sender', 'shared',
-  'signaling', 'specifying', 'storefront', 'street', 'symbol', 'target', 'theo',
-  'toward', 'using', 'visual', 'waypoint', 'with'
+  'rendezvous', 'signaling', 'specifying', 'storefront', 'street', 'symbol',
+  'target', 'theo', 'toward', 'using', 'visual', 'waypoint', 'with'
 ]);
 
 function unsupportedPartnerHypothesisTerms(privateMemory, candidateUpdate = null) {
@@ -1401,6 +1401,9 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
     )
       .map(description => sanitizeOutboundPlaceNames(description, [], 220))
       .filter(Boolean);
+    const priorContribution = contributionEvidenceText(
+      pending?.informationDelta || pending?.contributionSummary
+    );
     const catalog = [
       ...localEvidence.map((description, index) => ({
         id: `local:${index}`,
@@ -1417,7 +1420,10 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         kind: 'correction',
         description
       }))
-    ];
+    ].filter(item =>
+      !priorContribution ||
+      visualDescriptionSimilarity(priorContribution, item.description) < 0.55
+    );
     if (catalog.length === 0) return null;
 
     const systemPrompt = `You are ${agentName}, reconsidering only the drawing you are about to pass to ${partnerName}. Your route choice is already made and does not change.

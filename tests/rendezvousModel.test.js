@@ -801,6 +801,43 @@ test('a drawing replan retries a placeholder intent and contradictory action', a
   assert.equal(replan.messageAction, 'stillness');
 });
 
+test('a later drawing replan excludes the proposition that already failed', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      replan: {
+        contributionEvidenceId: 'local:1',
+        drawingIntent: 'Show the elevated footbridge as a new local fact.',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw one elevated footbridge as the sole dominant subject.',
+        groundedFeatureEvidenceIds: ['local:1']
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const replan = await service.replanUnrenderableDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    pending: {
+      contributionKind: 'local_observation',
+      contributionSummary: 'New local observation: broad urban street with multiple lanes',
+      groundedFeatures: ['broad urban street with multiple lanes']
+    },
+    privateMemory: {
+      ownObservations: [
+        { description: 'broad urban street with multiple lanes', sourcePanoId: 'old' },
+        { description: 'elevated pedestrian footbridge', sourcePanoId: 'current' }
+      ]
+    }
+  });
+
+  assert.equal(replan.contributionSummary, 'New local observation: elevated pedestrian footbridge');
+  const requestText = requests[0].messages.at(-1).content;
+  assert.doesNotMatch(requestText, /"description": "broad urban street with multiple lanes"/);
+  assert.match(requestText, /"description": "elevated pedestrian footbridge"/);
+});
+
 test('own-action evidence uses the executed option bearing without leaking its route label', async () => {
   const requests = [];
   const service = new RendezvousModelService({
