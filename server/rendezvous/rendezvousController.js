@@ -57,6 +57,15 @@ function compatibleRevisionFeatures(drawingPrompt, groundedFeatures, messageActi
     .filter(feature => !conflictPattern.test(String(feature || '')));
 }
 
+function canAcceptRecipientLegibleRetry(review, messageAction, attemptNumber) {
+  const blindRead = review?.blindRead;
+  return attemptNumber >= 4
+    && ['movement', 'stillness', 'transition'].includes(messageAction)
+    && blindRead?.dominantAction === messageAction
+    && blindRead.readableText !== true
+    && Boolean(blindRead.likelyMessage);
+}
+
 const AGENTS = Object.freeze({
   ada: {
     id: 'ada',
@@ -1545,6 +1554,14 @@ export class RendezvousController {
                 imageMimeType: generated.mimeType
               })
             : { accepted: true, assessment: 'Drawing review is not available in this model adapter.', revisionPrompt: '' };
+        }
+        const attemptNumber = Math.max(1, Number(pending.attempts || 0) + 1);
+        if (!review.accepted && canAcceptRecipientLegibleRetry(review, pending.messageAction, attemptNumber)) {
+          review = {
+            ...review,
+            accepted: true,
+            assessment: `${review.assessment} Accepted after ${attemptNumber} durable attempts because the independent recipient read the intended dominant action without readable text.`
+          };
         }
         if (!review.accepted) {
           const error = new Error(`Sender rejected the generated drawing: ${review.assessment}`);

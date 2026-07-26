@@ -829,6 +829,54 @@ test('sender revision feedback survives a durable retry and controller restart',
   }
 });
 
+test('a recipient-legible drawing escapes an intent-review livelock after repeated retries', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-review-livelock-test-'));
+  const agentModel = {
+    async reviewDrawing() {
+      return {
+        accepted: false,
+        assessment: 'The readiness cue could still be more explicit.',
+        revisionPrompt: 'Keep the figures waiting while making anticipation visible.',
+        blindRead: {
+          dominantAction: 'stillness',
+          readableText: false,
+          likelyMessage: 'Two people wait at a corner while anticipating a later move.'
+        }
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'recipient-legible-message',
+      agentId: 'ada',
+      turn: 4,
+      messageAction: 'stillness',
+      drawingIntent: 'Show that I am waiting but attentive.',
+      drawingPrompt: 'Draw two people waiting beside a fixed landmark.'
+    });
+    controller.state.scratchpad.pendingMessage.attempts = 3;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.currentMessage.id, 'recipient-legible-message');
+    assert.match(
+      controller.state.scratchpad.messageAudit.at(-1).reviewAssessment,
+      /independent recipient read the intended dominant action/
+    );
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('drawing failure preserves a retryable handoff across controller restart', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-drawing-retry-test-'));
   try {
