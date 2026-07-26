@@ -96,6 +96,12 @@ function normalizeReceived(entry) {
     literalContents: cleanList(entry.literalContents, { limit: 6, itemLength: 220 }),
     possiblePlaces: cleanList(entry.possiblePlaces, { limit: 4, itemLength: 220 }),
     possibleIntentions: cleanList(entry.possibleIntentions, { limit: 4, itemLength: 220 }),
+    primarySubject: cleanString(entry.primarySubject, 400),
+    communicationFunction: enumValue(
+      entry.communicationFunction,
+      ['report', 'request', 'question', 'acknowledgement', 'correction', 'shared_proposal', 'unclear'],
+      'unclear'
+    ),
     frameOfReference: enumValue(entry.frameOfReference, ['sender', 'recipient', 'shared', 'unclear'], 'unclear'),
     requestedResponse: cleanString(entry.requestedResponse, 400),
     informationNovelty: enumValue(entry.informationNovelty, ['new', 'mixed', 'repeated', 'unclear'], 'unclear'),
@@ -315,6 +321,8 @@ export function applyMemoryRevision(memory, revision, {
       literalContents: sheetPerception?.literalContents || previous?.literalContents,
       possiblePlaces: sheetPerception?.possiblePlaces || previous?.possiblePlaces,
       possibleIntentions: sheetPerception?.possibleIntentions || previous?.possibleIntentions,
+      primarySubject: sheetPerception?.primarySubject || previous?.primarySubject,
+      communicationFunction: sheetPerception?.communicationFunction || previous?.communicationFunction,
       frameOfReference: sheetPerception?.frameOfReference || previous?.frameOfReference,
       requestedResponse: sheetPerception?.requestedResponse || previous?.requestedResponse,
       informationNovelty: sheetPerception?.informationNovelty || previous?.informationNovelty,

@@ -189,19 +189,58 @@ function historicalSheetLiteralContents(privateMemory, currentSequence) {
     .flatMap(sheet => cleanStringList(sheet?.literalContents, { limit: 6, maxLength: 220 }));
 }
 
+function genericMovementProposition(value) {
+  const text = cleanString(value, 1200).toLowerCase();
+  return /\b(?:figure|friend|pedestrian|person|runner|someone|walker)\b/.test(text) &&
+    /\b(?:advance|depart|follow|head|move|moving|proceed|run|running|travel|walk|walking)\w*\b/.test(text) &&
+    /\b(?:arrow|away|corridor|direction|distance|footprints?|forward|path|route|sidewalk|street|trail)\b/.test(text);
+}
+
+function dominantSheetDescription(perception) {
+  return cleanString(
+    perception?.primarySubject ||
+      perception?.sheetInterpretation ||
+      perception?.literalContents?.[0],
+    700
+  );
+}
+
+function dominantSheetPropositionRepeats(perception, privateMemory, currentSequence) {
+  const current = dominantSheetDescription(perception);
+  if (!current) return false;
+  return (privateMemory?.receivedSheets || [])
+    .filter(sheet => Number(sheet?.sequence) !== Number(currentSequence))
+    .slice(-6)
+    .some(sheet => {
+      const previous = cleanString(
+        sheet?.primarySubject || sheet?.interpretation || sheet?.literalContents?.[0],
+        700
+      );
+      if (!previous) return false;
+      return visualDescriptionSimilarity(current, previous) >= 0.55 ||
+        (genericMovementProposition(current) && genericMovementProposition(previous));
+    });
+}
+
 function splitCurrentSheetEvidence(perception, privateMemory, currentSequence) {
   const historical = historicalSheetLiteralContents(privateMemory, currentSequence);
   const current = cleanStringList(perception?.literalContents, { limit: 6, maxLength: 220 });
+  const dominantRepeated = dominantSheetPropositionRepeats(
+    perception,
+    privateMemory,
+    currentSequence
+  );
   if (historical.length === 0) {
-    return { novel: current, repeated: [] };
+    return { novel: current, repeated: [], dominantRepeated };
   }
-  return current.reduce((result, description) => {
+  const split = current.reduce((result, description) => {
     const similarity = Math.max(...historical.map(previous =>
       visualDescriptionSimilarity(description, previous)
     ));
     result[similarity >= 0.55 ? 'repeated' : 'novel'].push(description);
     return result;
   }, { novel: [], repeated: [] });
+  return { ...split, dominantRepeated };
 }
 
 function escapeRegExp(value) {
@@ -409,6 +448,17 @@ function sanitizeSheetPerception(raw) {
   const frameOfReference = ['sender', 'recipient', 'shared', 'unclear'].includes(raw?.frameOfReference)
     ? raw.frameOfReference
     : 'unclear';
+  const communicationFunction = [
+    'report',
+    'request',
+    'question',
+    'acknowledgement',
+    'correction',
+    'shared_proposal',
+    'unclear'
+  ].includes(raw?.communicationFunction)
+    ? raw.communicationFunction
+    : 'unclear';
   const informationNovelty = ['new', 'mixed', 'repeated', 'unclear'].includes(raw?.informationNovelty)
     ? raw.informationNovelty
     : 'unclear';
@@ -420,6 +470,8 @@ function sanitizeSheetPerception(raw) {
     literalContents: cleanStringList(raw?.literalContents, { limit: 6, maxLength: 220 }),
     possiblePlaces: cleanStringList(raw?.possiblePlaces, { limit: 4, maxLength: 220 }),
     possibleIntentions: cleanStringList(raw?.possibleIntentions, { limit: 4, maxLength: 220 }),
+    primarySubject: cleanString(raw?.primarySubject, 400),
+    communicationFunction,
     frameOfReference,
     requestedResponse: cleanString(raw?.requestedResponse, 400),
     informationNovelty,
@@ -471,6 +523,37 @@ export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = 
       conventionUpdate: cleanBeliefUpdate(raw?.memoryUpdate?.conventionUpdate),
       partnerHypothesis: cleanBeliefUpdate(raw?.memoryUpdate?.partnerHypothesis)
     }
+  };
+}
+
+function copiesSheetRoute(...descriptions) {
+  const statements = descriptions
+    .flatMap(value => cleanString(value, 1200).split(/[.!?;]+/))
+    .map(value => value.trim())
+    .filter(Boolean);
+  const cue = '(?:arrow|cue|depicted|direction|drawing|forward path|indicated|implied|newest sheet|route|sheet|visual|vector)';
+  const copyAction = '(?:align(?:ing)? with|continue|follow|mirror|move|proceed|reproduce)';
+  return statements.some(statement => {
+    if (/\b(?:intercept|opposite|counter|cross(?:ing)? path)\b/i.test(statement)) return false;
+    return new RegExp(`\\b${copyAction}\\b[^.!;]{0,120}\\b${cue}\\b`, 'i').test(statement) ||
+      new RegExp(`\\b${cue}\\b[^.!;]{0,120}\\b(?:reinforce|suggest|tell|direct|ask|imply)\\w*\\b[^.!;]{0,100}\\b(?:continue|follow|move|proceed|advance|head)\\w*\\b`, 'i')
+        .test(statement) ||
+      /\b(?:move|continue|proceed|advance|head)\w*\b[^.!;]{0,80}\b(?:along|with|toward)\b[^.!;]{0,80}\b(?:indicated|implied|depicted|arrow|cue|vector)\b/i
+        .test(statement);
+  });
+}
+
+function locallyGroundRouteLanguage(routeDecision, partnerName) {
+  const feature = routeDecision.observedFeatures[0] || routeDecision.observation ||
+    'the current public route options';
+  const action = routeDecision.action === 'wait'
+    ? 'remain at this recognizable branch'
+    : routeDecision.action === 'retrace'
+      ? 'retrace the selected public route'
+      : 'take the selected public route';
+  return {
+    reasoning: `I choose to ${action} from what I can currently see: ${feature}. The newest drawing remains an unresolved report from ${partnerName}, not route guidance for me.`,
+    currentPlan: `Use current local evidence for the chosen search action, while treating the newest drawing as an unresolved report from ${partnerName} rather than route guidance.`
   };
 }
 
@@ -545,6 +628,8 @@ export class RendezvousModelService {
         literalContents: rememberedSheet.literalContents,
         possiblePlaces: rememberedSheet.possiblePlaces,
         possibleIntentions: rememberedSheet.possibleIntentions,
+        primarySubject: rememberedSheet.primarySubject,
+        communicationFunction: rememberedSheet.communicationFunction,
         frameOfReference: rememberedSheet.frameOfReference,
         requestedResponse: rememberedSheet.requestedResponse,
         informationNovelty: rememberedSheet.informationNovelty,
@@ -562,8 +647,10 @@ Do not invent access to ${partnerName}'s coordinates, route options, hidden reas
 Return only JSON:
 {
   "literalContents": ["visible element and relationship"],
+  "primarySubject": "the largest, darkest, or most compositionally dominant visible subject or relationship",
   "possiblePlaces": ["private place hypothesis with uncertainty"],
   "possibleIntentions": ["private interpretation of what the sender may intend or ask"],
+  "communicationFunction": "report" | "request" | "question" | "acknowledgement" | "correction" | "shared_proposal" | "unclear",
   "frameOfReference": "sender" | "recipient" | "shared" | "unclear",
   "requestedResponse": "what response the image appears to ask from you, or empty when none is visually supported",
   "sheetInterpretation": "your concise best reading, including uncertainty",
@@ -657,6 +744,8 @@ Avoid indoor shops, private interiors, dead ends, and accidental immediate loops
 
 This call chooses your action, reconciles the clean first-look reading with history, and revises your private plan. You and your friend are peers searching independently; a drawing supplies evidence, questions, and hypotheses, never permission that must arrive before you can act. Remove any leader/follower or "await their cue" premise inherited from memory when revising your plan. The newest sheet's literal contents are the highest-priority evidence for your friend's current visible action. History may explain a recurring motif, but it cannot turn a currently still drawing into evidence that the sender is presently moving. "New evidence" means information directly visible in the newest first-look reading that is absent from earlier sheets; recurring imagery and history-only beliefs belong under repeated evidence even when freshly rendered. Do not turn repetition into confirmation or assume a sender-framed route is an instruction for you.
 
+Judge the dominant communicative proposition separately from incidental scenery. A newly rendered van, tree, or storefront can be a new visible detail while the dominant proposition remains the same generic report of a person moving away. Incidental details do not make a repeated movement proposition fresh support for copying its route. You may independently choose the same local heading, but justify that choice from your current route images or from an explicit, non-repeated spatial inference rather than following, aligning with, or reproducing a depicted route.
+
 For every convention or partner hypothesis update, classify its evidence. "new_corroboration" requires an independently informative cue that supports the proposed meaning, not merely another appearance of the same symbol or your own motif echoed back to you. A new-corroboration update must cite the current sheet sequence in basisSequences and identify grounded new evidence from that sheet. Use "repetition_only" when a motif recurs without new support for its meaning, "weakened" when new evidence conflicts with it or meaningful movement fails a concrete prediction, and "unclear" when the relationship cannot be assessed. A convention can remain useful visual vocabulary while the hypothesis about what it means weakens. Revise your current plan accordingly: an uncorroborated symbol may be tested as a hypothesis, but not treated as a known shared physical destination.
 
 If fresh environmental evidence supports only your local movement, it does not corroborate an inherited claim about what a recurring symbol means. When your revised plan mentions a distinctive motif from an uncorroborated partner hypothesis, explicitly frame its meaning as uncertain, questioned, or being tested rather than as the endpoint of movement.
@@ -675,6 +764,7 @@ Return only JSON:
   "sheetReconciliation": {
     "currentSenderAction": "movement" | "stillness" | "transition" | "unclear",
     "currentSenderActionBasis": "specific literal cue in the newest sheet, or why it remains unclear",
+    "propositionNovelty": "new" | "repeated" | "unclear",
     "informationNovelty": "new" | "mixed" | "repeated" | "unclear",
     "newEvidenceIds": ["zero or more exact IDs from the newest-sheet visible evidence catalog"],
     "repeatedEvidence": [],
@@ -810,6 +900,11 @@ ${recentFieldNotes}`
           if (visualEvidenceSplit.repeated.length > 0) {
             informationNovelty = groundedNewEvidence.length > 0 ? 'mixed' : 'repeated';
           }
+          const propositionNovelty = visualEvidenceSplit.dominantRepeated
+            ? 'repeated'
+            : (['new', 'repeated', 'unclear'].includes(rawReconciliation?.propositionNovelty)
+                ? rawReconciliation.propositionNovelty
+                : (groundedNewEvidence.length > 0 ? 'new' : 'unclear'));
           const evidenceDelta = sanitizeEvidenceDelta(rawReconciliation);
           const corroborationContext = {
             sheetSequence: sheetMessage.sequence,
@@ -825,8 +920,10 @@ ${recentFieldNotes}`
             corroborationContext
           );
           const normalizedPlanAssessment = (
-            informationNovelty === 'repeated' &&
-            groundedNewEvidence.length === 0 &&
+            (
+              propositionNovelty === 'repeated' ||
+              (informationNovelty === 'repeated' && groundedNewEvidence.length === 0)
+            ) &&
             evidenceDelta.planAssessment === 'supporting'
           )
             ? 'inconclusive'
@@ -834,6 +931,7 @@ ${recentFieldNotes}`
           routeReconciliation = {
             currentSenderAction,
             currentSenderActionBasis,
+            propositionNovelty,
             informationNovelty,
             evidenceDelta: {
               ...evidenceDelta,
@@ -858,6 +956,19 @@ ${recentFieldNotes}`
             `Rendezvous route plan promoted an unsupported partner hypothesis motif "${unsupportedGoalTerm}" into a movement goal`
           );
         }
+        const nonSupportingSheet = sheetMessage && (
+          routeReconciliation.propositionNovelty === 'repeated' ||
+          routeReconciliation.evidenceDelta?.planAssessment !== 'supporting'
+        );
+        const copiedSheetRoute = nonSupportingSheet && copiesSheetRoute(
+          routeDecision.reasoning,
+          routeDecision.memoryUpdate.currentPlan
+        );
+        if (copiedSheetRoute) {
+          validationErrors.push(
+            'Rendezvous route rationale copied a non-supporting sheet route instead of grounding the action locally'
+          );
+        }
         if (validationErrors.length > 0) {
           if (
             attempt >= this.maxAttempts &&
@@ -872,6 +983,18 @@ ${recentFieldNotes}`
             this.logger.warn?.(
               `Rendezvous normalized unsupported route motif "${unsupportedGoalTerm}" after ${attempt} attempts`
             );
+          } else if (
+            attempt >= this.maxAttempts &&
+            validationErrors.length === 1 &&
+            copiedSheetRoute
+          ) {
+            const groundedLanguage = locallyGroundRouteLanguage(routeDecision, partnerName);
+            routeDecision.reasoning = groundedLanguage.reasoning;
+            routeDecision.memoryUpdate.currentPlan = groundedLanguage.currentPlan;
+            routeReconciliation.evidenceDelta.planAssessment = 'inconclusive';
+            this.logger.warn?.(
+              `Rendezvous normalized copied non-supporting sheet route after ${attempt} attempts`
+            );
           } else {
             throw new Error(validationErrors.join('; '));
           }
@@ -883,7 +1006,9 @@ ${recentFieldNotes}`
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
         routeRetryFeedback = /unsupported partner hypothesis/i.test(error.message)
           ? `Your currentPlan promoted a distinctive motif from an unsupported partner hypothesis into the endpoint of movement. You may preserve an action justified by current local evidence, but rewrite the plan so that motif’s physical meaning is explicitly uncertain, questioned, or being tested. Correct every other validation issue named here too: ${error.message}`
-          : `Correct this validation error without inventing new evidence: ${error.message}`;
+          : /copied a non-supporting sheet route/i.test(error.message)
+            ? `Your chosen action may remain unchanged, but its causal account cannot follow, align with, or reproduce the newest drawing's route because that proposition is repeated or otherwise non-supporting. Justify the action from current local route-option evidence, or state a genuinely distinct spatial inference. Correct every other validation issue named here too: ${error.message}`
+            : `Correct this validation error without inventing new evidence: ${error.message}`;
         if (/blank content|observation|memory revision|json/i.test(error.message)) {
           tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 3200));
         }
@@ -903,6 +1028,7 @@ ${recentFieldNotes}`
       ...perception,
       currentSenderAction: routeReconciliation.currentSenderAction,
       currentSenderActionBasis: routeReconciliation.currentSenderActionBasis,
+      propositionNovelty: routeReconciliation.propositionNovelty,
       informationNovelty: routeReconciliation.informationNovelty,
       evidenceDelta: routeReconciliation.evidenceDelta,
       conventionUpdate: routeReconciliation.conventionUpdate,

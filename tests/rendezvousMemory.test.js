@@ -107,8 +107,10 @@ test('memory revision records sourced evidence and caps unsupported confidence',
     sheetConfidence: 0.6,
     sheetPerception: {
       literalContents: ['a yellow circle between two paths'],
+      primarySubject: 'a yellow circle suspended between two paths',
       possiblePlaces: ['possibly Union Square'],
       possibleIntentions: ['possibly asking me to converge'],
+      communicationFunction: 'request',
       frameOfReference: 'sender',
       requestedResponse: 'Show whether I see the same circle.',
       informationNovelty: 'mixed'
@@ -138,6 +140,8 @@ test('memory revision records sourced evidence and caps unsupported confidence',
   assert.deepEqual(memory.visualConventions[0].basisSequences, [4]);
   assert.equal(memory.partnerHypotheses[0].confidence, 0.75);
   assert.deepEqual(memory.receivedSheets[0].possiblePlaces, ['possibly Union Square']);
+  assert.equal(memory.receivedSheets[0].primarySubject, 'a yellow circle suspended between two paths');
+  assert.equal(memory.receivedSheets[0].communicationFunction, 'request');
   assert.equal(memory.receivedSheets[0].frameOfReference, 'sender');
   assert.match(memory.receivedSheets[0].requestedResponse, /same circle/);
   assert.equal(memory.receivedSheets[0].informationNovelty, 'mixed');

@@ -52,8 +52,10 @@ function input(overrides = {}) {
 function perceptionResponse() {
   return {
     literalContents: ['a bright circle between two repeated arch forms'],
+    primarySubject: 'a bright circle held between two stone arches',
     possiblePlaces: ['possibly an arcade near Washington Square, with low confidence'],
     possibleIntentions: ['Theo may be asking Ada to compare or approach similar arches'],
+    communicationFunction: 'request',
     frameOfReference: 'sender',
     requestedResponse: 'Compare the arches with Ada’s surroundings.',
     informationNovelty: 'mixed',
@@ -95,6 +97,7 @@ function routeResponse(overrides = {}) {
     sheetReconciliation: {
       currentSenderAction: 'movement',
       currentSenderActionBasis: 'A small figure visibly approaches the nearer arches.',
+      propositionNovelty: 'new',
       informationNovelty: 'mixed',
       newEvidenceIds: ['visible:0'],
       newEvidence: ['the circle is now placed between arches'],
@@ -333,6 +336,113 @@ test('repeated sheet imagery cannot become new evidence or leak into local obser
   assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
   assert.equal(decision.observation, 'storefronts beside mature sidewalk trees');
   assert.deepEqual(decision.observedFeatures, ['storefronts beside mature sidewalk trees']);
+});
+
+test('incidental scenery cannot make a repeated movement proposition support the route', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        literalContents: [
+          'a hooded runner moves away down a long sidewalk toward a distant figure',
+          'parked vans and large planters line the sidewalk'
+        ],
+        primarySubject: 'a hooded runner moving away along a sidewalk toward a distant figure',
+        communicationFunction: 'report',
+        sheetInterpretation: 'The sender appears to report moving forward down a city sidewalk.'
+      },
+      route: routeResponse({
+        reasoning: 'I choose the northern opening because its visible arches offer the strongest local landmark.',
+        sheetReconciliation: {
+          ...routeResponse().sheetReconciliation,
+          propositionNovelty: 'new',
+          informationNovelty: 'mixed',
+          newEvidenceIds: ['visible:0', 'visible:1'],
+          planAssessment: 'supporting'
+        },
+        memoryUpdate: {
+          currentPlan: 'Use the visible arches as a local landmark while continuing the search.'
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      receivedSheets: [{
+        sequence: 5,
+        from: 'theo',
+        interpretation: 'The sender reports walking forward down a sidewalk.',
+        primarySubject: 'a lone walking figure moving away along a sidewalk beside an arrow',
+        literalContents: ['a walking figure moves away along a sidewalk beside an arrow']
+      }]
+    }
+  }));
+
+  assert.equal(decision.sheetPerception.propositionNovelty, 'repeated');
+  assert.equal(decision.sheetPerception.informationNovelty, 'mixed');
+  assert.deepEqual(decision.reconciliation.newEvidence, [
+    'a hooded runner moves away down a long sidewalk toward a distant figure',
+    'parked vans and large planters line the sidewalk'
+  ]);
+  assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
+});
+
+test('a repeated sheet route cannot remain the stated cause of the recipient action', async () => {
+  let routeAttempts = 0;
+  const warnings = [];
+  const repeatedLiteral = 'a walking figure moves away along a sidewalk beside an arrow';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        literalContents: [repeatedLiteral],
+        primarySubject: repeatedLiteral,
+        communicationFunction: 'report',
+        sheetInterpretation: 'The sender again appears to move forward.'
+      },
+      route() {
+        routeAttempts += 1;
+        return routeResponse({
+          reasoning: 'The newest sheet suggests I should continue along the implied route.',
+          sheetReconciliation: {
+            ...routeResponse().sheetReconciliation,
+            propositionNovelty: 'new',
+            informationNovelty: 'new',
+            newEvidenceIds: ['visible:0'],
+            planAssessment: 'supporting'
+          },
+          memoryUpdate: {
+            currentPlan: 'Follow the indicated forward path from the newest drawing.'
+          }
+        });
+      }
+    }),
+    logger: { warn(message) { warnings.push(message); } }
+  });
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      receivedSheets: [{
+        sequence: 5,
+        from: 'theo',
+        interpretation: 'The sender reports walking forward.',
+        primarySubject: repeatedLiteral,
+        literalContents: [repeatedLiteral]
+      }]
+    }
+  }));
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/);
+  assert.match(decision.reasoning, /not route guidance/);
+  assert.doesNotMatch(decision.reasoning, /continue along the implied route/);
+  assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
+  assert.ok(warnings.some(message => /normalized copied non-supporting sheet route/.test(message)));
 });
 
 test('an unrenderable action can be replanned into a grounded contribution', async () => {
