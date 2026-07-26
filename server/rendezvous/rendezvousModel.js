@@ -531,8 +531,8 @@ function copiesSheetRoute(...descriptions) {
     .flatMap(value => cleanString(value, 1200).split(/[.!?;]+/))
     .map(value => value.trim())
     .filter(Boolean);
-  const cue = '(?:arrow|cue|depicted|direction|drawing|forward path|indicated|implied|newest sheet|route|sheet|visual|vector)';
-  const copyAction = '(?:align(?:ing)? with|continue|follow|mirror|move|proceed|reproduce)';
+  const cue = '(?:arrow|cue|depicted|direction|drawing|footprints?|forward(?:-movement)? frame|indicated|implied|motif|newest sheet|path|route|sheet|visual|vector)';
+  const copyAction = '(?:align(?:ing)? with|continue|follow|mirror|move|preserve|proceed|pursue|reproduce)';
   return statements.some(statement => {
     if (/\b(?:intercept|opposite|counter|cross(?:ing)? path)\b/i.test(statement)) return false;
     return new RegExp(`\\b${copyAction}\\b[^.!;]{0,120}\\b${cue}\\b`, 'i').test(statement) ||
@@ -541,6 +541,13 @@ function copiesSheetRoute(...descriptions) {
       /\b(?:move|continue|proceed|advance|head)\w*\b[^.!;]{0,80}\b(?:along|with|toward)\b[^.!;]{0,80}\b(?:indicated|implied|depicted|arrow|cue|vector)\b/i
         .test(statement);
   });
+}
+
+function sheetMayDirectRecipient(perception, routeReconciliation) {
+  return ['request', 'shared_proposal'].includes(perception?.communicationFunction) &&
+    ['recipient', 'shared'].includes(perception?.frameOfReference) &&
+    routeReconciliation?.propositionNovelty !== 'repeated' &&
+    routeReconciliation?.evidenceDelta?.planAssessment === 'supporting';
 }
 
 function locallyGroundRouteLanguage(routeDecision, partnerName) {
@@ -976,14 +983,12 @@ ${recentFieldNotes}`
             `Rendezvous route plan promoted an unsupported partner hypothesis motif "${unsupportedGoalTerm}" into a movement goal`
           );
         }
-        const nonSupportingSheet = sheetMessage && (
-          routeReconciliation.propositionNovelty === 'repeated' ||
-          routeReconciliation.evidenceDelta?.planAssessment !== 'supporting'
-        );
-        const copiedSheetRoute = nonSupportingSheet && copiesSheetRoute(
+        const copiedSheetRoute = sheetMessage &&
+          !sheetMayDirectRecipient(perception, routeReconciliation) &&
+          copiesSheetRoute(
           routeDecision.reasoning,
           routeDecision.memoryUpdate.currentPlan
-        );
+          );
         if (copiedSheetRoute) {
           validationErrors.push(
             'Rendezvous route rationale copied a non-supporting sheet route instead of grounding the action locally'
@@ -1167,17 +1172,18 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           : null;
         const contributionEvidenceId = cleanString(parsed?.contributionEvidenceId, 80);
         const citedEvidence = contributionEvidence.find(item => item.id === contributionEvidenceId);
-        const contributionKind = citedEvidence && validContributionEvidencePrefix(
-          requestedContributionKind,
-          contributionEvidenceId
-        )
-          ? requestedContributionKind
-          : contributionKindForEvidenceId(contributionEvidenceId);
-        if (requestedContributionKind && contributionKind !== requestedContributionKind) {
-          this.logger.warn?.(
-            `Rendezvous drawing planner contribution normalized from ${requestedContributionKind} to ${contributionKind || 'invalid'} for ${contributionEvidenceId || 'missing evidence'}`
+        const evidenceContributionKind = contributionKindForEvidenceId(contributionEvidenceId);
+        if (
+          citedEvidence &&
+          requestedContributionKind &&
+          evidenceContributionKind &&
+          requestedContributionKind !== evidenceContributionKind
+        ) {
+          throw new Error(
+            `Rendezvous drawing planner labeled its contribution ${requestedContributionKind} but cited ${contributionEvidenceId}, which represents ${evidenceContributionKind}`
           );
         }
+        const contributionKind = requestedContributionKind || evidenceContributionKind;
         const contributionSummary = authoritativeContributionSummary(
           contributionKind,
           citedEvidence?.description
@@ -1292,11 +1298,13 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         this.logger.warn?.(`Rendezvous drawing plan attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
         drawingRetryFeedback = /multi-panel template/i.test(error.message)
           ? 'Start from a blank page and use one coherent composition centered on the cited contribution. You may retain one small recurring symbol, but do not use panels, a triptych, or the received sheet layout.'
-          : (/repeated visual proposition/i.test(error.message)
+          : (/labeled its contribution/i.test(error.message)
+              ? 'Preserve the communicative act you actually intend. Cite an exact evidence ID whose prefix matches that contribution kind: local for local_observation, action for own_action, question for question, contradiction for correction, received for acknowledgement, or prior_sent for deliberate_repetition. Do not change the message kind merely to fit a mismatched ID.'
+              : (/repeated visual proposition/i.test(error.message)
               ? 'The proposed composition repeats a recent visual proposition. Choose a genuinely different grounded contribution or composition. If repetition itself is what you intend to communicate, cite an exact prior_sent evidence ID as deliberate_repetition and explain why repeating it is useful now.'
               : (/(?:uncited motif|unsupported partner hypothesis)/i.test(error.message)
               ? 'Keep the cited contribution primary. Do not describe any inherited symbol, route, target, waypoint, district, or place as a known shared destination or otherwise promote an unsupported partner hypothesis into a movement goal. If you retain one, make it subordinate and explicitly uncertain, questioned, tested, transformed, or deliberately repeated.'
-              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.'));
+              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.')));
         tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
       }
     }

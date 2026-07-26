@@ -251,15 +251,32 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.doesNotMatch(serialized, /partnerPadText|ownPadText|distanceToFriend|-?\d+\.\d{4,}/);
 });
 
-test('drawing planner normalizes a mismatched contribution kind to its cited evidence', async () => {
+test('drawing planner corrects a kind and evidence mismatch without changing the intended act', async () => {
   const requests = [];
+  let drawingAttempts = 0;
   const service = new RendezvousModelService({
     client: stagedClient(requests, {
-      drawing: drawingResponse({
-        contributionKind: 'local_observation',
-        contributionEvidenceId: 'received:0',
-        contributionSummary: 'I am claiming the received arch motif as my own observation.'
-      })
+      drawing(request) {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'question',
+            contributionEvidenceId: 'received:0'
+          });
+        }
+        assert.match(
+          request.messages[1].content[0].text,
+          /AUTHORITATIVE PLANNING CORRECTION.*Preserve the communicative act/
+        );
+        return drawingResponse({
+          contributionKind: 'question',
+          contributionEvidenceId: 'question:0',
+          drawingIntent: 'Ask whether the circle is a place or a movement cue.',
+          messageAction: 'unclear',
+          drawingPrompt: 'Draw a circle suspended between two visibly different possibilities.',
+          groundedFeatureEvidenceIds: ['question:0']
+        });
+      }
     }),
     logger: { warn() {} }
   });
@@ -267,15 +284,14 @@ test('drawing planner normalizes a mismatched contribution kind to its cited evi
   const decision = await service.decide(input());
 
   assert.equal(decision.fallbackCause, null);
-  assert.equal(decision.contributionKind, 'acknowledgement');
-  assert.equal(decision.contributionEvidenceId, 'received:0');
-  assert.match(decision.contributionSummary, /without claiming it as my own/);
-  assert.match(decision.contributionSummary, /bright circle/);
+  assert.equal(decision.contributionKind, 'question');
+  assert.equal(decision.contributionEvidenceId, 'question:0');
+  assert.match(decision.contributionSummary, /Question I am sending/);
   assert.equal(decision.informationDelta, decision.contributionSummary);
-  assert.match(decision.drawingPrompt, /figure moving/);
+  assert.match(decision.drawingPrompt, /circle suspended/);
   assert.equal(requests.filter(request =>
     /currently hold the one physical sheet/.test(request.messages[0].content)
-  ).length, 1);
+  ).length, 2);
 });
 
 test('repeated sheet imagery cannot become new evidence or leak into local observation', async () => {
@@ -443,6 +459,88 @@ test('a repeated sheet route cannot remain the stated cause of the recipient act
   assert.doesNotMatch(decision.reasoning, /continue along the implied route/);
   assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
   assert.ok(warnings.some(message => /normalized copied non-supporting sheet route/.test(message)));
+});
+
+test('a question about a path cannot silently become route guidance', async () => {
+  let routeAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        literalContents: [
+          'footprints lead toward a large question-mark shape on a city sidewalk'
+        ],
+        primarySubject: 'footprints converging toward a prominent question-mark shape',
+        communicationFunction: 'question',
+        frameOfReference: 'shared',
+        requestedResponse: 'Interpret whether the footprints indicate a pause or movement.',
+        sheetInterpretation: 'The sender is asking what the recurring footprint path means.'
+      },
+      route() {
+        routeAttempts += 1;
+        return routeAttempts === 1
+          ? routeResponse({
+              reasoning: 'The latest sheet asks about the footprints, so I will preserve the forward-movement frame by following the visible path.',
+              sheetReconciliation: {
+                ...routeResponse().sheetReconciliation,
+                propositionNovelty: 'new',
+                informationNovelty: 'mixed',
+                newEvidenceIds: ['visible:0'],
+                planAssessment: 'supporting'
+              },
+              memoryUpdate: {
+                currentPlan: 'Follow the footprint path while staying open to the unresolved question.'
+              }
+            })
+          : routeResponse({
+              reasoning: 'I choose the northern opening because its visible arches are my strongest local landmark.',
+              sheetReconciliation: {
+                ...routeResponse().sheetReconciliation,
+                propositionNovelty: 'new',
+                informationNovelty: 'mixed',
+                newEvidenceIds: ['visible:0'],
+                planAssessment: 'supporting'
+              },
+              memoryUpdate: {
+                currentPlan: 'Use the local arches to choose my route while remembering that the footprint question remains unresolved.'
+              }
+            });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /visible arches/);
+  assert.doesNotMatch(decision.reasoning, /following the visible path/);
+});
+
+test('a sender report can still support an explicit interception inference', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'Theo appears to report moving north past an arcade.'
+      },
+      route: routeResponse({
+        reasoning: 'Theo appears to be moving north, so I choose the western opening to intercept his likely path rather than follow his route.',
+        memoryUpdate: {
+          currentPlan: 'Use my local western opening to cross Theo’s reported trajectory.'
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /intercept/);
 });
 
 test('an unrenderable action can be replanned into a grounded contribution', async () => {
