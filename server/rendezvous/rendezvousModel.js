@@ -497,6 +497,20 @@ export function reconcileRendezvousMessageAction(requestedAction, ...description
   return requestedAction;
 }
 
+export function reconcileRendezvousContributionAction(
+  contributionKind,
+  contributionSummary,
+  requestedAction,
+  ...descriptions
+) {
+  if (contributionKind === 'own_action') {
+    const evidence = cleanString(contributionSummary, 500);
+    if (/\bchose to wait\b/i.test(evidence)) return 'stillness';
+    if (/\bchose to (?:move|retrace)\b/i.test(evidence)) return 'movement';
+  }
+  return reconcileRendezvousMessageAction(requestedAction, ...descriptions);
+}
+
 function sanitizeSheetPerception(raw) {
   const sheetInterpretation = cleanString(raw?.sheetInterpretation, 700);
   const numericConfidence = Number(raw?.sheetConfidence);
@@ -1294,7 +1308,9 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           drawingIntent,
           informationDelta: contributionSummary,
           continuityReason: sanitizeOutboundPlaceNames(parsed?.continuityReason, routeLabels, 500),
-          messageAction: reconcileRendezvousMessageAction(
+          messageAction: reconcileRendezvousContributionAction(
+            contributionKind,
+            contributionSummary,
             requestedMessageAction,
             drawingIntent,
             drawingPrompt

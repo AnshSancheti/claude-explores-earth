@@ -5,7 +5,7 @@ import { StreetViewHeadless } from '../services/streetViewHeadless.js';
 import { calculateBearing } from '../utils/geoUtils.js';
 import {
   RendezvousModelService,
-  reconcileRendezvousMessageAction
+  reconcileRendezvousContributionAction
 } from './rendezvousModel.js';
 import { RendezvousImageService } from './rendezvousImage.js';
 import {
@@ -1536,7 +1536,9 @@ export class RendezvousController {
       : null;
     let pending = normalizedScratchpad?.pendingMessage || null;
     if (!pending) return null;
-    const reconciledMessageAction = reconcileRendezvousMessageAction(
+    const reconciledMessageAction = reconcileRendezvousContributionAction(
+      pending.contributionKind,
+      pending.contributionSummary,
       pending.messageAction,
       pending.drawingIntent,
       pending.drawingPrompt,

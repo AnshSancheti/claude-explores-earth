@@ -835,6 +835,58 @@ test('sender revision feedback survives a durable retry and controller restart',
   }
 });
 
+test('a persisted own-action wait is reconciled to stillness before rendering', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-wait-action-test-'));
+  const reviews = [];
+  const agentModel = {
+    async reviewDrawing(input) {
+      reviews.push(input);
+      return {
+        accepted: true,
+        assessment: 'The sender is visibly stationary at a fixed street feature.',
+        blindRead: {
+          dominantAction: 'stillness',
+          frameOfReference: 'sender',
+          communicationFunction: 'report',
+          readableText: false,
+          likelyMessage: 'The sender is waiting here.'
+        }
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'persisted-wait-action',
+      agentId: 'ada',
+      turn: 4,
+      contributionKind: 'own_action',
+      contributionSummary: 'My current chosen action: I chose to wait at this branch.',
+      informationDelta: 'My current chosen action: I chose to wait at this branch.',
+      messageAction: 'transition',
+      drawingIntent: 'Show a quiet street anchor while the fork remains unresolved.',
+      drawingPrompt: 'Draw two paths around a stationary figure.'
+    });
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(reviews.length, 1);
+    assert.equal(reviews[0].messageAction, 'stillness');
+    assert.match(reviews[0].drawingPrompt, /dominant action must be stillness/i);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).messageAction, 'stillness');
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a recipient-legible own-action drawing escapes an intent-review livelock after repeated retries', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-review-livelock-test-'));
   const agentModel = {

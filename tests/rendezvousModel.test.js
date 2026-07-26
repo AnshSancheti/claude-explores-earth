@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   isCueDependentSearchPlan,
   RendezvousModelService,
+  reconcileRendezvousContributionAction,
   reconcileRendezvousMessageAction,
   sanitizeRendezvousDecision
 } from '../server/rendezvous/rendezvousModel.js';
@@ -1717,7 +1718,7 @@ test('cue-dependency detection ignores explicit rejection of permission seeking'
   ), false);
 });
 
-test('a paused route drawing is reconciled to transition before image review', async () => {
+test('own-action evidence overrides a contradictory paused drawing', async () => {
   const requests = [];
   const service = new RendezvousModelService({
     client: stagedClient(requests, {
@@ -1735,7 +1736,17 @@ test('a paused route drawing is reconciled to transition before image review', a
   const decision = await service.decide(input());
 
   assert.equal(decision.fallbackCause, null);
-  assert.equal(decision.messageAction, 'transition');
+  assert.equal(decision.messageAction, 'movement');
+});
+
+test('own-action wait evidence is always rendered as stillness', () => {
+  assert.equal(reconcileRendezvousContributionAction(
+    'own_action',
+    'My current chosen action: I chose to wait at this branch.',
+    'transition',
+    'Keep the fork visible while I wait.',
+    'Draw two route options around a stationary figure.'
+  ), 'stillness');
 });
 
 test('a durable paused route retry is reconciled to transition', () => {
