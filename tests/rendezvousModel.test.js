@@ -696,6 +696,51 @@ test('a sheet cannot frame forward motion as the locally justified path', async 
   assert.doesNotMatch(decision.reasoning, /suggesting forward motion/i);
 });
 
+test('a remembered motif cannot be attributed to a sheet that does not contain it', async () => {
+  let routeAttempts = 0;
+  const staleAttribution = 'New sheet evidence treats the fork as a coordination prompt, not a rendezvous. I choose the only unexplored local continuation.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        literalContents: ['a tree-lined street with parked cars and storefronts'],
+        primarySubject: 'a quiet tree-lined street',
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'The sender reports a quiet tree-lined street.'
+      },
+      route() {
+        routeAttempts += 1;
+        return routeResponse({
+          reasoning: staleAttribution,
+          memoryUpdate: {
+            currentPlan: staleAttribution
+          }
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+  const privateMemory = {
+    ...input().privateMemory,
+    partnerHypotheses: [{
+      key: 'fork-coordination',
+      description: 'The fork may be a coordination prompt.',
+      confidence: 0.2,
+      basisSequences: [32, 40],
+      evidenceStatus: 'unclear'
+    }]
+  };
+
+  const decision = await service.decide(input({ privateMemory }));
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /new sheet evidence treats the fork/i);
+});
+
 test('a sender report can still support an explicit interception inference', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {

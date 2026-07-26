@@ -443,6 +443,38 @@ function unsupportedPartnerHypothesisGoalTerm(
   return '';
 }
 
+function unsupportedCurrentSheetAttribution(
+  privateMemory,
+  routeReconciliation,
+  ...descriptions
+) {
+  const terms = unsupportedPartnerHypothesisTerms(
+    privateMemory,
+    routeReconciliation?.partnerHypothesis
+  );
+  if (terms.length === 0) return '';
+  const currentEvidence = [
+    ...(routeReconciliation?.evidenceDelta?.newEvidence || []),
+    ...(routeReconciliation?.evidenceDelta?.repeatedEvidence || [])
+  ].map(value => cleanString(value, 500).toLowerCase());
+  const statements = descriptions
+    .flatMap(value => cleanString(value, 2400).split(/[.!?;]+/))
+    .filter(statement =>
+      /\b(?:current|latest|newest|new)\s+(?:drawing|evidence|sheet)\b/i.test(statement)
+    );
+  for (const statement of statements) {
+    const lower = statement.toLowerCase();
+    const matchedTerm = terms.find(term =>
+      new RegExp(`\\b${escapeRegExp(term)}\\b`, 'i').test(lower) &&
+      !currentEvidence.some(evidence =>
+        new RegExp(`\\b${escapeRegExp(term)}\\b`, 'i').test(evidence)
+      )
+    );
+    if (matchedTerm) return matchedTerm;
+  }
+  return '';
+}
+
 export function reconcileRendezvousMessageAction(requestedAction, ...descriptions) {
   if (requestedAction === 'transition' || requestedAction === 'unclear') return requestedAction;
   const text = descriptions.map(value => cleanString(value, 2400)).join(' ');
@@ -1010,6 +1042,17 @@ ${recentFieldNotes}`
             `Rendezvous route plan promoted an unsupported partner hypothesis motif "${unsupportedGoalTerm}" into a movement goal`
           );
         }
+        const misattributedSheetTerm = unsupportedCurrentSheetAttribution(
+          privateMemory,
+          routeReconciliation,
+          routeDecision.reasoning,
+          routeDecision.memoryUpdate.currentPlan
+        );
+        if (misattributedSheetTerm) {
+          validationErrors.push(
+            `Rendezvous route rationale attributed absent motif "${misattributedSheetTerm}" to the current sheet`
+          );
+        }
         const copiedSheetRoute = sheetMessage &&
           !sheetMayDirectRecipient(perception, routeReconciliation) &&
           copiesSheetRoute(
@@ -1038,14 +1081,16 @@ ${recentFieldNotes}`
           } else if (
             attempt >= this.maxAttempts &&
             validationErrors.length === 1 &&
-            copiedSheetRoute
+            (copiedSheetRoute || misattributedSheetTerm)
           ) {
             const groundedLanguage = locallyGroundRouteLanguage(routeDecision, partnerName);
             routeDecision.reasoning = groundedLanguage.reasoning;
             routeDecision.memoryUpdate.currentPlan = groundedLanguage.currentPlan;
             routeReconciliation.evidenceDelta.planAssessment = 'inconclusive';
             this.logger.warn?.(
-              `Rendezvous normalized copied non-supporting sheet route after ${attempt} attempts`
+              misattributedSheetTerm
+                ? `Rendezvous normalized absent current-sheet motif "${misattributedSheetTerm}" after ${attempt} attempts`
+                : `Rendezvous normalized copied non-supporting sheet route after ${attempt} attempts`
             );
           } else {
             throw new Error(validationErrors.join('; '));
@@ -1056,7 +1101,9 @@ ${recentFieldNotes}`
         routeDecision = null;
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
-        routeRetryFeedback = /unsupported partner hypothesis/i.test(error.message)
+        routeRetryFeedback = /attributed absent motif/i.test(error.message)
+          ? `Do not attribute a remembered motif to the newest sheet unless it appears in the supplied current-sheet evidence. You may keep it as an older uncertain hypothesis, but justify the chosen action from current local route-option evidence. Correct every other validation issue named here too: ${error.message}`
+          : /unsupported partner hypothesis/i.test(error.message)
           ? `Your currentPlan promoted a distinctive motif from an unsupported partner hypothesis into the endpoint of movement. You may preserve an action justified by current local evidence, but rewrite the plan so that motif’s physical meaning is explicitly uncertain, questioned, or being tested. Correct every other validation issue named here too: ${error.message}`
           : /copied a non-supporting sheet route/i.test(error.message)
             ? `Your chosen action may remain unchanged, but its causal account cannot follow, align with, or reproduce the newest drawing's route because that proposition is repeated or otherwise non-supporting. Justify the action from current local route-option evidence, or state a genuinely distinct spatial inference. Correct every other validation issue named here too: ${error.message}`
