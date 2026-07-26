@@ -30,15 +30,8 @@ import {
 
 const AGENT_ORDER = ['ada', 'theo'];
 const RENDER_REVISION_MARKER = 'Authoritative rendering correction:';
-const RENDER_SOURCE_MARKER = 'Original sender-authored scene:';
 
 function composeDrawingRevisionPrompt(drawingPrompt, revisionPrompt, messageAction = 'unclear') {
-  const rawPrompt = String(drawingPrompt || '').trim();
-  const markedSource = rawPrompt.indexOf(RENDER_SOURCE_MARKER);
-  const sourcePrompt = (markedSource >= 0
-    ? rawPrompt.slice(markedSource + RENDER_SOURCE_MARKER.length)
-    : rawPrompt.split(/\s+(?:Revise the previous rendering|For the next rendering,)/i)[0]
-  ).trim();
   const actionConstraint = messageAction === 'stillness'
     ? 'The dominant action must be stillness: remove arrows, directional lines, motion trails, and route cues that read as movement; make stopping, waiting, anchoring, or uncertainty visually dominant.'
     : messageAction === 'movement'
@@ -49,9 +42,19 @@ function composeDrawingRevisionPrompt(drawingPrompt, revisionPrompt, messageActi
   const correction = String(revisionPrompt || '').trim()
     || 'Correct the rejected image so a context-free recipient can read the intended information delta.';
 
-  return `${RENDER_REVISION_MARKER} ${correction} ${actionConstraint} These corrections override any conflicting visual instruction in the source scene. Preserve only scene details and landmarks that remain compatible with them.
+  return `${RENDER_REVISION_MARKER} ${correction} ${actionConstraint} Rebuild the image from these instructions and the compatible visual anchors supplied separately. Do not reuse the rejected composition or any earlier instruction that conflicts with this correction.`;
+}
 
-${RENDER_SOURCE_MARKER} ${sourcePrompt}`;
+function compatibleRevisionFeatures(drawingPrompt, groundedFeatures, messageAction) {
+  if (!String(drawingPrompt || '').startsWith(RENDER_REVISION_MARKER)) return groundedFeatures;
+  const conflictPattern = messageAction === 'stillness'
+    ? /\b(?:arrow|direction|motion|movement|path|progress|route|travel|toward)\b/i
+    : messageAction === 'movement'
+      ? /\b(?:halt|pause|remain|still|stop|wait)\b/i
+      : null;
+  if (!conflictPattern) return groundedFeatures;
+  return (Array.isArray(groundedFeatures) ? groundedFeatures : [])
+    .filter(feature => !conflictPattern.test(String(feature || '')));
 }
 
 const AGENTS = Object.freeze({
@@ -1492,7 +1495,11 @@ export class RendezvousController {
         await this.saveState();
         let generated = await this.imageModel.generate({
           drawingPrompt: pending.drawingPrompt,
-          groundedFeatures: pending.groundedFeatures
+          groundedFeatures: compatibleRevisionFeatures(
+            pending.drawingPrompt,
+            pending.groundedFeatures,
+            pending.messageAction
+          )
         });
         let review = typeof this.agentModel.reviewDrawing === 'function'
           ? await this.agentModel.reviewDrawing({
@@ -1517,7 +1524,11 @@ export class RendezvousController {
           );
           generated = await this.imageModel.generate({
             drawingPrompt: revisionPrompt,
-            groundedFeatures: pending.groundedFeatures
+            groundedFeatures: compatibleRevisionFeatures(
+              revisionPrompt,
+              pending.groundedFeatures,
+              pending.messageAction
+            )
           });
           renderAttempts += 1;
           review = typeof this.agentModel.reviewDrawing === 'function'

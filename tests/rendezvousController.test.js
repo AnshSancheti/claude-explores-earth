@@ -748,10 +748,7 @@ test('the sender reviews a generated drawing and one rejection produces a revise
     assert.equal(imageModel.calls.length, 2);
     assert.match(imageModel.calls[1].drawingPrompt, /Separate the landmarks/);
     assert.match(imageModel.calls[1].drawingPrompt, /^Authoritative rendering correction:/);
-    assert.ok(
-      imageModel.calls[1].drawingPrompt.indexOf('Separate the landmarks') <
-      imageModel.calls[1].drawingPrompt.indexOf('Original sender-authored scene:')
-    );
+    assert.doesNotMatch(imageModel.calls[1].drawingPrompt, /Draw two arch groups/);
     assert.equal(reviews.length, 2);
     assert.equal(controller.state.scratchpad.owner, 'theo');
     assert.equal(controller.state.scratchpad.currentMessage.id, 'reviewed-message');
@@ -789,7 +786,8 @@ test('sender revision feedback survives a durable retry and controller restart',
       drawingIntent: 'Show that I am holding this corner.',
       informationDelta: 'I am deliberately waiting rather than advancing.',
       messageAction: 'stillness',
-      drawingPrompt: 'Draw a stopped figure beside a route arrow.'
+      drawingPrompt: 'Draw a stopped figure beside a route arrow.',
+      groundedFeatures: ['fixed median tree', 'bold route arrow']
     });
 
     await first.resumePendingDrawing();
@@ -822,6 +820,7 @@ test('sender revision feedback survives a durable retry and controller restart',
     await restarted.resumePendingDrawing();
 
     assert.match(recoveredImageModel.calls[0].drawingPrompt, /Remove the large arrow/);
+    assert.deepEqual(recoveredImageModel.calls[0].groundedFeatures, ['fixed median tree']);
     assert.equal(restarted.state.scratchpad.pendingMessage, null);
     assert.equal(restarted.state.scratchpad.currentMessage.id, 'revision-retry-message');
     assert.equal(restarted.state.scratchpad.owner, 'theo');
