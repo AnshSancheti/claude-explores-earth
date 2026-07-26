@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   RendezvousModelService,
+  reconcileRendezvousMessageAction,
   sanitizeRendezvousDecision
 } from '../server/rendezvous/rendezvousModel.js';
 
@@ -315,6 +316,23 @@ test('a paused route drawing is reconciled to transition before image review', a
 
   assert.equal(decision.fallbackCause, null);
   assert.equal(decision.messageAction, 'transition');
+});
+
+test('a durable paused route retry is reconciled to transition', () => {
+  assert.equal(reconcileRendezvousMessageAction(
+    'stillness',
+    'Remain at the tree anchor while keeping the diagonal route visible.',
+    'Authoritative correction: show the path toward the future destination.',
+    'Preserve the shared waypoint.'
+  ), 'transition');
+});
+
+test('negated route cues preserve a pure stillness retry', () => {
+  assert.equal(reconcileRendezvousMessageAction(
+    'stillness',
+    'Show that I am holding this corner.',
+    'Remove the route arrow. Keep the stopped figure and barrier dominant.'
+  ), 'stillness');
 });
 
 test('an already interpreted sheet reuses durable memory without another perception call', async () => {

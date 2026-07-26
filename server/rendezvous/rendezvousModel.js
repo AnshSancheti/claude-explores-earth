@@ -151,10 +151,14 @@ function authoritativeContributionSummary(kind, description) {
   return evidence;
 }
 
-function reconcileMessageAction(requestedAction, ...descriptions) {
+export function reconcileRendezvousMessageAction(requestedAction, ...descriptions) {
   if (requestedAction === 'transition' || requestedAction === 'unclear') return requestedAction;
   const text = descriptions.map(value => cleanString(value, 2400)).join(' ');
-  const movementCues = text.match(/\b(?:arrow|diagonal|journey|move|movement|path|progression|route|toward|travel)\b/gi) || [];
+  const positiveText = text.replace(
+    /\b(?:avoid|exclude|no|omit|remove|without)\b[^.!;]{0,160}/gi,
+    ' '
+  );
+  const movementCues = positiveText.match(/\b(?:arrow|diagonal|journey|move|movement|path|progression|route|toward|travel)\b/gi) || [];
   const stillnessCues = text.match(/\b(?:anchor|hold|pause|remain|stationary|still|stillness|wait|waiting)\b/gi) || [];
   if (requestedAction === 'stillness' && movementCues.length >= 2) return 'transition';
   if (requestedAction === 'movement' && stillnessCues.length >= 2) return 'transition';
@@ -693,7 +697,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           drawingIntent,
           informationDelta: contributionSummary,
           continuityReason: cleanString(parsed?.continuityReason, 500),
-          messageAction: reconcileMessageAction(
+          messageAction: reconcileRendezvousMessageAction(
             requestedMessageAction,
             drawingIntent,
             drawingPrompt

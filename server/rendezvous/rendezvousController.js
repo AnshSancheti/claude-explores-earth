@@ -3,7 +3,10 @@ import * as fsp from 'fs/promises';
 import { createHash, randomUUID } from 'crypto';
 import { StreetViewHeadless } from '../services/streetViewHeadless.js';
 import { calculateBearing } from '../utils/geoUtils.js';
-import { RendezvousModelService } from './rendezvousModel.js';
+import {
+  RendezvousModelService,
+  reconcileRendezvousMessageAction
+} from './rendezvousModel.js';
 import { RendezvousImageService } from './rendezvousImage.js';
 import {
   RENDEZVOUS_MEMORY_VERSION,
@@ -47,14 +50,19 @@ function composeDrawingRevisionPrompt(drawingPrompt, revisionPrompt, messageActi
 
 function compatibleRevisionFeatures(drawingPrompt, groundedFeatures, messageAction) {
   if (!String(drawingPrompt || '').startsWith(RENDER_REVISION_MARKER)) return groundedFeatures;
+  const explicitlyRemoved = ['arrow', 'barrier', 'figure', 'line', 'motion', 'path', 'route', 'star']
+    .filter(term => new RegExp(`\\bremove\\b[^.!;]{0,120}\\b${term}s?\\b`, 'i').test(drawingPrompt));
   const conflictPattern = messageAction === 'stillness'
     ? /\b(?:arrow|direction|motion|movement|path|progress|route|travel|toward)\b/i
     : messageAction === 'movement'
       ? /\b(?:halt|pause|remain|still|stop|wait)\b/i
       : null;
-  if (!conflictPattern) return groundedFeatures;
   return (Array.isArray(groundedFeatures) ? groundedFeatures : [])
-    .filter(feature => !conflictPattern.test(String(feature || '')));
+    .filter(feature => {
+      const value = String(feature || '');
+      if (conflictPattern?.test(value)) return false;
+      return !explicitlyRemoved.some(term => new RegExp(`\\b${term}s?\\b`, 'i').test(value));
+    });
 }
 
 function canAcceptRecipientLegibleRetry(review, messageAction, attemptNumber) {
@@ -1492,10 +1500,27 @@ export class RendezvousController {
   async resumePendingDrawing() {
     if (this.drawingInFlight) return this.drawingInFlight;
     const runId = this.state.runId;
-    const pending = Number(this.state.scratchpad?.version) === 5
-      ? normalizeRasterScratchpad(this.state.scratchpad).pendingMessage
+    const normalizedScratchpad = Number(this.state.scratchpad?.version) === 5
+      ? normalizeRasterScratchpad(this.state.scratchpad)
       : null;
+    const pending = normalizedScratchpad?.pendingMessage || null;
     if (!pending) return null;
+    const reconciledMessageAction = reconcileRendezvousMessageAction(
+      pending.messageAction,
+      pending.drawingIntent,
+      pending.drawingPrompt,
+      pending.continuityReason
+    );
+    if (reconciledMessageAction !== pending.messageAction) {
+      pending.messageAction = reconciledMessageAction;
+      pending.drawingPrompt = composeDrawingRevisionPrompt(
+        '',
+        `Rebuild from this intended message: ${pending.drawingIntent} Make this evidence delta visible: ${pending.informationDelta}`,
+        reconciledMessageAction
+      );
+      normalizedScratchpad.updatedAt = new Date().toISOString();
+      this.state.scratchpad = normalizedScratchpad;
+    }
     const nextAttemptAt = Date.parse(pending.nextAttemptAt || '');
     if (Number.isFinite(nextAttemptAt) && nextAttemptAt > Date.now()) return null;
 
