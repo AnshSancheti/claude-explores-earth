@@ -393,7 +393,7 @@ function assertsUncitedSharedDestination(...descriptions) {
 
 const BELIEF_TERM_STOPWORDS = new Set([
   'about', 'across', 'ada', 'along', 'anchor', 'appears', 'area', 'arrow', 'belief',
-  'central', 'continued', 'convention', 'current', 'destination', 'diagonal', 'distant',
+  'central', 'continue', 'continued', 'continuing', 'convention', 'current', 'destination', 'diagonal', 'distant',
   'district', 'ending', 'endpoint', 'exact', 'fixed', 'friend', 'from', 'goal', 'grid',
   'guiding', 'hand', 'inland', 'intend', 'intends', 'intention', 'interpretation',
   'landmark', 'mark', 'marks', 'meaning', 'meeting', 'move', 'moves', 'movement',
@@ -556,6 +556,10 @@ function copiesSheetRoute(...descriptions) {
       /\b(?:latest|newest|new)\s+sheet\b[^.!;]{0,160}\b(?:align|favor|hint|point|reinforce|support|suggest)\w*\b[^.!;]{0,100}\b(?:advanc|continu|head|move|proceed)\w*\b/i
         .test(statement) ||
       /\b(?:latest|newest|new)\s+sheet\b[^.!;]{0,160}\b(?:align|correspond|fit|match)\w*\s+with\b[^.!;]{0,100}\b(?:continuation|corridor|direction|forward|path|route|street|stretch|way)\b/i
+        .test(statement) ||
+      /\b(?:follow|following|use|using|based on)\b[^.!;]{0,40}\b(?:latest|newest|new)\s+(?:drawing|evidence|sheet)\b[^.!;]{0,120}\b(?:advanc|continu|head|move|proceed)\w*\b/i
+        .test(statement) ||
+      /\b(?:align|correspond|fit|match)\w*\s+with\b[^.!;]{0,100}\b(?:drawing|fork|motif|sheet|symbol|visual)\b/i
         .test(statement) ||
       /\b(?:drawing|sheet)s?\b[^.!;]{0,100}\b(?:cue|frame|motif|path|route)s?\b[^.!;]{0,100}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
         .test(statement) ||

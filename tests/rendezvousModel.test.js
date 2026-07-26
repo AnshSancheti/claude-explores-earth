@@ -640,6 +640,34 @@ test('a sheet report cannot softly align the recipient with a generic route', as
   assert.doesNotMatch(decision.reasoning, /aligns with/i);
 });
 
+test('newest evidence and an ambiguous motif cannot jointly justify movement', async () => {
+  const copiedReasoning = 'Following the newest evidence, I continue along the public corridor toward the vanishing point while keeping the fork coordinated. This aligns with the still-ambiguous fork motif, which may mark a generic continuation. Moving preserves forward movement without fixing a meeting point.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'The sender reports a tree-lined sidewalk.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /following the newest evidence|aligns with/i);
+});
+
 test('a sender report can still support an explicit interception inference', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {
