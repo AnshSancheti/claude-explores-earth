@@ -628,6 +628,11 @@ test('route planning cannot make an unsupported partner motif its movement goal'
     client: stagedClient(requests, {
       route() {
         routeAttempts += 1;
+        if (routeAttempts === 2) {
+          const correction = requests.at(-1).messages[1].content[0].text;
+          assert.match(correction, /AUTHORITATIVE ROUTE CORRECTION/);
+          assert.match(correction, /explicitly uncertain, questioned, or being tested/);
+        }
         return routeAttempts === 1
           ? routeResponse({
               memoryUpdate: {

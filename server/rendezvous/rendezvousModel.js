@@ -610,13 +610,22 @@ ${recentFieldNotes}`
       partnerHypothesis: perception.partnerHypothesis
     };
     let tokenBudget = this.maxTokens;
+    let routeRetryFeedback = '';
     for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
       try {
         const response = await this.#client().chat.completions.create({
           model: this.model,
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: userContent }
+            {
+              role: 'user',
+              content: routeRetryFeedback
+                ? [{
+                    type: 'text',
+                    text: `AUTHORITATIVE ROUTE CORRECTION FROM THE PRIOR ATTEMPT: ${routeRetryFeedback}`
+                  }, ...userContent]
+                : userContent
+            }
           ],
           response_format: { type: 'json_object' },
           reasoning_effort: this.reasoningEffort,
@@ -705,6 +714,9 @@ ${recentFieldNotes}`
         routeDecision = null;
         lastError = error;
         this.logger.warn?.(`Rendezvous model attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
+        routeRetryFeedback = /unsupported partner hypothesis/i.test(error.message)
+          ? 'Your currentPlan promoted a distinctive motif from an unsupported partner hypothesis into the endpoint of movement. You may preserve an action justified by current local evidence, but rewrite the plan so that motif’s physical meaning is explicitly uncertain, questioned, or being tested.'
+          : `Correct this validation error without inventing new evidence: ${error.message}`;
         if (/blank content|observation|memory revision|json/i.test(error.message)) {
           tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 3200));
         }
