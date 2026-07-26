@@ -111,6 +111,7 @@ function drawingResponse(overrides = {}) {
     drawingIntent: 'Tell Theo that I see matching arches and intend to investigate them.',
     informationDelta: 'I now see three matching arches beside a suspended traffic light.',
     continuityReason: 'Repeating the arches links this observation to Theo’s earlier motif.',
+    messageAction: 'movement',
     drawingPrompt: 'Draw two groups of arches echoing each other, with one small figure moving toward the nearer group and a large uncertain circle above the distant group.',
     groundedFeatures: ['three repeated stone arches', 'a suspended traffic light beside them'],
     ...overrides
@@ -131,6 +132,7 @@ function stagedClient(requests, overrides = {}) {
             payload = overrides.blindRead || {
               literalContents: ['two separated arch groups and a moving figure'],
               likelyMessage: 'The sender sees matching arches and is moving toward one group.',
+              dominantAction: 'movement',
               movementCues: ['a small figure approaches the nearer arches'],
               stillnessCues: [],
               readableText: false
@@ -172,6 +174,7 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(decision.reasoning, /Theo may be describing/);
   assert.match(decision.drawingIntent, /intend to investigate/);
   assert.match(decision.informationDelta, /three matching arches/);
+  assert.equal(decision.messageAction, 'movement');
   assert.match(decision.drawingPrompt, /figure moving/);
 
   const serialized = JSON.stringify(requests);
@@ -304,6 +307,44 @@ test('sender reviews the actual generated image and can request a visual revisio
   assert.match(requests[1].messages[1].content[0].text, /nearer arches now match/);
   assert.match(requests[1].messages[1].content[0].text, /deliberately continue/);
   assert.match(requests[1].messages[1].content[0].text, /context-free reading/);
+});
+
+test('blind recipient action overrides a sender review biased by intent', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      blindRead: {
+        literalContents: ['a large arrow crosses an open road'],
+        likelyMessage: 'Proceed along the road in the arrow direction.',
+        dominantAction: 'movement',
+        movementCues: ['large forward arrow'],
+        stillnessCues: [],
+        readableText: false
+      },
+      review: {
+        accepted: true,
+        assessment: 'The figures appear to be waiting.',
+        revisionPrompt: ''
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    drawingIntent: 'Tell Ada that I am holding this corner.',
+    informationDelta: 'I am deliberately waiting rather than advancing.',
+    continuityReason: '',
+    messageAction: 'stillness',
+    drawingPrompt: 'Draw a still figure beside a busy road.',
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /movement.*stillness/);
+  assert.match(review.revisionPrompt, /dominant action read as stillness/);
+  assert.equal(requests.length, 1);
 });
 
 test('decision sanitizer reconciles heading and bounds deliberate waiting', () => {

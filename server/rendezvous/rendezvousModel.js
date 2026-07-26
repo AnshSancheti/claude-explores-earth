@@ -458,6 +458,7 @@ Return only JSON:
   "drawingIntent": "your private account of what you are trying to tell ${partnerName}",
   "informationDelta": "the genuinely new information, question, correction, or deliberate repetition this sheet contributes",
   "continuityReason": "why recurring motifs are worth retaining, or empty when they are not",
+  "messageAction": "movement" | "stillness" | "transition" | "unclear",
   "drawingPrompt": "complete visual instructions for one coherent handmade drawing with no readable text",
   "groundedFeatures": ["visible or remembered visual anchor included in the drawing"]
 }`;
@@ -504,11 +505,14 @@ ${JSON.stringify(actionMemory, null, 2)}`
           drawingIntent: cleanString(parsed?.drawingIntent, 700),
           informationDelta: cleanString(parsed?.informationDelta, 700),
           continuityReason: cleanString(parsed?.continuityReason, 500),
+          messageAction: ['movement', 'stillness', 'transition', 'unclear'].includes(parsed?.messageAction)
+            ? parsed.messageAction
+            : null,
           drawingPrompt: cleanString(parsed?.drawingPrompt, 2400),
           groundedFeatures: cleanStringList(parsed?.groundedFeatures, { limit: 6, maxLength: 180 })
         };
-        if (!drawingPlan.drawingIntent || !drawingPlan.informationDelta || !drawingPlan.drawingPrompt) {
-          throw new Error('Rendezvous drawing planner omitted its intended message or information delta');
+        if (!drawingPlan.drawingIntent || !drawingPlan.informationDelta || !drawingPlan.messageAction || !drawingPlan.drawingPrompt) {
+          throw new Error('Rendezvous drawing planner omitted its intended message, information delta, or dominant action');
         }
         break;
       } catch (error) {
@@ -553,6 +557,7 @@ ${JSON.stringify(actionMemory, null, 2)}`
     drawingIntent,
     informationDelta = '',
     continuityReason = '',
+    messageAction = 'unclear',
     drawingPrompt,
     groundedFeatures = [],
     imageBuffer,
@@ -567,6 +572,7 @@ Return only JSON:
 {
   "literalContents": ["visible element and relationship"],
   "likelyMessage": "best context-free interpretation, including uncertainty",
+  "dominantAction": "movement" | "stillness" | "transition" | "unclear",
   "movementCues": ["visible cue suggesting movement or direction"],
   "stillnessCues": ["visible cue suggesting waiting, stopping, anchoring, or no movement"],
   "readableText": true | false
@@ -595,6 +601,9 @@ Return only JSON:
         blindRead = {
           literalContents: cleanStringList(parsed?.literalContents, { limit: 8, maxLength: 220 }),
           likelyMessage: cleanString(parsed?.likelyMessage, 700),
+          dominantAction: ['movement', 'stillness', 'transition', 'unclear'].includes(parsed?.dominantAction)
+            ? parsed.dominantAction
+            : 'unclear',
           movementCues: cleanStringList(parsed?.movementCues, { limit: 6, maxLength: 220 }),
           stillnessCues: cleanStringList(parsed?.stillnessCues, { limit: 6, maxLength: 220 }),
           readableText: parsed?.readableText === true
@@ -609,6 +618,24 @@ Return only JSON:
       }
     }
     if (!blindRead) throw lastError || new Error('Rendezvous blind drawing read failed');
+    const normalizedMessageAction = ['movement', 'stillness', 'transition', 'unclear'].includes(messageAction)
+      ? messageAction
+      : 'unclear';
+    const actionConflict = (
+      normalizedMessageAction === 'movement' &&
+      blindRead.dominantAction === 'stillness'
+    ) || (
+      normalizedMessageAction === 'stillness' &&
+      blindRead.dominantAction === 'movement'
+    );
+    if (actionConflict) {
+      return {
+        accepted: false,
+        assessment: `Blind recipient read the drawing as ${blindRead.dominantAction}, but the intended message is ${normalizedMessageAction}: ${blindRead.likelyMessage}`,
+        revisionPrompt: `Make the image's dominant action read as ${normalizedMessageAction}. Remove or subordinate visual cues that currently make it read as ${blindRead.dominantAction}.`,
+        blindRead
+      };
+    }
 
     const systemPrompt = `You are ${agentName}, inspecting the actual wordless drawing that will be handed to ${partnerName}. Decide whether it visibly communicates what you intended.
 
@@ -638,6 +665,9 @@ ${drawingIntent}
 What should be new or deliberately repeated:
 ${informationDelta || 'Legacy message: no explicit information delta was recorded.'}
 
+Intended dominant action:
+${normalizedMessageAction}
+
 Reason for retaining recurring motifs:
 ${continuityReason || 'None recorded.'}
 
@@ -664,8 +694,9 @@ ${JSON.stringify(groundedFeatures)}`
         }
         return {
           accepted: parsed.accepted,
-          assessment,
-          revisionPrompt: cleanString(parsed?.revisionPrompt, 1200)
+          assessment: cleanString(`Blind read (${blindRead.dominantAction}): ${blindRead.likelyMessage} Sender review: ${assessment}`, 700),
+          revisionPrompt: cleanString(parsed?.revisionPrompt, 1200),
+          blindRead
         };
       } catch (error) {
         lastError = error;

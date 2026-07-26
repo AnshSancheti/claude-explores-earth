@@ -1166,6 +1166,7 @@ export class RendezvousController {
               drawingIntent: decision.drawingIntent,
               informationDelta: decision.informationDelta,
               continuityReason: decision.continuityReason,
+              messageAction: decision.messageAction,
               groundedFeatures: decision.observedFeatures,
               sourcePanoId: current.panoId,
               snapshot: this.#captureSheetSnapshot(agentId, {
@@ -1475,6 +1476,7 @@ export class RendezvousController {
               drawingIntent: pending.drawingIntent,
               informationDelta: pending.informationDelta,
               continuityReason: pending.continuityReason,
+              messageAction: pending.messageAction,
               drawingPrompt: pending.drawingPrompt,
               groundedFeatures: pending.groundedFeatures,
               imageBuffer: generated.buffer,
@@ -1498,6 +1500,7 @@ export class RendezvousController {
                 drawingIntent: pending.drawingIntent,
                 informationDelta: pending.informationDelta,
                 continuityReason: pending.continuityReason,
+                messageAction: pending.messageAction,
                 drawingPrompt: revisionPrompt,
                 groundedFeatures: pending.groundedFeatures,
                 imageBuffer: generated.buffer,

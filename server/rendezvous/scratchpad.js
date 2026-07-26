@@ -139,6 +139,9 @@ function normalizePendingRasterMessage(raw) {
     drawingIntent: cleanString(raw.drawingIntent, 700),
     informationDelta: cleanString(raw.informationDelta, 700),
     continuityReason: cleanString(raw.continuityReason, 500),
+    messageAction: ['movement', 'stillness', 'transition', 'unclear'].includes(raw.messageAction)
+      ? raw.messageAction
+      : 'unclear',
     groundedFeatures: cleanStringList(raw.groundedFeatures),
     referenceViewIndices: Array.isArray(raw.referenceViewIndices)
       ? [...new Set(raw.referenceViewIndices.map(Number).filter(Number.isInteger))].slice(0, 4)
@@ -184,6 +187,9 @@ export function normalizeRasterScratchpad(raw, { turn = 0 } = {}) {
         drawingIntent: cleanString(entry?.drawingIntent, 700),
         informationDelta: cleanString(entry?.informationDelta, 700),
         continuityReason: cleanString(entry?.continuityReason, 500),
+        messageAction: ['movement', 'stillness', 'transition', 'unclear'].includes(entry?.messageAction)
+          ? entry.messageAction
+          : 'unclear',
         groundedFeatures: cleanStringList(entry?.groundedFeatures),
         referenceViewIndices: Array.isArray(entry?.referenceViewIndices)
           ? [...new Set(entry.referenceViewIndices.map(Number).filter(Number.isInteger))].slice(0, 4)
@@ -225,6 +231,7 @@ export function queueRasterScratchpadMessage(scratchpad, {
   drawingIntent = '',
   informationDelta = '',
   continuityReason = '',
+  messageAction = 'unclear',
   groundedFeatures = [],
   referenceViewIndices = [],
   sourcePanoId = null,
@@ -242,6 +249,7 @@ export function queueRasterScratchpadMessage(scratchpad, {
     drawingIntent,
     informationDelta,
     continuityReason,
+    messageAction,
     groundedFeatures,
     referenceViewIndices,
     sourcePanoId,
