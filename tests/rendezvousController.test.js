@@ -1104,7 +1104,7 @@ test('a repeatedly unrenderable action is replanned without changing the run or 
       drawingPrompt: 'Draw my movement south.',
       groundedFeatures: ['I chose to move south.', 'a stone arcade']
     });
-    controller.state.scratchpad.pendingMessage.attempts = 6;
+    controller.state.scratchpad.pendingMessage.attempts = 3;
 
     await Promise.all(Array.from({ length: 4 }, () => controller.resumePendingDrawing()));
 
@@ -1176,7 +1176,7 @@ test('a repeatedly unrenderable acknowledgement gets one bounded replan', async 
       drawingPrompt: 'Draw a path and footprints.',
       groundedFeatures: ['a path and footprints']
     });
-    controller.state.scratchpad.pendingMessage.attempts = 6;
+    controller.state.scratchpad.pendingMessage.attempts = 3;
 
     await Promise.all(Array.from({ length: 4 }, () => controller.resumePendingDrawing()));
 

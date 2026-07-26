@@ -33,6 +33,7 @@ import {
 
 const AGENT_ORDER = ['ada', 'theo'];
 const RENDER_REVISION_MARKER = 'Authoritative rendering correction:';
+const MAX_DRAWING_ATTEMPTS_PER_PLAN = 3;
 const MAX_DRAWING_REPLANS = 2;
 const MAX_DRAWING_REPLAN_FAILURES = 2;
 
@@ -1576,7 +1577,7 @@ export class RendezvousController {
     const nextAttemptAt = Date.parse(pending.nextAttemptAt || '');
     if (Number.isFinite(nextAttemptAt) && nextAttemptAt > Date.now()) return null;
     if (
-      pending.attempts >= 6 &&
+      pending.attempts >= MAX_DRAWING_ATTEMPTS_PER_PLAN &&
       pending.replanCount < MAX_DRAWING_REPLANS &&
       typeof this.agentModel.replanUnrenderableDrawing === 'function'
     ) {
