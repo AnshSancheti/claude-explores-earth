@@ -570,7 +570,7 @@ Return only JSON:
   "continuityReason": "why recurring motifs are worth retaining, or empty when they are not",
   "messageAction": "movement" | "stillness" | "transition" | "unclear",
   "drawingPrompt": "complete visual instructions for one coherent handmade drawing with no readable text",
-  "groundedFeatures": ["visible or remembered visual anchor included in the drawing"]
+  "groundedFeatureEvidenceIds": ["zero or more exact IDs from the available outbound evidence catalog that should remain visible as context"]
 }`;
     const priorVisualSheets = (Array.isArray(visualHistory) ? visualHistory : []).slice(-2);
     const drawingVisualContext = [];
@@ -660,6 +660,16 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           contributionKind,
           citedEvidence?.description
         );
+        const groundedFeatureEvidenceIds = cleanStringList(parsed?.groundedFeatureEvidenceIds, {
+          limit: 6,
+          maxLength: 80
+        });
+        const groundedFeatures = [
+          citedEvidence?.description,
+          ...groundedFeatureEvidenceIds.map(id =>
+            contributionEvidence.find(item => item.id === id)?.description
+          )
+        ].filter(Boolean);
         const candidateDrawingPlan = {
           contributionKind,
           contributionEvidenceId,
@@ -671,7 +681,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
             ? parsed.messageAction
             : null,
           drawingPrompt: cleanString(parsed?.drawingPrompt, 2400),
-          groundedFeatures: cleanStringList(parsed?.groundedFeatures, { limit: 6, maxLength: 180 })
+          groundedFeatures: [...new Set(groundedFeatures)].slice(0, 6)
         };
         if (
           !candidateDrawingPlan.contributionKind ||

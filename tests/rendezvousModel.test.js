@@ -119,7 +119,7 @@ function drawingResponse(overrides = {}) {
     continuityReason: 'Repeating the arches links this observation to Theo’s earlier motif.',
     messageAction: 'movement',
     drawingPrompt: 'Draw two groups of arches echoing each other, with one small figure moving toward the nearer group and a large uncertain circle above the distant group.',
-    groundedFeatures: ['three repeated stone arches', 'a suspended traffic light beside them'],
+    groundedFeatureEvidenceIds: ['local:0', 'local:1'],
     ...overrides
   };
 }
