@@ -90,7 +90,7 @@ const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
 function isConcreteLocalEvidence(description) {
   const value = cleanString(description, 220);
   if (!value) return false;
-  return !/\b(?:implied|suggests?|cue|motif|waypoint|shared|prior|sheet|partner|destination|coordinate|map|grid|star|intersection context)\b/i
+  return !/\b(?:arrow|implied|suggests?|cue|motif|route|waypoint|shared|prior|sheet|partner|destination|coordinate|map|grid|star|intersection context)\b/i
     .test(value);
 }
 
@@ -427,7 +427,7 @@ Return only JSON:
   "waitTurns": <1-6 when action is wait, otherwise 0>,
   "reasoning": "one concise first-person account of why this action best supports finding your friend",
   "observation": "a grounded description of what you currently notice and want to remember",
-  "observedFeatures": ["literal concrete feature visible in a current local route-option image; never a sheet motif, inferred destination, shared cue, or remembered feature"],
+  "observedFeatures": ["literal concrete physical feature visible in a current local route-option image; never a navigation arrow or interface overlay, abstract route, sheet motif, inferred destination, shared cue, or remembered feature"],
   "sheetReconciliation": {
     "currentSenderAction": "movement" | "stillness" | "transition" | "unclear",
     "currentSenderActionBasis": "specific literal cue in the newest sheet, or why it remains unclear",
