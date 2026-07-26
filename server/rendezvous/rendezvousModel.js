@@ -87,6 +87,13 @@ const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
   'deliberate_repetition'
 ]);
 
+function isConcreteLocalEvidence(description) {
+  const value = cleanString(description, 220);
+  if (!value) return false;
+  return !/\b(?:implied|suggests?|cue|motif|waypoint|shared|prior|sheet|partner|destination|coordinate|map|grid|star)\b/i
+    .test(value);
+}
+
 function buildContributionEvidence({ routeDecision, perception, privateMemory }) {
   const catalog = [];
   const add = (prefix, values) => {
@@ -94,7 +101,7 @@ function buildContributionEvidence({ routeDecision, perception, privateMemory })
       catalog.push({ id: `${prefix}:${index}`, description });
     });
   };
-  add('local', routeDecision.observedFeatures);
+  add('local', routeDecision.observedFeatures.filter(isConcreteLocalEvidence));
   add('action', [
     `I chose to ${routeDecision.action}${routeDecision.action === 'wait' ? ' at this branch' : ' along the selected public route'}.`
   ]);
@@ -395,7 +402,7 @@ Return only JSON:
   "waitTurns": <1-6 when action is wait, otherwise 0>,
   "reasoning": "one concise first-person account of why this action best supports finding your friend",
   "observation": "a grounded description of what you currently notice and want to remember",
-  "observedFeatures": ["stable visible feature that may be useful to remember or draw"],
+  "observedFeatures": ["literal concrete feature visible in a current local route-option image; never a sheet motif, inferred destination, shared cue, or remembered feature"],
   "sheetReconciliation": {
     "currentSenderAction": "movement" | "stillness" | "transition" | "unclear",
     "currentSenderActionBasis": "specific literal cue in the newest sheet, or why it remains unclear",

@@ -271,6 +271,33 @@ test('drawing planner still rejects an unknown contribution evidence ID', async 
   ).length, 2);
 });
 
+test('abstract sheet-language residue is excluded from local outbound evidence', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      route: routeResponse({
+        observedFeatures: [
+          'three repeated stone arches',
+          'a suspended traffic light beside them',
+          'a star waypoint implied by the prior sheet cue'
+        ]
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+  const drawingRequest = requests.find(request =>
+    /currently hold the one physical sheet/.test(request.messages[0].content)
+  );
+  const drawingUserText = drawingRequest.messages[1].content[0].text;
+  const catalogText = drawingUserText.split('Available outbound evidence catalog:\n')[1];
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(catalogText, /three repeated stone arches/);
+  assert.doesNotMatch(catalogText, /star waypoint implied by the prior sheet cue/);
+});
+
 test('an already interpreted sheet reuses durable memory without another perception call', async () => {
   const requests = [];
   const remembered = {
