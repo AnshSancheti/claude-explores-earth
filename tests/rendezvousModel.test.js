@@ -188,6 +188,13 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(requests[0].messages[1].content[0].text, /Inspect this image on its own/);
   assert.doesNotMatch(requests[0].messages[1].content[0].text, /private evidence ledger|History image/);
   assert.equal(requests[0].messages[1].content.length, 2);
+  const drawingContent = requests[2].messages[1].content;
+  assert.match(drawingContent[1].text, /CURRENT RECEIVED SHEET.*sequence 7/);
+  assert.match(drawingContent[3].text, /PRIOR PASSED SHEET.*sequence 5.*sent by you/);
+  assert.equal(drawingContent.filter(item => item.type === 'image_url').length, 2);
+  assert.ok(drawingContent
+    .filter(item => item.type === 'image_url')
+    .every(item => !item.image_url.url.startsWith('data:image/jpeg')));
   assert.doesNotMatch(serialized, /partnerPadText|ownPadText|distanceToFriend|-?\d+\.\d{4,}/);
 });
 

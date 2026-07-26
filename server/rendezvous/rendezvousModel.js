@@ -449,7 +449,7 @@ ${recentFieldNotes}`
 
 Decide what wordless drawing would be most useful to send now. You may communicate anything you genuinely believe could help you find each other: what you see, a remembered place, uncertainty, a correction, intended movement, a request, relative spatial relationships, or an invented visual convention. You are not limited to an observational postcard and you may use arrows, diagrams, symbols, maps, perspective, or figurative imagery when you choose.
 
-First identify the information delta: the belief, observation, question, correction, or intentional repetition that makes this message different from the sheets already exchanged. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. Repetition is allowed when you deliberately believe repetition itself communicates something; state that private reason. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
+First identify the information delta: the belief, observation, question, correction, or intentional repetition that makes this message different from the sheets already exchanged. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and your information delta names what the recipient can actually see as different. Repetition does not make a belief more certain. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
 
 Choose the image's dominant action honestly. The strongest visual cue in your drawing prompt must agree with "messageAction". If the message is stillness, movement or future-route cues may be present but must remain visibly subordinate to stopping, waiting, anchoring, or uncertainty. If the message is movement, do not let barriers or static figures dominate it. A transition may visibly contain both.
 
@@ -464,6 +464,35 @@ Return only JSON:
   "drawingPrompt": "complete visual instructions for one coherent handmade drawing with no readable text",
   "groundedFeatures": ["visible or remembered visual anchor included in the drawing"]
 }`;
+    const priorVisualSheets = (Array.isArray(visualHistory) ? visualHistory : []).slice(-2);
+    const drawingVisualContext = [];
+    if (sheetMessage && Buffer.isBuffer(scratchpadBuffer) && scratchpadBuffer.length > 0) {
+      drawingVisualContext.push(
+        {
+          type: 'text',
+          text: `CURRENT RECEIVED SHEET — sequence ${sheetMessage.sequence}, sent by ${sheetMessage.from}. This is communication from your friend, not a local route-option image.`
+        },
+        {
+          type: 'image_url',
+          image_url: { url: `data:${scratchpadMimeType};base64,${scratchpadBuffer.toString('base64')}`, detail: 'high' }
+        }
+      );
+    }
+    for (const historicalSheet of priorVisualSheets) {
+      drawingVisualContext.push(
+        {
+          type: 'text',
+          text: `PRIOR PASSED SHEET — sequence ${historicalSheet.sequence}, ${historicalSheet.direction} by you. Use it only to compare visual vocabulary and repetition.`
+        },
+        {
+          type: 'image_url',
+          image_url: {
+            url: `data:${historicalSheet.mimeType || 'image/webp'};base64,${historicalSheet.buffer.toString('base64')}`,
+            detail: 'low'
+          }
+        }
+      );
+    }
     const drawingContent = [
       {
         type: 'text',
@@ -483,10 +512,7 @@ ${JSON.stringify({
 Your prior private memory:
 ${JSON.stringify(actionMemory, null, 2)}`
       },
-      ...screenshots.map(buffer => ({
-        type: 'image_url',
-        image_url: { url: `data:image/jpeg;base64,${buffer.toString('base64')}`, detail: 'low' }
-      }))
+      ...drawingVisualContext
     ];
     let drawingPlan = null;
     tokenBudget = Math.min(this.maxTokens, 1800);
