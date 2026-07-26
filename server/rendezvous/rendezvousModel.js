@@ -125,6 +125,16 @@ function isConcreteLocalEvidence(description) {
     .test(value);
 }
 
+function atomizeLocalEvidenceDescription(description) {
+  return cleanString(description, 500)
+    .split(/\s*;\s*/)
+    .flatMap(segment => segment.length >= 80
+      ? segment.split(/\s+(?:with|and)\s+/i)
+      : [segment])
+    .map(segment => segment.trim())
+    .filter(Boolean);
+}
+
 const VISUAL_SIMILARITY_STOPWORDS = new Set([
   'about', 'along', 'also', 'around', 'away', 'been', 'being', 'both', 'city',
   'could', 'down', 'from', 'into', 'large', 'left', 'might', 'other', 'person',
@@ -1371,7 +1381,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
     const localEvidence = cleanStringList([
       ...durableLocalEvidence,
       ...compatiblePendingEvidence
-    ].flatMap(description => description.split(/\s*;\s*/)), {
+    ].flatMap(atomizeLocalEvidenceDescription), {
       limit: 6,
       maxLength: 220
     })
@@ -1426,6 +1436,7 @@ Return only JSON:
 }`;
     let lastError = null;
     let tokenBudget = Math.min(this.maxTokens, 1600);
+    let retryFeedback = '';
     for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
       try {
         const response = await this.#client().chat.completions.create({
@@ -1434,7 +1445,9 @@ Return only JSON:
             { role: 'system', content: systemPrompt },
             {
               role: 'user',
-              content: `The unrenderable prior contribution was:
+              content: `${retryFeedback
+                ? `AUTHORITATIVE REPLAN CORRECTION FROM THE PRIOR ATTEMPT: ${retryFeedback}\n\n`
+                : ''}The unrenderable prior contribution was:
 ${JSON.stringify({
   contributionKind: pending?.contributionKind,
   contributionSummary: pending?.contributionSummary,
@@ -1463,15 +1476,27 @@ ${JSON.stringify(catalog, null, 2)}`
         ].filter(Boolean);
         const drawingIntent = sanitizeOutboundPlaceNames(parsed?.drawingIntent, [], 700);
         const drawingPrompt = sanitizeOutboundPlaceNames(parsed?.drawingPrompt, [], 2400);
+        const requestedMessageAction = ['movement', 'stillness', 'transition', 'unclear']
+          .includes(parsed?.messageAction)
+          ? parsed.messageAction
+          : 'unclear';
         const messageAction = reconcileRendezvousMessageAction(
-          ['movement', 'stillness', 'transition', 'unclear'].includes(parsed?.messageAction)
-            ? parsed.messageAction
-            : 'unclear',
+          requestedMessageAction,
           drawingIntent,
           drawingPrompt
         );
-        if (!drawingIntent || !drawingPrompt) {
+        if (
+          !drawingIntent ||
+          !drawingPrompt ||
+          /^(?:movement|stillness|transition|unclear)$/i.test(drawingIntent)
+        ) {
           throw new Error('Rendezvous drawing replan omitted its visual message');
+        }
+        if (
+          requestedMessageAction !== 'unclear' &&
+          messageAction !== requestedMessageAction
+        ) {
+          throw new Error('Rendezvous drawing replan action contradicted its visual instructions');
         }
         const unsupportedRouteCues = routeCommandCues(`${drawingIntent} ${drawingPrompt}`)
           .filter(cue => !routeCommandCues(cited.description).includes(cue));
@@ -1492,6 +1517,11 @@ ${JSON.stringify(catalog, null, 2)}`
       } catch (error) {
         lastError = error;
         this.logger.warn?.(`Rendezvous drawing replan attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
+        retryFeedback = /omitted its visual message/i.test(error.message)
+          ? 'Describe the actual information you want the drawing to convey; do not put an action enum such as "stillness" in drawingIntent.'
+          : /action contradicted/i.test(error.message)
+            ? 'Make messageAction agree with the strongest visible action in drawingPrompt. If the contribution is a static observation, remove route, progression, and movement cues rather than labeling it movement or transition.'
+            : 'Choose a different cited fact and visual proposition that obeys the reported constraint.';
         tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
       }
     }

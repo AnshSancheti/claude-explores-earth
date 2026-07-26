@@ -142,13 +142,15 @@ function stagedClient(requests, overrides = {}) {
           if (/privately inspecting the newest wordless drawing/.test(prompt)) {
             payload = overrides.perception || perceptionResponse();
           } else if (/reconsidering only the drawing/.test(prompt)) {
-            payload = overrides.replan || {
-              contributionEvidenceId: 'local:0',
-              drawingIntent: 'Show the stone arches I can actually see.',
-              messageAction: 'stillness',
-              drawingPrompt: 'Draw three stone arches as the dominant observation.',
-              groundedFeatureEvidenceIds: ['local:0']
-            };
+            payload = typeof overrides.replan === 'function'
+              ? overrides.replan(request)
+              : (overrides.replan || {
+                  contributionEvidenceId: 'local:0',
+                  drawingIntent: 'Show the stone arches I can actually see.',
+                  messageAction: 'stillness',
+                  drawingPrompt: 'Draw three stone arches as the dominant observation.',
+                  groundedFeatureEvidenceIds: ['local:0']
+                });
           } else if (/without any knowledge of what its sender intended/.test(prompt)) {
             payload = overrides.blindRead || {
               literalContents: ['two separated arch groups and a moving figure'],
@@ -694,6 +696,82 @@ test('a drawing replan offers composite streetscapes as separate visual facts', 
   assert.match(requestText, /"description": "tree-lined sidewalk"/);
   assert.match(requestText, /"description": "row of parked vans"/);
   assert.doesNotMatch(requestText, /tree-lined sidewalk; row of parked vans/);
+});
+
+test('a drawing replan atomizes long relational streetscape descriptions', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      replan: {
+        contributionEvidenceId: 'local:1',
+        drawingIntent: 'Show the parked vehicles as a local visual fact.',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw one row of parked vehicles as the sole dominant subject.',
+        groundedFeatureEvidenceIds: ['local:1']
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const replan = await service.replanUnrenderableDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    pending: { contributionKind: 'acknowledgement' },
+    privateMemory: {
+      ownObservations: [{
+        description: 'Standing at a tree-lined urban sidewalk with parked vehicles along the left and storefronts to the right',
+        sourcePanoId: 'ada-current'
+      }]
+    }
+  });
+
+  assert.equal(replan.contributionSummary, 'New local observation: parked vehicles along the left');
+  const requestText = requests[0].messages.at(-1).content;
+  assert.match(requestText, /"description": "Standing at a tree-lined urban sidewalk"/);
+  assert.match(requestText, /"description": "parked vehicles along the left"/);
+  assert.match(requestText, /"description": "storefronts to the right"/);
+});
+
+test('a drawing replan retries a placeholder intent and contradictory action', async () => {
+  let attempts = 0;
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      replan() {
+        attempts += 1;
+        return attempts === 1
+          ? {
+              contributionEvidenceId: 'local:0',
+              drawingIntent: 'stillness',
+              messageAction: 'movement',
+              drawingPrompt: 'Draw a quiet tree standing motionless.',
+              groundedFeatureEvidenceIds: ['local:0']
+            }
+          : {
+              contributionEvidenceId: 'local:0',
+              drawingIntent: 'Show the dense tree canopy I can see here.',
+              messageAction: 'stillness',
+              drawingPrompt: 'Draw one dense, motionless tree canopy as the sole subject.',
+              groundedFeatureEvidenceIds: ['local:0']
+            };
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const replan = await service.replanUnrenderableDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    pending: {
+      contributionKind: 'local_observation',
+      groundedFeatures: ['dense tree canopy']
+    }
+  });
+
+  assert.equal(attempts, 2);
+  assert.match(requests[1].messages.at(-1).content, /AUTHORITATIVE REPLAN CORRECTION/);
+  assert.match(replan.drawingIntent, /dense tree canopy/);
+  assert.equal(replan.messageAction, 'stillness');
 });
 
 test('own-action evidence uses the executed option bearing without leaking its route label', async () => {
