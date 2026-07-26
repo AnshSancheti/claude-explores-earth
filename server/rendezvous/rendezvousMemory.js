@@ -61,9 +61,18 @@ function knownSequences(memory) {
 
 function normalizeObservation(entry) {
   if (!entry || typeof entry !== 'object') return null;
+  const rawDescription = cleanString(entry.description || entry.observation, 500);
+  if (
+    !entry.sourcePanoId &&
+    /^Legacy recollection, not yet reverified:/i.test(rawDescription) &&
+    /\b(?:follows the only unexplored public continuation|waits at the choice until the drawing has finished crossing)\b/i
+      .test(rawDescription)
+  ) {
+    return null;
+  }
   const description = entry.sourcePanoId
-    ? removeCommunicationFromLocalObservation(entry.description || entry.observation)
-    : cleanString(entry.description || entry.observation, 500);
+    ? removeCommunicationFromLocalObservation(rawDescription)
+    : rawDescription;
   if (!description) return null;
   return {
     turn: positiveInt(entry.turn),
@@ -219,7 +228,7 @@ export function createAgentMemory({ recentNotes = [] } = {}) {
 }
 
 export function normalizeAgentMemory(raw, { recentNotes = [] } = {}) {
-  if (!raw || Number(raw.version) !== RENDEZVOUS_MEMORY_VERSION) {
+  if (!raw || ![4, RENDEZVOUS_MEMORY_VERSION].includes(Number(raw.version))) {
     return migrateLegacyMemory(raw, recentNotes);
   }
   const base = createAgentMemory({ recentNotes: [] });

@@ -57,6 +57,33 @@ test('v3 memory migration preserves the active plan, observations, and belief pr
   assert.equal(memory.updatedTurn, 12);
 });
 
+test('v4 memory upgrades structurally without turning controller status into evidence', () => {
+  const memory = normalizeAgentMemory({
+    version: 4,
+    currentPlan: 'Compare the next sheet with the sidewalk.',
+    ownObservations: [{
+      turn: 8,
+      description: 'A stone facade and two mature trees.',
+      sourcePanoId: 'pano-8'
+    }],
+    receivedSheets: [],
+    sentMessages: [],
+    visualConventions: [],
+    partnerHypotheses: [],
+    reconciliations: []
+  }, {
+    recentNotes: [
+      'Ada follows the only unexplored public continuation.',
+      'Ada waits at the choice until the drawing has finished crossing between them.'
+    ]
+  });
+
+  assert.equal(memory.version, RENDEZVOUS_MEMORY_VERSION);
+  assert.deepEqual(memory.ownObservations.map(item => item.description), [
+    'A stone facade and two mature trees.'
+  ]);
+});
+
 test('memory revision records sourced evidence and caps unsupported confidence', () => {
   let memory = createAgentMemory();
   memory = applyMemoryRevision(memory, {
@@ -304,4 +331,29 @@ test('pano-sourced observations discard communication imagery while retaining th
   assert.equal(memory.ownObservations[0].description, 'I see parked vans and storefronts.');
   assert.equal(memory.ownObservations[1].description, 'Trees line the sidewalk');
   assert.doesNotMatch(JSON.stringify(memory.ownObservations), /arrow|shared cue|newest sheet/i);
+});
+
+test('normalization removes synthetic controller-status recollections from an upgraded run', () => {
+  const memory = normalizeAgentMemory({
+    version: RENDEZVOUS_MEMORY_VERSION,
+    currentPlan: 'Keep searching.',
+    ownObservations: [{
+      turn: 12,
+      description: 'Legacy recollection, not yet reverified: Ada follows the only unexplored public continuation. Ada waits at the choice until the drawing has finished crossing between them.',
+      sourcePanoId: null
+    }, {
+      turn: 13,
+      description: 'A real remembered stone arcade.',
+      sourcePanoId: null
+    }],
+    receivedSheets: [],
+    sentMessages: [],
+    visualConventions: [],
+    partnerHypotheses: [],
+    reconciliations: []
+  });
+
+  assert.deepEqual(memory.ownObservations.map(item => item.description), [
+    'A real remembered stone arcade.'
+  ]);
 });

@@ -1161,6 +1161,13 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
     }
     const decodePrompt = `Inspect this wordless drawing without any knowledge of what its sender intended. Report what a recipient would actually see and most likely infer. Do not reward artistic quality or invent meaning from absent cues.
 
+Classify frame of reference by communicative role, not camera perspective:
+- "sender" means the image appears to report or reflect on what its author saw, chose, or did.
+- "recipient" means the image appears to ask or command the viewer to see, choose, or do something.
+- "shared" means the image visibly proposes a joint action or common relationship.
+- "unclear" means those roles cannot be distinguished.
+A figure seen from behind is not automatically recipient-framed. A completed trail, diary-like reflection, departure point, or other retrospective relationship may make it a sender report; an arrow or open route projected ahead toward the viewer's next action may make it recipient-framed.
+
 Return only JSON:
 {
   "literalContents": ["visible element and relationship"],
