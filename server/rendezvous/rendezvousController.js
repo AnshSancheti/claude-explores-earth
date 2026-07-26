@@ -29,6 +29,31 @@ import {
 } from './scratchpad.js';
 
 const AGENT_ORDER = ['ada', 'theo'];
+const RENDER_REVISION_MARKER = 'Authoritative rendering correction:';
+const RENDER_SOURCE_MARKER = 'Original sender-authored scene:';
+
+function composeDrawingRevisionPrompt(drawingPrompt, revisionPrompt, messageAction = 'unclear') {
+  const rawPrompt = String(drawingPrompt || '').trim();
+  const markedSource = rawPrompt.indexOf(RENDER_SOURCE_MARKER);
+  const sourcePrompt = (markedSource >= 0
+    ? rawPrompt.slice(markedSource + RENDER_SOURCE_MARKER.length)
+    : rawPrompt.split(/\s+(?:Revise the previous rendering|For the next rendering,)/i)[0]
+  ).trim();
+  const actionConstraint = messageAction === 'stillness'
+    ? 'The dominant action must be stillness: remove arrows, directional lines, motion trails, and route cues that read as movement; make stopping, waiting, anchoring, or uncertainty visually dominant.'
+    : messageAction === 'movement'
+      ? 'The dominant action must be movement: make the moving subject or progression visually dominant and subordinate barriers, static figures, and stopping cues.'
+      : messageAction === 'transition'
+        ? 'The dominant action must be a transition, with the before and after states both clearly visible.'
+        : 'Make the intended information delta visually dominant and unambiguous.';
+  const correction = String(revisionPrompt || '').trim()
+    || 'Correct the rejected image so a context-free recipient can read the intended information delta.';
+
+  return `${RENDER_REVISION_MARKER} ${correction} ${actionConstraint} These corrections override any conflicting visual instruction in the source scene. Preserve only scene details and landmarks that remain compatible with them.
+
+${RENDER_SOURCE_MARKER} ${sourcePrompt}`;
+}
+
 const AGENTS = Object.freeze({
   ada: {
     id: 'ada',
@@ -1485,9 +1510,11 @@ export class RendezvousController {
           : { accepted: true, assessment: 'Drawing review is not available in this model adapter.', revisionPrompt: '' };
         let renderAttempts = 1;
         if (!review.accepted) {
-          const revisionPrompt = review.revisionPrompt
-            ? `${pending.drawingPrompt} Revise the previous rendering as follows: ${review.revisionPrompt}`
-            : `${pending.drawingPrompt} Make the intended message more visually explicit and remove any readable text.`;
+          const revisionPrompt = composeDrawingRevisionPrompt(
+            pending.drawingPrompt,
+            review.revisionPrompt,
+            pending.messageAction
+          );
           generated = await this.imageModel.generate({
             drawingPrompt: revisionPrompt,
             groundedFeatures: pending.groundedFeatures
@@ -1511,9 +1538,11 @@ export class RendezvousController {
         if (!review.accepted) {
           const error = new Error(`Sender rejected the generated drawing: ${review.assessment}`);
           error.retryable = true;
-          error.nextDrawingPrompt = review.revisionPrompt
-            ? `${pending.drawingPrompt} For the next rendering, correct the rejected image as follows: ${review.revisionPrompt}`
-            : `${pending.drawingPrompt} For the next rendering, make the intended information delta and dominant action unmistakable without readable text.`;
+          error.nextDrawingPrompt = composeDrawingRevisionPrompt(
+            pending.drawingPrompt,
+            review.revisionPrompt,
+            pending.messageAction
+          );
           throw error;
         }
         if (this.state.runId !== runId) return null;

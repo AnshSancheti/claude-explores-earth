@@ -747,6 +747,11 @@ test('the sender reviews a generated drawing and one rejection produces a revise
 
     assert.equal(imageModel.calls.length, 2);
     assert.match(imageModel.calls[1].drawingPrompt, /Separate the landmarks/);
+    assert.match(imageModel.calls[1].drawingPrompt, /^Authoritative rendering correction:/);
+    assert.ok(
+      imageModel.calls[1].drawingPrompt.indexOf('Separate the landmarks') <
+      imageModel.calls[1].drawingPrompt.indexOf('Original sender-authored scene:')
+    );
     assert.equal(reviews.length, 2);
     assert.equal(controller.state.scratchpad.owner, 'theo');
     assert.equal(controller.state.scratchpad.currentMessage.id, 'reviewed-message');
@@ -791,6 +796,8 @@ test('sender revision feedback survives a durable retry and controller restart',
 
     assert.equal(first.state.scratchpad.pendingMessage.status, 'retrying');
     assert.match(first.state.scratchpad.pendingMessage.drawingPrompt, /Remove the large arrow/);
+    assert.match(first.state.scratchpad.pendingMessage.drawingPrompt, /^Authoritative rendering correction:/);
+    assert.doesNotMatch(first.state.scratchpad.pendingMessage.drawingPrompt, /For the next rendering/);
     first.state.scratchpad.pendingMessage.nextAttemptAt = new Date(0).toISOString();
     await first.saveState();
 

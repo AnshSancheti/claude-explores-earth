@@ -344,7 +344,8 @@ test('blind recipient action overrides a sender review biased by intent', async 
 
   assert.equal(review.accepted, false);
   assert.match(review.assessment, /movement.*stillness/);
-  assert.match(review.revisionPrompt, /dominant action read as stillness/);
+  assert.match(review.revisionPrompt, /Remove arrows, directional lines/);
+  assert.match(review.revisionPrompt, /stable anchor/);
   assert.equal(requests.length, 1);
 });
 

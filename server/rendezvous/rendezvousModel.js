@@ -631,10 +631,13 @@ Return only JSON:
       blindRead.dominantAction === 'movement'
     );
     if (actionConflict) {
+      const revisionPrompt = normalizedMessageAction === 'stillness'
+        ? 'Remove arrows, directional lines, motion trails, and route cues that imply travel. Make a stopped or waiting figure, a fixed landmark, or another stable anchor the largest and darkest focal element, using a balanced static composition.'
+        : 'Make the moving subject and its progression the largest and darkest focal element. Subordinate barriers, stationary figures, and balanced static composition so they cannot read as the main message.';
       return {
         accepted: false,
         assessment: `Blind recipient read the drawing as ${blindRead.dominantAction}, but the intended message is ${normalizedMessageAction}: ${blindRead.likelyMessage}`,
-        revisionPrompt: `Make the image's dominant action read as ${normalizedMessageAction}. Remove or subordinate visual cues that currently make it read as ${blindRead.dominantAction}.`,
+        revisionPrompt,
         blindRead
       };
     }
