@@ -84,6 +84,31 @@ function sanitizeEvidenceDelta(raw) {
   };
 }
 
+function validateCorroborationProvenance(
+  beliefUpdate,
+  { sheetSequence = null, groundedNewEvidence = [], informationNovelty = 'unclear' } = {}
+) {
+  if (beliefUpdate?.evidenceStatus !== 'new_corroboration') return beliefUpdate;
+  const currentSequence = Math.floor(Number(sheetSequence));
+  const citesCurrentSheet = Number.isFinite(currentSequence) &&
+    beliefUpdate.basisSequences.includes(currentSequence);
+  const hasGroundedNewEvidence = Array.isArray(groundedNewEvidence) &&
+    groundedNewEvidence.length > 0;
+  if (
+    citesCurrentSheet &&
+    hasGroundedNewEvidence &&
+    informationNovelty !== 'repeated'
+  ) {
+    return beliefUpdate;
+  }
+  return {
+    ...beliefUpdate,
+    evidenceStatus: !hasGroundedNewEvidence || informationNovelty === 'repeated'
+      ? 'repetition_only'
+      : 'unclear'
+  };
+}
+
 const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
   'local_observation',
   'own_action',
@@ -271,7 +296,7 @@ function unsupportedPartnerHypothesisGoalTerm(
   const terms = unsupportedPartnerHypothesisTerms(privateMemory, candidateUpdate);
   if (terms.length === 0) return '';
   const goalLanguage = /\b(?:approach|destination|ending?|goal|head(?:ing)?|progress(?:ion)?|reach|target|toward|towards|waypoint)\b/i;
-  const uncertainty = /\b(?:uncertain|unresolved|possibly|possible|hypothesis|hypothetical|question|whether|maybe|might|could|perhaps|test|verify|clarify|investigate|explore)\b/i;
+  const uncertainty = /\b(?:uncertain|unresolved|possibly|possible|hypothesis|hypothetical|question|whether|maybe|may|might|could|perhaps|test|testable|provisional|verify|clarify|investigate|explore)\b/i;
   for (const statement of descriptions
     .flatMap(value => cleanString(value, 2400).split(/[.!?;]+/))) {
     if (!goalLanguage.test(statement) || uncertainty.test(statement)) continue;
@@ -541,7 +566,7 @@ Avoid indoor shops, private interiors, dead ends, and accidental immediate loops
 
 This call chooses your action, reconciles the clean first-look reading with history, and revises your private plan. You and your friend are peers searching independently; a drawing supplies evidence, questions, and hypotheses, never permission that must arrive before you can act. Remove any leader/follower or "await their cue" premise inherited from memory when revising your plan. The newest sheet's literal contents are the highest-priority evidence for your friend's current visible action. History may explain a recurring motif, but it cannot turn a currently still drawing into evidence that the sender is presently moving. "New evidence" means information directly visible in the newest first-look reading that is absent from earlier sheets; recurring imagery and history-only beliefs belong under repeated evidence even when freshly rendered. Do not turn repetition into confirmation or assume a sender-framed route is an instruction for you.
 
-For every convention or partner hypothesis update, classify its evidence. "new_corroboration" requires an independently informative cue that supports the proposed meaning, not merely another appearance of the same symbol or your own motif echoed back to you. Use "repetition_only" when a motif recurs without new support for its meaning, "weakened" when new evidence conflicts with it or meaningful movement fails a concrete prediction, and "unclear" when the relationship cannot be assessed. A convention can remain useful visual vocabulary while the hypothesis about what it means weakens. Revise your current plan accordingly: an uncorroborated symbol may be tested as a hypothesis, but not treated as a known shared physical destination.
+For every convention or partner hypothesis update, classify its evidence. "new_corroboration" requires an independently informative cue that supports the proposed meaning, not merely another appearance of the same symbol or your own motif echoed back to you. A new-corroboration update must cite the current sheet sequence in basisSequences and identify grounded new evidence from that sheet. Use "repetition_only" when a motif recurs without new support for its meaning, "weakened" when new evidence conflicts with it or meaningful movement fails a concrete prediction, and "unclear" when the relationship cannot be assessed. A convention can remain useful visual vocabulary while the hypothesis about what it means weakens. Revise your current plan accordingly: an uncorroborated symbol may be tested as a hypothesis, but not treated as a known shared physical destination.
 
 If fresh environmental evidence supports only your local movement, it does not corroborate an inherited claim about what a recurring symbol means. When your revised plan mentions a distinctive motif from an uncorroborated partner hypothesis, explicitly frame its meaning as uncertain, questioned, or being tested rather than as the endpoint of movement.
 
@@ -685,8 +710,19 @@ ${recentFieldNotes}`
             .map(id => currentVisibleEvidence.find(item => item.id === id)?.description)
             .filter(Boolean);
           const evidenceDelta = sanitizeEvidenceDelta(rawReconciliation);
-          const conventionUpdate = cleanBeliefUpdate(rawReconciliation?.conventionUpdate);
-          const partnerHypothesis = cleanBeliefUpdate(rawReconciliation?.partnerHypothesis);
+          const corroborationContext = {
+            sheetSequence: sheetMessage.sequence,
+            groundedNewEvidence,
+            informationNovelty
+          };
+          const conventionUpdate = validateCorroborationProvenance(
+            cleanBeliefUpdate(rawReconciliation?.conventionUpdate),
+            corroborationContext
+          );
+          const partnerHypothesis = validateCorroborationProvenance(
+            cleanBeliefUpdate(rawReconciliation?.partnerHypothesis),
+            corroborationContext
+          );
           const normalizedPlanAssessment = (
             informationNovelty === 'repeated' &&
             groundedNewEvidence.length === 0 &&

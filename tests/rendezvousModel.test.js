@@ -189,6 +189,7 @@ test('a branch separates interpretation, route choice, and visual communication'
     'a bright circle between two repeated arch forms'
   ]);
   assert.match(decision.memoryUpdate.partnerHypothesis.description, /Washington Square/);
+  assert.equal(decision.memoryUpdate.partnerHypothesis.evidenceStatus, 'new_corroboration');
   assert.match(decision.reasoning, /Theo may be describing/);
   assert.match(decision.drawingIntent, /intend to investigate/);
   assert.equal(decision.contributionKind, 'local_observation');
@@ -582,6 +583,37 @@ test('repeated-only imagery cannot count as fresh support for the current plan',
   assert.equal(decision.fallbackCause, null);
   assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
   assert.equal(decision.memoryUpdate.partnerHypothesis.evidenceStatus, 'repetition_only');
+});
+
+test('new corroboration must cite the current sheet in its provenance', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route: routeResponse({
+        sheetReconciliation: {
+          ...routeResponse().sheetReconciliation,
+          informationNovelty: 'mixed',
+          newEvidenceIds: ['visible:0'],
+          partnerHypothesis: {
+            key: 'star-destination',
+            description: 'The star may identify a physical destination.',
+            confidence: 0.6,
+            basisSequences: [5],
+            evidenceStatus: 'new_corroboration'
+          }
+        },
+        memoryUpdate: {
+          currentPlan: 'Continue north while testing whether the star has any physical meaning.'
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.memoryUpdate.partnerHypothesis.evidenceStatus, 'unclear');
+  assert.deepEqual(decision.memoryUpdate.partnerHypothesis.basisSequences, [5]);
 });
 
 test('route planning retries when the selected option contradicts its intended heading', async () => {
