@@ -214,6 +214,8 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(serialized, /Neither friend leads or grants the other permission/);
   assert.match(serialized, /drawings? supplies evidence, questions, and hypotheses, never permission/i);
   assert.match(serialized, /Place names may exist in your private reasoning/);
+  assert.match(serialized, /conceptually blank page/);
+  assert.match(serialized, /continuity alone does not justify copying a multi-panel itinerary/);
   assert.match(serialized, /strongest visual cue.*messageAction/);
   assert.match(serialized, /wordless drawing/);
   assert.match(serialized, /no readable text/);
@@ -513,6 +515,8 @@ test('sender reviews the actual generated image and can request a visual revisio
   assert.match(requests[0].messages[0].content, /without any knowledge/);
   assert.equal(requests[0].messages[1].content[0].type, 'image_url');
   assert.match(requests[1].messages[0].content, /independent recipient/);
+  assert.match(requests[1].messages[0].content, /blind reading primarily describes an inherited route/);
+  assert.match(requests[1].messages[0].content, /delta must read as the image's primary message/);
   assert.match(requests[1].messages[1].content[0].text, /nearer arches now match/);
   assert.match(requests[1].messages[1].content[0].text, /deliberately continue/);
   assert.match(requests[1].messages[1].content[0].text, /context-free reading/);
