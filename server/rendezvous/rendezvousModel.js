@@ -299,9 +299,15 @@ export function isCueDependentSearchPlan(...descriptions) {
     /\b(?:do not|don't|never|not|without)\b[^.!;]{0,120}/gi,
     ' '
   );
+  const waitLanguage = /\b(?:await|hold|pause|remain|stay|wait|waiting)\w*\b/i;
+  const interpretiveDependency =
+    /\b(?:ada|theo|friend|partner|drawing|sheet)\b[^.!;]{0,120}\b(?:clarif|confirm|mean|signal|show)\w*\b/i.test(positiveText) ||
+    /\b(?:clarif|confirm|learn|see|understand)\w*\b[^.!;]{0,120}\b(?:ada|theo|friend|partner)\b[^.!;]{0,80}\b(?:intend|mean|signal|want)\w*\b/i.test(positiveText) ||
+    /\b(?:scene|situation)\b[^.!;]{0,80}\bclarif\w*\b[^.!;]{0,120}\b(?:ada|theo|friend|partner)\b/i.test(positiveText);
+  if (waitLanguage.test(positiveText) && interpretiveDependency) return true;
   const partnerCuePattern = /\b(?:authorization|cue|permission|signal from (?:ada|theo|my friend|the friend|my partner|the partner)|(?:ada|theo|my friend|the friend|my partner|the partner)(?:'s|’s)? (?:authorization|cue|permission|signal)|(?:ada|theo|my friend|the friend|my partner|the partner) (?:to )?(?:authoriz\w*|cu\w*|instruct\w*|signal\w*))\b/i;
   if (!partnerCuePattern.test(positiveText)) return false;
-  if (/\b(?:await|hold|pause|remain|stay|wait)\w*\b/i.test(positiveText)) return true;
+  if (waitLanguage.test(positiveText)) return true;
   return /\b(?:advance|move|proceed|resume)\w*\b[^.!;]{0,120}\b(?:after|once|until|when)\b/i
     .test(positiveText);
 }

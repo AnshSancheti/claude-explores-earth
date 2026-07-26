@@ -1677,6 +1677,12 @@ test('cue-dependency detection ignores explicit rejection of permission seeking'
     'Maintain the tree anchor; advance east when Ada signals readiness.'
   ), true);
   assert.equal(isCueDependentSearchPlan(
+    'Waiting preserves flexibility while the scene clarifies whether Ada is signaling a meet point.'
+  ), true);
+  assert.equal(isCueDependentSearchPlan(
+    'I remain here until I understand what Theo means by the newest drawing.'
+  ), true);
+  assert.equal(isCueDependentSearchPlan(
     'I do not wait for Ada to cue me; I move using my own local evidence.'
   ), false);
   assert.equal(isCueDependentSearchPlan(
