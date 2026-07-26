@@ -416,13 +416,15 @@ function assertsUncitedSharedDestination(...descriptions) {
 }
 
 const BELIEF_TERM_STOPWORDS = new Set([
-  'about', 'across', 'ada', 'after', 'along', 'anchor', 'appears', 'area', 'arrow', 'before', 'belief',
+  'about', 'above', 'across', 'ada', 'after', 'along', 'anchor', 'appears', 'area', 'around', 'arrow',
+  'before', 'behind', 'belief', 'below', 'beside', 'between', 'beyond',
   'central', 'choose', 'chosen', 'continue', 'continued', 'continuing', 'convention', 'current', 'decision',
   'destination', 'diagonal', 'directional', 'distant', 'district', 'during', 'each', 'ending', 'endpoint', 'exact',
   'fixed', 'friend', 'from', 'goal', 'grid',
   'guiding', 'hand', 'inland', 'intend', 'intends', 'intention', 'interpretation',
-  'joint', 'landmark', 'latest', 'local', 'mark', 'marks', 'meaning', 'meeting', 'move', 'moves',
-  'movement', 'newest', 'next', 'only', 'partner', 'path', 'physical', 'place', 'point', 'possible',
+  'inside', 'joint', 'landmark', 'latest', 'local', 'mark', 'marks', 'meaning', 'meeting', 'move', 'moves',
+  'movement', 'near', 'newest', 'next', 'only', 'outside', 'partner', 'past', 'path', 'physical',
+  'place', 'point', 'possible',
   'progression', 'public', 'recurring', 'reorientation', 'rendezvous', 'right', 'right-hand', 'route',
   'seek', 'seeking', 'selected', 'sender', 'shared', 'should', 'signaling', 'specifying', 'storefront',
   'street', 'symbol', 'target', 'than', 'then', 'theo', 'through', 'toward', 'under', 'until', 'using',

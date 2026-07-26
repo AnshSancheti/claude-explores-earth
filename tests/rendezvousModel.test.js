@@ -1713,7 +1713,7 @@ test('connective planning words are not treated as current-sheet motifs', async 
     ...input().privateMemory,
     partnerHypotheses: [{
       key: 'fork-coordination',
-      description: 'Continue along a public route while seeking a joint decision from a directional cue at the fork.',
+      description: 'Continue around a public route obstacle while seeking a joint decision from a directional cue at the fork.',
       confidence: 0.1,
       basisSequences: [5],
       evidenceStatus: 'unclear'
@@ -1725,7 +1725,7 @@ test('connective planning words are not treated as current-sheet motifs', async 
         routeAttempts += 1;
         return routeResponse({
           memoryUpdate: {
-            currentPlan: 'The newest sheet remains inconclusive while its directional quality remains uncertain and my local plan stays anchored to visible arches.'
+            currentPlan: 'The newest sheet remains inconclusive while its directional quality remains uncertain around my local plan anchored to visible arches.'
           }
         });
       }
