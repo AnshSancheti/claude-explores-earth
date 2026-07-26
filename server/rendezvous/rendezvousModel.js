@@ -107,7 +107,19 @@ export function isCueDependentSearchPlan(...descriptions) {
     .test(positiveText);
 }
 
-function buildContributionEvidence({ routeDecision, perception, privateMemory }) {
+function describeChosenAction(routeDecision, options) {
+  if (routeDecision.action === 'wait') return 'I chose to wait at this branch.';
+  const selectedOption = Array.isArray(options) ? options[routeDecision.selectedIndex] : null;
+  const direction = Number.isFinite(Number(selectedOption?.heading))
+    ? compassDirection(selectedOption.heading)
+    : '';
+  if (routeDecision.action === 'retrace') {
+    return `I chose to retrace${direction ? ` ${direction}` : ''} along a public route I had already walked.`;
+  }
+  return `I chose to move${direction ? ` ${direction}` : ''} along the selected public route.`;
+}
+
+function buildContributionEvidence({ routeDecision, perception, privateMemory, options }) {
   const catalog = [];
   const add = (prefix, values) => {
     cleanStringList(values, { limit: 6, maxLength: 220 }).forEach((description, index) => {
@@ -115,9 +127,7 @@ function buildContributionEvidence({ routeDecision, perception, privateMemory })
     });
   };
   add('local', routeDecision.observedFeatures.filter(isConcreteLocalEvidence));
-  add('action', [
-    `I chose to ${routeDecision.action}${routeDecision.action === 'wait' ? ' at this branch' : ' along the selected public route'}.`
-  ]);
+  add('action', [describeChosenAction(routeDecision, options)]);
   add('received', perception.literalContents);
   add('question', perception.evidenceDelta.unresolvedQuestions);
   add('contradiction', perception.evidenceDelta.contradictions);
@@ -512,6 +522,16 @@ ${recentFieldNotes}`
           throw new Error('Rendezvous model made independent movement contingent on a partner cue');
         }
         routeDecision = sanitizeRendezvousDecision(parsed, options, { allowWait });
+        if (
+          routeDecision.action !== 'wait' &&
+          routeDecision.intendedHeading !== null &&
+          headingDelta(
+            options[routeDecision.selectedIndex]?.heading,
+            routeDecision.intendedHeading
+          ) > 45
+        ) {
+          throw new Error('Rendezvous selected route contradicts its intended heading');
+        }
         if (!routeDecision.observation || routeDecision.observedFeatures.length === 0) {
           throw new Error('Rendezvous route decision omitted its current observation');
         }
@@ -583,7 +603,8 @@ ${recentFieldNotes}`
     const contributionEvidence = buildContributionEvidence({
       routeDecision,
       perception,
-      privateMemory: actionMemory
+      privateMemory: actionMemory,
+      options
     });
     const drawingSystemPrompt = `You are ${agent.name}. You have reached a real choice while trying to find ${partnerName}, and you currently hold the one physical sheet you pass back and forth.
 

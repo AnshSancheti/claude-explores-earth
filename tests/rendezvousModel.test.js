@@ -259,6 +259,37 @@ test('drawing planner normalizes a mismatched contribution kind to its cited evi
   ).length, 1);
 });
 
+test('own-action evidence uses the executed option bearing without leaking its route label', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      drawing: drawingResponse({
+        contributionKind: 'own_action',
+        contributionEvidenceId: 'action:0',
+        drawingIntent: 'Show my chosen movement as the primary message.',
+        drawingPrompt: 'Draw one figure moving north from a fixed tree.',
+        groundedFeatureEvidenceIds: ['action:0']
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+  const drawingRequest = requests.find(request =>
+    /currently hold the one physical sheet/.test(request.messages[0].content)
+  );
+  const catalogText = drawingRequest.messages[1].content[0].text
+    .split('Available outbound evidence catalog:\n')[1];
+
+  assert.equal(decision.contributionKind, 'own_action');
+  assert.equal(
+    decision.contributionSummary,
+    'My current chosen action: I chose to move north along the selected public route.'
+  );
+  assert.match(catalogText, /move north/);
+  assert.doesNotMatch(catalogText, /north route/);
+});
+
 test('drawing planner still rejects an unknown contribution evidence ID', async () => {
   const requests = [];
   const service = new RendezvousModelService({
@@ -345,6 +376,33 @@ test('route planning rejects partner-cue dependency but preserves evidence-based
   assert.equal(decision.action, 'wait');
   assert.match(decision.reasoning, /easy to recognize/);
   assert.doesNotMatch(decision.memoryUpdate.currentPlan, /Theo|cue|signal/);
+});
+
+test('route planning retries when the selected option contradicts its intended heading', async () => {
+  const requests = [];
+  let routeAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      route() {
+        routeAttempts += 1;
+        return routeAttempts === 1
+          ? routeResponse({
+              selectedIndex: 0,
+              intendedHeading: 90,
+              reasoning: 'I intend to move east.',
+              memoryUpdate: { currentPlan: 'Move east using my local evidence.' }
+            })
+          : routeResponse();
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.selectedIndex, 1);
+  assert.equal(decision.intendedHeading, 0);
 });
 
 test('cue-dependency detection ignores explicit rejection of permission seeking', () => {
