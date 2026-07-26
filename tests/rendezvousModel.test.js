@@ -522,6 +522,91 @@ test('own-action evidence uses the executed option bearing without leaking its r
   assert.doesNotMatch(catalogText, /north route/);
 });
 
+test('a generic walking-away composition cannot present a recent movement proposition as fresh', async () => {
+  let drawingAttempts = 0;
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      drawing(request) {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'own_action',
+            contributionEvidenceId: 'action:0',
+            drawingIntent: 'Show a person walking away along my chosen public route.',
+            drawingPrompt: 'Draw a person walking forward down a tree-lined sidewalk with a path ahead.',
+            groundedFeatureEvidenceIds: ['action:0']
+          });
+        }
+        assert.match(
+          request.messages[1].content[0].text,
+          /AUTHORITATIVE PLANNING CORRECTION.*repeats a recent visual proposition/
+        );
+        return drawingResponse({
+          contributionKind: 'question',
+          contributionEvidenceId: 'question:0',
+          drawingIntent: 'Ask whether the recurring circle identifies a place or only movement.',
+          messageAction: 'unclear',
+          drawingPrompt: 'Draw a large uncertain circle suspended between two visibly different possibilities.',
+          groundedFeatureEvidenceIds: ['question:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      sentMessages: [{
+        sequence: 5,
+        contributionKind: 'own_action',
+        contributionSummary: 'My current chosen action: I chose to move northeast along the selected public route.',
+        intent: 'Show a person walking away along a tree-lined public route with footprints behind.'
+      }]
+    }
+  }));
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'question');
+  assert.equal(decision.contributionEvidenceId, 'question:0');
+  assert.match(decision.drawingPrompt, /uncertain circle/);
+});
+
+test('an intentional repeated proposition remains available through deliberate repetition', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing: drawingResponse({
+        contributionKind: 'deliberate_repetition',
+        contributionEvidenceId: 'prior_sent:0',
+        drawingIntent: 'Repeat the prior walking figure because the unchanged action is itself useful.',
+        continuityReason: 'The unchanged movement report is the information I intend to send.',
+        drawingPrompt: 'Draw the same walking figure and completed footprints as a deliberate echo.',
+        groundedFeatureEvidenceIds: ['prior_sent:0']
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      sentMessages: [{
+        sequence: 5,
+        contributionKind: 'own_action',
+        contributionSummary: 'My current chosen action: I chose to move northeast along the selected public route.',
+        informationDelta: 'My current chosen action: I chose to move northeast along the selected public route.',
+        intent: 'Show a person walking away along a tree-lined public route with footprints behind.'
+      }]
+    }
+  }));
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'deliberate_repetition');
+  assert.match(decision.continuityReason, /unchanged movement report/);
+});
+
 test('planner-authored fields cannot reintroduce private place names for an own-action reply', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {

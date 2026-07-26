@@ -557,6 +557,26 @@ function locallyGroundRouteLanguage(routeDecision, partnerName) {
   };
 }
 
+function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
+  if (candidateDrawingPlan?.contributionKind !== 'own_action') return false;
+  const current = cleanString(
+    `${candidateDrawingPlan?.drawingIntent || ''} ${candidateDrawingPlan?.drawingPrompt || ''}`,
+    3000
+  );
+  if (!current) return false;
+  return (privateMemory?.sentMessages || []).slice(-4)
+    .filter(message => message?.contributionKind === 'own_action')
+    .some(message => {
+      const previous = cleanString(
+        `${message?.intent || ''} ${message?.contributionSummary || ''}`,
+        1800
+      );
+      if (!previous) return false;
+      return visualDescriptionSimilarity(current, previous) >= 0.55 ||
+        (genericMovementProposition(current) && genericMovementProposition(previous));
+    });
+}
+
 function fallbackDecision(options, visitedPanos, cause) {
   return {
     action: 'wait',
@@ -1047,6 +1067,8 @@ Decide what wordless drawing would be most useful to send now. You may communica
 
 First identify your outbound contribution: what this reply contributes from your own observation, chosen action, question, correction, acknowledgement, or deliberate repetition. Cite exactly one evidence ID from the supplied catalog. The cited evidence becomes the authoritative information delta; do not restate or enlarge it as a separate claim. Compose each handoff from a conceptually blank page. Make the cited contribution the largest, darkest, or otherwise unmistakable primary subject; prior visual language is optional supporting vocabulary, not a layout template. When the contribution is one simple observation or action, prefer one coherent composition. Use multiple panels only when the cited contribution itself needs a temporal, spatial, or comparative relationship; continuity alone does not justify copying a multi-panel itinerary. A received-sheet or prior-sent motif may be retained as context, acknowledgement, or deliberate repetition, but never relabel it as a new local observation. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and the cited evidence is visually dominant over that context. Repetition does not make a belief more certain. If you are asking your friend to clarify something, make the uncertainty, choice, or missing relationship visibly legible instead of drawing a confident route. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
 
+A changed compass bearing does not by itself make another generic walking-away street scene a new visual proposition. If you intentionally want to repeat a recent visual proposition, cite a prior_sent evidence ID as deliberate_repetition and explain why the repetition is useful now. Otherwise choose a genuinely different grounded contribution or composition. This requirement does not prescribe what you should say; it keeps your chosen message honest about whether it adds information.
+
 A recurring motif may remain part of your visual language without becoming a factual place claim. Unless the cited contribution itself grounds a correction or question about it, do not present an inherited symbol, route, district, target, or waypoint as a known shared destination. You may retain one as a subordinate uncertain hypothesis, deliberately repeat it, transform it, question it, or stop using it. Do not silently promote it into the goal of the search.
 
 Choose the image's dominant action honestly. The strongest visual cue in your drawing prompt must agree with "messageAction". If the message is stillness, movement or future-route cues may be present but must remain visibly subordinate to stopping, waiting, anchoring, or uncertainty. If the message is movement, do not let barriers or static figures dominate it. A transition may visibly contain both.
@@ -1217,6 +1239,11 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         ) {
           throw new Error('Rendezvous repeated contribution omitted why repeating it is useful now');
         }
+        if (repeatsRecentOutboundProposition(candidateDrawingPlan, actionMemory)) {
+          throw new Error(
+            'Rendezvous drawing planner presented a repeated visual proposition as a fresh contribution'
+          );
+        }
         if (
           !['acknowledgement', 'deliberate_repetition'].includes(candidateDrawingPlan.contributionKind) &&
           usesMultiPanelTemplate(...perception.literalContents, perception.sheetInterpretation) &&
@@ -1265,9 +1292,11 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         this.logger.warn?.(`Rendezvous drawing plan attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
         drawingRetryFeedback = /multi-panel template/i.test(error.message)
           ? 'Start from a blank page and use one coherent composition centered on the cited contribution. You may retain one small recurring symbol, but do not use panels, a triptych, or the received sheet layout.'
-          : (/(?:uncited motif|unsupported partner hypothesis)/i.test(error.message)
+          : (/repeated visual proposition/i.test(error.message)
+              ? 'The proposed composition repeats a recent visual proposition. Choose a genuinely different grounded contribution or composition. If repetition itself is what you intend to communicate, cite an exact prior_sent evidence ID as deliberate_repetition and explain why repeating it is useful now.'
+              : (/(?:uncited motif|unsupported partner hypothesis)/i.test(error.message)
               ? 'Keep the cited contribution primary. Do not describe any inherited symbol, route, target, waypoint, district, or place as a known shared destination or otherwise promote an unsupported partner hypothesis into a movement goal. If you retain one, make it subordinate and explicitly uncertain, questioned, tested, transformed, or deliberately repeated.'
-              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.');
+              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.'));
         tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
       }
     }
