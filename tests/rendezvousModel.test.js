@@ -575,6 +575,34 @@ test('a new-sheet hint cannot causally justify continuing a route', async () => 
   assert.doesNotMatch(decision.reasoning, /sheet hints/i);
 });
 
+test('a sheet report cannot softly align the recipient with a generic route', async () => {
+  const copiedReasoning = 'Current local plan prioritizes continuing along a known public corridor to preserve momentum. The newest sheet emphasizes a solitary tree motif, which aligns with a broad, tree-lined urban stretch rather than a fixed endpoint. Moving keeps us oriented in a shared, generic forward path.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'The sender reports a solitary tree beside a broad avenue.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /aligns with/i);
+});
+
 test('a sender report can still support an explicit interception inference', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {

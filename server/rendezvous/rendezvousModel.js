@@ -397,7 +397,7 @@ const BELIEF_TERM_STOPWORDS = new Set([
   'partner', 'path', 'physical', 'place', 'point', 'possible', 'progression',
   'recurring', 'reorientation', 'right', 'right-hand', 'route', 'sender', 'shared',
   'rendezvous', 'signaling', 'specifying', 'storefront', 'street', 'symbol',
-  'target', 'theo', 'toward', 'using', 'visual', 'waypoint', 'with'
+  'target', 'theo', 'toward', 'using', 'visual', 'waypoint', 'with', 'without'
 ]);
 
 function unsupportedPartnerHypothesisTerms(privateMemory, candidateUpdate = null) {
@@ -551,6 +551,8 @@ function copiesSheetRoute(...descriptions) {
       new RegExp(`\\b${cue}\\b[^.!;]{0,120}\\b(?:reinforce|suggest|tell|direct|ask|imply)\\w*\\b[^.!;]{0,100}\\b(?:continue|follow|move|proceed|advance|head)\\w*\\b`, 'i')
         .test(statement) ||
       /\b(?:latest|newest|new)\s+sheet\b[^.!;]{0,160}\b(?:align|favor|hint|point|reinforce|support|suggest)\w*\b[^.!;]{0,100}\b(?:advanc|continu|head|move|proceed)\w*\b/i
+        .test(statement) ||
+      /\b(?:latest|newest|new)\s+sheet\b[^.!;]{0,160}\b(?:align|correspond|fit|match)\w*\s+with\b[^.!;]{0,100}\b(?:continuation|corridor|direction|forward|path|route|street|stretch|way)\b/i
         .test(statement) ||
       /\b(?:drawing|sheet)s?\b[^.!;]{0,100}\b(?:cue|frame|motif|path|route)s?\b[^.!;]{0,100}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
         .test(statement) ||
