@@ -89,6 +89,8 @@ function routeResponse(overrides = {}) {
     observation: 'Repeated stone arches line the northern opening.',
     observedFeatures: ['three repeated stone arches', 'a suspended traffic light beside them'],
     sheetReconciliation: {
+      currentSenderAction: 'movement',
+      currentSenderActionBasis: 'A small figure visibly approaches the nearer arches.',
       informationNovelty: 'mixed',
       newEvidence: ['the circle is now placed between arches'],
       repeatedEvidence: ['the arch motif appeared before'],
@@ -168,6 +170,8 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.equal(decision.selectedIndex, 1);
   assert.match(decision.sheetInterpretation, /recognizable arcade/);
   assert.equal(decision.sheetPerception.frameOfReference, 'sender');
+  assert.equal(decision.sheetPerception.currentSenderAction, 'movement');
+  assert.match(decision.sheetPerception.currentSenderActionBasis, /approaches/);
   assert.equal(decision.sheetPerception.informationNovelty, 'mixed');
   assert.deepEqual(decision.reconciliation.newEvidence, ['the circle is now placed between arches']);
   assert.match(decision.memoryUpdate.partnerHypothesis.description, /Washington Square/);
@@ -182,6 +186,7 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(serialized, /intended movement/);
   assert.match(serialized, /frame of reference/);
   assert.match(serialized, /information delta/);
+  assert.match(serialized, /highest-priority evidence.*current visible action/);
   assert.match(serialized, /strongest visual cue.*messageAction/);
   assert.match(serialized, /wordless drawing/);
   assert.match(serialized, /no readable text/);

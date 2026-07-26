@@ -315,7 +315,7 @@ You are at a genuine branch. Reconcile your current surroundings, private memory
 ${actionGuidance}
 Avoid indoor shops, private interiors, dead ends, and accidental immediate loops. Google headings are compass bearings clockwise from north.
 
-This call chooses your action, reconciles the clean first-look reading with history, and revises your private plan. "New evidence" means information in the newest first-look reading that is absent from earlier sheets; recurring imagery belongs under repeated evidence even when freshly rendered. Do not turn repetition into confirmation or assume a sender-framed route is an instruction for you. A separate call will let you decide what to draw. Explain your actual thinking in first person, including how the drawing affected you when relevant. Do not claim certainty that the evidence does not support.
+This call chooses your action, reconciles the clean first-look reading with history, and revises your private plan. The newest sheet's literal contents are the highest-priority evidence for your friend's current visible action. History may explain a recurring motif, but it cannot turn a currently still drawing into evidence that the sender is presently moving. "New evidence" means information directly visible in the newest first-look reading that is absent from earlier sheets; recurring imagery and history-only beliefs belong under repeated evidence even when freshly rendered. Do not turn repetition into confirmation or assume a sender-framed route is an instruction for you. A separate call will let you decide what to draw. Explain your actual thinking in first person, including how the drawing affected you when relevant. Do not claim certainty that the evidence does not support.
 
 Return only JSON:
 {
@@ -327,6 +327,8 @@ Return only JSON:
   "observation": "a grounded description of what you currently notice and want to remember",
   "observedFeatures": ["stable visible feature that may be useful to remember or draw"],
   "sheetReconciliation": {
+    "currentSenderAction": "movement" | "stillness" | "transition" | "unclear",
+    "currentSenderActionBasis": "specific literal cue in the newest sheet, or why it remains unclear",
     "informationNovelty": "new" | "mixed" | "repeated" | "unclear",
     "newEvidence": [],
     "repeatedEvidence": [],
@@ -405,13 +407,20 @@ ${recentFieldNotes}`
         }
         if (sheetMessage) {
           const rawReconciliation = parsed?.sheetReconciliation;
+          const currentSenderAction = ['movement', 'stillness', 'transition', 'unclear']
+            .includes(rawReconciliation?.currentSenderAction)
+            ? rawReconciliation.currentSenderAction
+            : null;
+          const currentSenderActionBasis = cleanString(rawReconciliation?.currentSenderActionBasis, 400);
           const informationNovelty = ['new', 'mixed', 'repeated', 'unclear'].includes(rawReconciliation?.informationNovelty)
             ? rawReconciliation.informationNovelty
             : null;
-          if (!informationNovelty) {
+          if (!informationNovelty || !currentSenderAction || !currentSenderActionBasis) {
             throw new Error('Rendezvous route decision omitted its sheet reconciliation');
           }
           routeReconciliation = {
+            currentSenderAction,
+            currentSenderActionBasis,
             informationNovelty,
             evidenceDelta: sanitizeEvidenceDelta(rawReconciliation),
             conventionUpdate: cleanBeliefUpdate(rawReconciliation?.conventionUpdate),
@@ -439,6 +448,8 @@ ${recentFieldNotes}`
     }
     perception = {
       ...perception,
+      currentSenderAction: routeReconciliation.currentSenderAction,
+      currentSenderActionBasis: routeReconciliation.currentSenderActionBasis,
       informationNovelty: routeReconciliation.informationNovelty,
       evidenceDelta: routeReconciliation.evidenceDelta,
       conventionUpdate: routeReconciliation.conventionUpdate,
@@ -449,7 +460,7 @@ ${recentFieldNotes}`
 
 Decide what wordless drawing would be most useful to send now. You may communicate anything you genuinely believe could help you find each other: what you see, a remembered place, uncertainty, a correction, intended movement, a request, relative spatial relationships, or an invented visual convention. You are not limited to an observational postcard and you may use arrows, diagrams, symbols, maps, perspective, or figurative imagery when you choose.
 
-First identify the information delta: the belief, observation, question, correction, or intentional repetition that makes this message different from the sheets already exchanged. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and your information delta names what the recipient can actually see as different. Repetition does not make a belief more certain. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
+First identify the information delta: the belief, observation, question, correction, or intentional repetition that makes this message different from the sheets already exchanged. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and your information delta names what the recipient can actually see as different. Repetition does not make a belief more certain. If you are asking your friend to clarify something, make the uncertainty, choice, or missing relationship visibly legible instead of drawing a confident route. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
 
 Choose the image's dominant action honestly. The strongest visual cue in your drawing prompt must agree with "messageAction". If the message is stillness, movement or future-route cues may be present but must remain visibly subordinate to stopping, waiting, anchoring, or uncertainty. If the message is movement, do not let barriers or static figures dominate it. A transition may visibly contain both.
 
