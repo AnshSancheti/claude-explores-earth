@@ -100,9 +100,11 @@ export function isCueDependentSearchPlan(...descriptions) {
     /\b(?:do not|don't|never|not|without)\b[^.!;]{0,120}/gi,
     ' '
   );
-  return /\b(?:await|hold|pause|remain|stay|wait)\w*\b/i.test(positiveText)
-    && /\b(?:authorization|cue|permission|signal from (?:ada|theo|my friend|the friend|my partner|the partner)|(?:ada|theo|my friend|the friend|my partner|the partner)(?:'s)? (?:authorization|cue|permission|signal)|(?:ada|theo|my friend|the friend|my partner|the partner) to (?:authorize|cue|instruct|signal))\b/i
-      .test(positiveText);
+  const partnerCuePattern = /\b(?:authorization|cue|permission|signal from (?:ada|theo|my friend|the friend|my partner|the partner)|(?:ada|theo|my friend|the friend|my partner|the partner)(?:'s|’s)? (?:authorization|cue|permission|signal)|(?:ada|theo|my friend|the friend|my partner|the partner) (?:to )?(?:authoriz\w*|cu\w*|instruct\w*|signal\w*))\b/i;
+  if (!partnerCuePattern.test(positiveText)) return false;
+  if (/\b(?:await|hold|pause|remain|stay|wait)\w*\b/i.test(positiveText)) return true;
+  return /\b(?:advance|move|proceed|resume)\w*\b[^.!;]{0,120}\b(?:after|once|until|when)\b/i
+    .test(positiveText);
 }
 
 function buildContributionEvidence({ routeDecision, perception, privateMemory }) {
