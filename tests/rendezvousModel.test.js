@@ -1464,6 +1464,34 @@ test('newest evidence cannot softly point to following a depicted urban axis', a
   assert.doesNotMatch(decision.reasoning, /newest evidence points|vanishing point/i);
 });
 
+test('newest private evidence cannot quietly direct movement along an axis', async () => {
+  const copiedReasoning = 'Ada has been following the unseen public continuation and should avoid copying a drawn route as destination. The newest private evidence points to continuing along a broad urban axis that remains unexplored, and option 1 offers a fresh, plausible northeast progression consistent with a wide city street canyon and ongoing pedestrian/vehicular activity.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'A broad street canyon with traffic and pedestrians.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /newest private evidence|unseen public continuation/i);
+});
+
 test('a route cannot align a chosen axis with newest evidence in reverse word order', async () => {
   const copiedReasoning = 'Theo’s latest sheet proposes moving along a public axis toward a distant goal, not copying a literal drawn path. My on-ground evidence shows a straight, busy urban corridor with crosswalks and a clear forward axis. Following the public axis with a northeast heading aligns with the newest evidence and keeps us moving toward potential shared space without duplicating Theo’s drawn route.';
   const service = new RendezvousModelService({
