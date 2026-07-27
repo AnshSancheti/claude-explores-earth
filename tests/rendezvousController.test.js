@@ -1167,6 +1167,7 @@ test('a repeatedly unrenderable action is replanned without changing the run or 
     assert.equal(controller.state.scratchpad.pendingMessage, null);
     assert.equal(controller.state.scratchpad.currentMessage.id, 'replanned-message');
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).contributionKind, 'local_observation');
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).totalAttempts, 4);
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).replanCount, 1);
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
@@ -1289,6 +1290,7 @@ test('a second failed replan can accept a recipient-legible local report', async
       groundedFeatures: ['broad urban street with multiple lanes']
     });
     controller.state.scratchpad.pendingMessage.attempts = 6;
+    controller.state.scratchpad.pendingMessage.totalAttempts = 6;
     controller.state.scratchpad.pendingMessage.replanCount = 2;
 
     await controller.resumePendingDrawing();
@@ -1419,6 +1421,7 @@ test('failed replanning is retried separately before bounded recipient-legible d
       groundedFeatures: ['broad urban street with multiple lanes']
     });
     controller.state.scratchpad.pendingMessage.attempts = 6;
+    controller.state.scratchpad.pendingMessage.totalAttempts = 6;
     controller.state.scratchpad.pendingMessage.replanCount = 1;
 
     await controller.resumePendingDrawing();

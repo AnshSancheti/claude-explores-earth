@@ -12,6 +12,7 @@ export const RASTER_SCRATCHPAD_VERSION = 5;
 export const RASTER_SCRATCHPAD_WIDTH = 1152;
 export const RASTER_SCRATCHPAD_HEIGHT = 768;
 export const RASTER_SCRATCHPAD_MAX_MESSAGES = 160;
+export const RASTER_SCRATCHPAD_ATTEMPTS_PER_PLAN = 3;
 
 const SCRATCHPAD_VERSION = 4;
 const SKETCH_SCENES = new Set(['intersection', 'storefront', 'park', 'station', 'landmark']);
@@ -130,6 +131,14 @@ function normalizePendingRasterMessage(raw) {
   const id = cleanString(raw.id, 120);
   const drawingPrompt = cleanString(raw.drawingPrompt, 2400);
   if (!id || !from || !to || from === to || !drawingPrompt) return null;
+  const attempts = Math.max(0, Math.floor(Number(raw.attempts) || 0));
+  const replanCount = Math.min(2, Math.max(0, Math.floor(Number(raw.replanCount) || 0)));
+  const persistedTotalAttempts = Number(raw.totalAttempts);
+  const hasUsablePersistedTotal = Number.isFinite(persistedTotalAttempts) &&
+    (persistedTotalAttempts > 0 || (attempts === 0 && replanCount === 0));
+  const totalAttempts = hasUsablePersistedTotal
+    ? Math.max(0, Math.floor(persistedTotalAttempts))
+    : attempts + (replanCount * RASTER_SCRATCHPAD_ATTEMPTS_PER_PLAN);
   return {
     id,
     from,
@@ -152,8 +161,9 @@ function normalizePendingRasterMessage(raw) {
     sourcePanoId: cleanString(raw.sourcePanoId, 240) || null,
     snapshot: normalizeRasterSnapshot(raw.snapshot),
     status: cleanString(raw.status, 40) || 'generating',
-    attempts: Math.max(0, Math.floor(Number(raw.attempts) || 0)),
-    replanCount: Math.min(2, Math.max(0, Math.floor(Number(raw.replanCount) || 0))),
+    attempts,
+    totalAttempts,
+    replanCount,
     replanFailureCount: Math.min(2, Math.max(0, Math.floor(Number(raw.replanFailureCount) || 0))),
     lastError: cleanString(raw.lastError, 500) || null,
     nextAttemptAt: raw.nextAttemptAt || null,
@@ -211,6 +221,8 @@ export function normalizeRasterScratchpad(raw, { turn = 0 } = {}) {
         requestId: cleanString(entry?.requestId, 240) || null,
         reviewAssessment: cleanString(entry?.reviewAssessment, 500) || null,
         renderAttempts: Math.max(0, Math.floor(Number(entry?.renderAttempts) || 0)),
+        attempts: Math.max(0, Math.floor(Number(entry?.attempts) || 0)),
+        totalAttempts: Math.max(0, Math.floor(Number(entry?.totalAttempts) || 0)),
         replanCount: Math.min(2, Math.max(0, Math.floor(Number(entry?.replanCount) || 0))),
         status: cleanString(entry?.status, 40) || 'sent',
         error: cleanString(entry?.error, 500) || null,
@@ -270,6 +282,7 @@ export function queueRasterScratchpadMessage(scratchpad, {
     sourcePanoId,
     snapshot,
     attempts: 0,
+    totalAttempts: 0,
     replanCount: 0,
     replanFailureCount: 0,
     createdAt: new Date().toISOString()
@@ -332,6 +345,7 @@ export function markRasterScratchpadAttempt(scratchpad, { pendingId }) {
     ...pending,
     status: 'generating',
     attempts: pending.attempts + 1,
+    totalAttempts: pending.totalAttempts + 1,
     lastError: null,
     nextAttemptAt: null
   };

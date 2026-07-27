@@ -28,15 +28,18 @@ import {
   publicRasterScratchpad,
   publicRasterScratchpadHistory,
   queueRasterScratchpadMessage,
+  RASTER_SCRATCHPAD_ATTEMPTS_PER_PLAN,
   retryRasterScratchpadMessage,
   renderScratchpad
 } from './scratchpad.js';
 
 const AGENT_ORDER = ['ada', 'theo'];
 const RENDER_REVISION_MARKER = 'Authoritative rendering correction:';
-const MAX_DRAWING_ATTEMPTS_PER_PLAN = 3;
+const MAX_DRAWING_ATTEMPTS_PER_PLAN = RASTER_SCRATCHPAD_ATTEMPTS_PER_PLAN;
 const MAX_DRAWING_REPLANS = 2;
 const MAX_DRAWING_REPLAN_FAILURES = 2;
+const MAX_DRAWING_TOTAL_ATTEMPTS =
+  MAX_DRAWING_ATTEMPTS_PER_PLAN * (MAX_DRAWING_REPLANS + 1);
 
 function composeDrawingRevisionPrompt(
   drawingPrompt,
@@ -1749,7 +1752,7 @@ export class RendezvousController {
               })
             : { accepted: true, assessment: 'Drawing review is not available in this model adapter.', revisionPrompt: '' };
         }
-        const attemptNumber = Math.max(1, Number(pending.attempts || 0) + 1);
+        const attemptNumber = Math.max(1, Number(pending.totalAttempts || 0) + 1);
         if (!review.accepted && canAcceptRecipientLegibleRetry(review, pending, attemptNumber)) {
           review = {
             ...review,
@@ -1840,9 +1843,10 @@ export class RendezvousController {
           : null;
         if (currentPending?.id === pending.id) {
           const attempts = Math.max(1, currentPending.attempts);
+          const totalAttempts = Math.max(attempts, currentPending.totalAttempts);
           const reviewExhausted = error.drawingRejected === true &&
             currentPending.replanCount >= MAX_DRAWING_REPLANS &&
-            attempts >= 6;
+            totalAttempts >= MAX_DRAWING_TOTAL_ATTEMPTS;
           if (reviewExhausted) {
             this.state.scratchpad = failRasterScratchpadMessage(this.state.scratchpad, {
               pendingId: pending.id,
@@ -1854,6 +1858,7 @@ export class RendezvousController {
               to: pending.to,
               error: error.message,
               attempts,
+              totalAttempts,
               replanCount: currentPending.replanCount
             });
             await this.saveState();
@@ -1880,6 +1885,7 @@ export class RendezvousController {
             to: pending.to,
             error: error.message,
             attempts,
+            totalAttempts,
             retryAt
           });
           await this.saveState();
