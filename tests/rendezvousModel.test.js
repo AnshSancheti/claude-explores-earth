@@ -3143,10 +3143,13 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     isConcreteLocalEvidence('New local observation: Active traffic including taxis and pedestrians'),
     false
   );
+  assert.equal(isConcreteLocalEvidence('New local observation: ongoing vehicle'), false);
+  assert.equal(isConcreteLocalEvidence('several moving taxis and pedestrians'), false);
   assert.equal(
     isConcreteLocalEvidence('row of storefronts with striped awnings'),
     true
   );
+  assert.equal(isConcreteLocalEvidence('a dense queue of yellow taxis beneath an iron viaduct'), true);
   assert.equal(
     isConcreteLocalEvidence('orange construction barriers beneath dense scaffolding'),
     true

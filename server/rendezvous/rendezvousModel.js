@@ -124,8 +124,17 @@ const LOW_INFORMATION_URBAN_WORDS = new Set([
 ]);
 
 function isLowInformationUrbanObservation(description) {
-  const words = cleanString(description, 500).toLowerCase().match(/[a-z]+/g) || [];
+  const normalized = cleanString(description, 500)
+    .replace(/^New local observation:\s*/i, '')
+    .toLowerCase();
+  const words = normalized.match(/[a-z]+/g) || [];
   if (words.length === 0) return true;
+  if (
+    /^(?:(?:active|busy|moving|ongoing|passing|several|single)\s+)*(?:cars?|pedestrians?|taxis?|traffic|vehicles?)(?:\s+(?:and|including|with)\s+(?:(?:active|busy|moving|ongoing|passing|several|single)\s+)*(?:cars?|pedestrians?|taxis?|traffic|vehicles?))*[.!]?$/
+      .test(normalized)
+  ) {
+    return true;
+  }
   const hasGenericStreetAnchor = words.some(word =>
     [
       'axis', 'building', 'buildings', 'city', 'crossing', 'crosswalk', 'curb', 'intersection',
