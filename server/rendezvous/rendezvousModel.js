@@ -967,6 +967,18 @@ export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMe
     candidateDrawingPlan,
     privateMemory
   ).length;
+  const currentSheetSequence = Number(
+    (privateMemory?.receivedSheets || []).at(-1)?.sequence
+  ) || 0;
+  const matchingFailedMessages = matchingRecentSentPropositions(
+    candidateDrawingPlan,
+    {
+      ...privateMemory,
+      sentMessages: (privateMemory?.failedMessages || [])
+        .filter(message => Number(message?.sheetSequence) === currentSheetSequence)
+        .slice(-6)
+    }
+  ).length;
   const recentReceivedObservations = contributionKind === 'local_observation'
     ? (privateMemory?.receivedSheets || []).slice(-6)
       .filter(sheet => ['report', 'shared_proposal', 'unclear'].includes(sheet?.communicationFunction))
@@ -1005,7 +1017,7 @@ export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMe
   // honestly. Received observations count too, so the same postcard cannot
   // evade the limit by alternating authors. Generic action scenes are
   // challenged after the first recurrence.
-  return matchingRecentMessages + matchingReceivedObservations.length >=
+  return matchingRecentMessages + matchingFailedMessages + matchingReceivedObservations.length >=
     (['local_observation'].includes(contributionKind) ? 2 : 1) ||
     alternatingEchoLoop;
 }
@@ -1237,6 +1249,8 @@ Return only JSON:
       ...(privateMemory || {}),
       currentPlan: privateMemory?.currentPlan
     };
+    const actionMemoryForPrompt = { ...actionMemory };
+    delete actionMemoryForPrompt.failedMessages;
     const userContent = [
       {
         type: 'text',
@@ -1247,7 +1261,7 @@ ${incomingSheetGuidance}
 ${optionLines}
 
 Your descriptive private evidence ledger, unavailable to ${partnerName}:
-${JSON.stringify(actionMemory, null, 2)}
+${JSON.stringify(actionMemoryForPrompt, null, 2)}
 
 Your own movement since your last successful branch decision:
 ${JSON.stringify(movementSinceDecision || {}, null, 2)}

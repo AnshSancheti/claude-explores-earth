@@ -261,6 +261,38 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.doesNotMatch(serialized, /partnerPadText|ownPadText|distanceToFriend|-?\d+\.\d{4,}/);
 });
 
+test('renderer failure memory stays out of the model-facing route ledger', async () => {
+  const requests = [];
+  const baseInput = input();
+  const service = new RendezvousModelService({
+    client: stagedClient(requests),
+    logger: { warn() {} }
+  });
+
+  await service.decide(input({
+    privateMemory: {
+      ...baseInput.privateMemory,
+      failedMessages: [{
+        draftId: 'private-failed-draft',
+        sheetSequence: 6,
+        contributionKind: 'question',
+        contributionSummary: 'A private failed proposition marker.',
+        failureReason: 'A private renderer rejection marker.'
+      }]
+    }
+  }));
+
+  const routeRequest = requests.find(request =>
+    /Your descriptive private evidence ledger/.test(
+      request.messages?.[1]?.content?.[0]?.text || ''
+    )
+  );
+  assert.ok(routeRequest);
+  const serializedRouteRequest = JSON.stringify(routeRequest);
+  assert.doesNotMatch(serializedRouteRequest, /private-failed-draft/);
+  assert.doesNotMatch(serializedRouteRequest, /private renderer rejection marker/i);
+});
+
 test('an agent can turn concrete local evidence into its own visual question', async () => {
   const requests = [];
   const service = new RendezvousModelService({
@@ -2543,6 +2575,34 @@ test('literal-versus-symbolic route wording is one repeated question', () => {
       intent: 'Ask whether the crosswalk cue is a literal path or a symbolic hint.'
     }]
   }), true);
+});
+
+test('a failed proposition is suppressed only while the same received sheet is current', () => {
+  const candidate = {
+    contributionKind: 'question',
+    contributionSummary: 'Question I am sending: Is Ada signaling a literal path or a symbolic broad-axis cue without a fixed destination?',
+    informationDelta: 'Question I am sending: Is Ada signaling a literal path or a symbolic broad-axis cue without a fixed destination?',
+    drawingIntent: 'Contrast a literal route with a symbolic broad-axis cue.'
+  };
+  const failedMessage = {
+    draftId: 'failed-question',
+    sheetSequence: 43,
+    contributionKind: 'question',
+    contributionSummary: 'Question I am sending: Is Ada signaling a literal path or a symbolic broad-axis cue without a fixed destination?',
+    informationDelta: 'Question I am sending: Is Ada signaling a literal path or a symbolic broad-axis cue without a fixed destination?',
+    intent: 'Ask whether the cue is a literal path or symbolic broad-axis cue.'
+  };
+
+  assert.equal(repeatsRecentOutboundProposition(candidate, {
+    receivedSheets: [{ sequence: 43 }],
+    failedMessages: [failedMessage],
+    sentMessages: []
+  }), true);
+  assert.equal(repeatsRecentOutboundProposition(candidate, {
+    receivedSheets: [{ sequence: 43 }, { sequence: 44 }],
+    failedMessages: [failedMessage],
+    sentMessages: []
+  }), false);
 });
 
 test('the drawing planner can cite any proposition considered by recent-repeat detection', async () => {

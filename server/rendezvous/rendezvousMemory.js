@@ -3,6 +3,7 @@ export const RENDEZVOUS_MEMORY_VERSION = 5;
 const MAX_TEXT_CHARS = 700;
 const MAX_RECEIVED_SHEETS = 10;
 const MAX_SENT_MESSAGES = 10;
+const MAX_FAILED_MESSAGES = 6;
 const MAX_OBSERVATIONS = 14;
 const MAX_CONVENTIONS = 8;
 const MAX_HYPOTHESES = 6;
@@ -155,6 +156,26 @@ function normalizeSent(entry) {
   };
 }
 
+function normalizeFailed(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const intent = cleanString(entry.intent, 500);
+  const contributionSummary = cleanString(entry.contributionSummary, 500);
+  const informationDelta = cleanString(entry.informationDelta, 500);
+  if (!intent && !contributionSummary && !informationDelta) return null;
+  return {
+    turn: positiveInt(entry.turn),
+    draftId: cleanString(entry.draftId || entry.id, 120),
+    sheetSequence: positiveInt(entry.sheetSequence),
+    intent,
+    contributionKind: cleanString(entry.contributionKind, 80),
+    contributionEvidenceId: cleanString(entry.contributionEvidenceId, 80),
+    contributionSummary,
+    informationDelta,
+    failureReason: cleanString(entry.failureReason, 500),
+    createdAt: entry.createdAt || null
+  };
+}
+
 function normalizeBelief(entry, kind) {
   if (!entry || typeof entry !== 'object') return null;
   const key = cleanString(entry.key, 80).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -204,6 +225,7 @@ function migrateLegacyMemory(raw, recentNotes) {
   }
   memory.receivedSheets = bounded(raw?.receivedSheets, normalizeReceived, MAX_RECEIVED_SHEETS);
   memory.sentMessages = bounded(raw?.sentMessages, normalizeSent, MAX_SENT_MESSAGES);
+  memory.failedMessages = bounded(raw?.failedMessages, normalizeFailed, MAX_FAILED_MESSAGES);
   memory.visualConventions = bounded(raw?.visualConventions, entry => normalizeBelief(entry, 'convention'), MAX_CONVENTIONS);
   memory.partnerHypotheses = bounded(raw?.partnerHypotheses, entry => normalizeBelief(entry, 'hypothesis'), MAX_HYPOTHESES);
   memory.reconciliations = bounded(raw?.reconciliations, normalizeReconciliation, MAX_RECONCILIATIONS);
@@ -225,6 +247,7 @@ export function createAgentMemory({ recentNotes = [] } = {}) {
     }] : [],
     receivedSheets: [],
     sentMessages: [],
+    failedMessages: [],
     visualConventions: [],
     partnerHypotheses: [],
     reconciliations: [],
@@ -244,6 +267,7 @@ export function normalizeAgentMemory(raw, { recentNotes = [] } = {}) {
     ownObservations: bounded(raw.ownObservations, normalizeObservation, MAX_OBSERVATIONS),
     receivedSheets: bounded(raw.receivedSheets, normalizeReceived, MAX_RECEIVED_SHEETS),
     sentMessages: bounded(raw.sentMessages, normalizeSent, MAX_SENT_MESSAGES),
+    failedMessages: bounded(raw.failedMessages, normalizeFailed, MAX_FAILED_MESSAGES),
     visualConventions: bounded(raw.visualConventions, entry => normalizeBelief(entry, 'convention'), MAX_CONVENTIONS),
     partnerHypotheses: bounded(raw.partnerHypotheses, entry => normalizeBelief(entry, 'hypothesis'), MAX_HYPOTHESES),
     reconciliations: bounded(raw.reconciliations, normalizeReconciliation, MAX_RECONCILIATIONS),
@@ -390,6 +414,41 @@ export function recordSentMessage(memory, {
     ...normalized.sentMessages.filter(item => item.sequence !== entry.sequence),
     entry
   ].slice(-MAX_SENT_MESSAGES);
+  normalized.updatedTurn = Math.max(normalized.updatedTurn, positiveInt(turn));
+  normalized.updatedAt = createdAt;
+  return normalized;
+}
+
+export function recordFailedMessage(memory, {
+  turn = 0,
+  draftId = '',
+  sheetSequence = 0,
+  intent = '',
+  contributionKind = '',
+  contributionEvidenceId = '',
+  contributionSummary = '',
+  informationDelta = '',
+  failureReason = '',
+  createdAt = new Date().toISOString()
+} = {}) {
+  const normalized = normalizeAgentMemory(memory);
+  const entry = normalizeFailed({
+    turn,
+    draftId,
+    sheetSequence,
+    intent,
+    contributionKind,
+    contributionEvidenceId,
+    contributionSummary,
+    informationDelta,
+    failureReason,
+    createdAt
+  });
+  if (!entry) return normalized;
+  normalized.failedMessages = [
+    ...normalized.failedMessages.filter(item => item.draftId !== entry.draftId),
+    entry
+  ].slice(-MAX_FAILED_MESSAGES);
   normalized.updatedTurn = Math.max(normalized.updatedTurn, positiveInt(turn));
   normalized.updatedAt = createdAt;
   return normalized;

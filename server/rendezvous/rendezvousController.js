@@ -23,6 +23,7 @@ import {
   createMovementMemory,
   normalizeAgentMemory,
   normalizeMovementMemory,
+  recordFailedMessage,
   recordMovement,
   recordSentMessage
 } from './rendezvousMemory.js';
@@ -1629,6 +1630,22 @@ export class RendezvousController {
     ));
   }
 
+  #rememberFailedDrawing(pending, failureReason) {
+    const sender = this.state.agents[pending?.from];
+    if (!sender || !pending) return;
+    sender.privateMemory = recordFailedMessage(sender.privateMemory, {
+      turn: this.state.turn,
+      draftId: pending.id,
+      sheetSequence: this.state.scratchpad?.currentMessage?.sequence || 0,
+      intent: pending.drawingIntent,
+      contributionKind: pending.contributionKind,
+      contributionEvidenceId: pending.contributionEvidenceId,
+      contributionSummary: pending.contributionSummary,
+      informationDelta: pending.informationDelta,
+      failureReason
+    });
+  }
+
   async resumePendingDrawing() {
     if (this.drawingInFlight) return this.drawingInFlight;
     const runId = this.state.runId;
@@ -1723,6 +1740,7 @@ export class RendezvousController {
         normalizedScratchpad.updatedAt = new Date().toISOString();
         this.state.scratchpad = normalizedScratchpad;
       } else {
+        this.#rememberFailedDrawing(pending, error);
         this.state.scratchpad = failRasterScratchpadMessage(this.state.scratchpad, {
           pendingId: pending.id,
           error
@@ -2003,6 +2021,7 @@ export class RendezvousController {
             currentPending.replanCount >= MAX_DRAWING_REPLANS &&
             totalAttempts >= MAX_DRAWING_TOTAL_ATTEMPTS;
           if (reviewExhausted) {
+            this.#rememberFailedDrawing(currentPending, error.message);
             this.state.scratchpad = failRasterScratchpadMessage(this.state.scratchpad, {
               pendingId: pending.id,
               error: error.message

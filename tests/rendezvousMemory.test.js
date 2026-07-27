@@ -7,6 +7,7 @@ import {
   createMovementMemory,
   normalizeAgentMemory,
   normalizeMovementMemory,
+  recordFailedMessage,
   recordMovement,
   recordSentMessage
 } from '../server/rendezvous/rendezvousMemory.js';
@@ -292,6 +293,35 @@ test('sent intentions are recorded only as bounded durable episodes', () => {
   assert.equal(memory.sentMessages.at(-1).informationDelta, 'New evidence 20');
   assert.match(memory.sentMessages.at(-1).continuityReason, /shared arch/);
   assert.deepEqual(memory.sentMessages.at(-1).groundedFeatures, ['Facade 20', 'traffic light']);
+});
+
+test('failed unsent propositions remain bounded private memory', () => {
+  let memory = createAgentMemory();
+  for (let index = 1; index <= 8; index += 1) {
+    memory = recordFailedMessage(memory, {
+      turn: index,
+      draftId: `failed-draft-${index}`,
+      sheetSequence: 43,
+      intent: `Ask whether cue ${index} is literal or symbolic.`,
+      contributionKind: 'question',
+      contributionEvidenceId: `question:${index}`,
+      contributionSummary: `Question about literal or symbolic cue ${index}`,
+      informationDelta: `Question about literal or symbolic cue ${index}`,
+      failureReason: 'The drawing could not preserve both alternatives.',
+      createdAt: `2026-07-26T06:0${index}:00.000Z`
+    });
+  }
+
+  assert.equal(memory.failedMessages.length, 6);
+  assert.equal(memory.failedMessages[0].draftId, 'failed-draft-3');
+  assert.equal(memory.failedMessages.at(-1).sheetSequence, 43);
+  assert.equal(memory.failedMessages.at(-1).contributionKind, 'question');
+  assert.match(memory.failedMessages.at(-1).failureReason, /both alternatives/);
+  assert.equal(memory.sentMessages.length, 0);
+  assert.deepEqual(
+    normalizeAgentMemory(memory).failedMessages,
+    memory.failedMessages
+  );
 });
 
 test('movement memory preserves compact dead reckoning without coordinates', () => {

@@ -2084,6 +2084,13 @@ test('a persisted reworded route-meaning question is not fresh', async () => {
     assert.equal(controller.state.scratchpad.pendingMessage, null);
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
     assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /shared-channel proposition/);
+    assert.equal(controller.state.agents.ada.privateMemory.failedMessages.length, 1);
+    assert.equal(
+      controller.state.agents.ada.privateMemory.failedMessages[0].draftId,
+      'persisted-reworded-question'
+    );
+    assert.equal(controller.state.agents.ada.privateMemory.failedMessages[0].sheetSequence, 0);
+    assert.equal(controller.state.agents.ada.privateMemory.sentMessages.length, 1);
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
@@ -2152,6 +2159,13 @@ test('semantic recovery exhaustion abandons only the unsent draft', async () => 
     assert.equal(controller.state.scratchpad.currentMessage.id, 'last-delivered-sheet');
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).id, 'unsendable-draft');
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.equal(controller.state.agents.theo.privateMemory.failedMessages.length, 1);
+    assert.equal(
+      controller.state.agents.theo.privateMemory.failedMessages[0].draftId,
+      'unsendable-draft'
+    );
+    assert.equal(controller.state.agents.theo.privateMemory.failedMessages[0].sheetSequence, 1);
+    assert.equal(controller.state.agents.theo.privateMemory.sentMessages.length, 0);
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
