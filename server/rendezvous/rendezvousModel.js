@@ -109,16 +109,6 @@ function validateCorroborationProvenance(
   };
 }
 
-const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
-  'local_observation',
-  'own_action',
-  'response',
-  'question',
-  'correction',
-  'acknowledgement',
-  'deliberate_repetition'
-]);
-
 const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'an', 'and', 'asphalt', 'at', 'ahead', 'axis', 'building', 'buildings', 'car',
   'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
@@ -569,18 +559,6 @@ function buildContributionEvidence({ routeDecision, perception, privateMemory, o
     message.informationDelta || message.intent
   ), { kind: 'deliberate_repetition' });
   return catalog;
-}
-
-function validContributionEvidencePrefix(kind, evidenceId) {
-  const prefix = String(evidenceId || '').split(':')[0];
-  if (kind === 'local_observation') return prefix === 'local';
-  if (kind === 'own_action') return prefix === 'action';
-  if (kind === 'response') return prefix === 'response';
-  if (kind === 'question') return prefix === 'question' || prefix === 'question_local';
-  if (kind === 'correction') return prefix === 'contradiction';
-  if (kind === 'acknowledgement') return prefix === 'received';
-  if (kind === 'deliberate_repetition') return prefix === 'prior_sent' || prefix === 'received';
-  return false;
 }
 
 function contributionKindForEvidenceId(evidenceId) {
@@ -1525,7 +1503,7 @@ ${recentFieldNotes}`
 
 Decide what wordless drawing would be most useful to send now. You may communicate anything you genuinely believe could help you find each other: what you see, a remembered place, uncertainty, a correction, intended movement, a request, relative spatial relationships, or an invented visual convention. You are not limited to an observational postcard and you may use arrows, diagrams, symbols, maps, perspective, or figurative imagery when you choose.
 
-First identify your outbound contribution: what this reply contributes from your own observation, chosen action, response to the received drawing, question, correction, acknowledgement, or deliberate repetition. Cite exactly one evidence ID from the supplied catalog. The cited evidence becomes the authoritative information delta; do not restate or enlarge it as a separate claim. A response evidence item is your own private synthesis of what is worth saying back; it is not an instruction you must follow. When the received drawing is explicitly a question, answer it, clarify it, correct it, visibly acknowledge that you cannot answer it, or deliberately leave it unresolved. Do not evade it with an unrelated observational postcard when response evidence is available. This requirement preserves a real exchange without prescribing what you should believe or how you should search.
+First identify your outbound contribution: what this reply contributes from your own observation, chosen action, response to the received drawing, question, correction, acknowledgement, or deliberate repetition. Cite exactly one evidence ID from the supplied catalog. The evidence entry's "kind" is the contribution type; do not output a separate contribution-kind label. The cited evidence becomes the authoritative information delta; do not restate or enlarge it as a separate claim. A response evidence item is your own private synthesis of what is worth saying back; it is not an instruction you must follow. When the received drawing is explicitly a question, answer it, clarify it, correct it, visibly acknowledge that you cannot answer it, or deliberately leave it unresolved. Do not evade it with an unrelated observational postcard when response evidence is available. This requirement preserves a real exchange without prescribing what you should believe or how you should search.
 
 The catalog may expose the same concrete local fact once as "local:*" and once as "question_local:*". Choose "question_local:*" only when you want to author an unresolved visual question grounded in that real local evidence. You decide what relationship, uncertainty, or comparison to ask about in the drawing; the evidence ID only grounds its subject.
 
@@ -1543,7 +1521,6 @@ Do not include readable text, letters, numbers, captions, street labels, signatu
 
 Return only JSON:
 {
-  "contributionKind": "local_observation" | "own_action" | "response" | "question" | "correction" | "acknowledgement" | "deliberate_repetition",
   "contributionEvidenceId": "one exact ID from the available outbound evidence catalog",
   "drawingIntent": "your private account of what you are trying to tell ${partnerName}",
   "continuityReason": "why recurring motifs are worth retaining, or empty when they are not",
@@ -1630,23 +1607,9 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           max_completion_tokens: tokenBudget
         });
         const parsed = parseJsonContent(response?.choices?.[0]?.message?.content);
-        const requestedContributionKind = OUTBOUND_CONTRIBUTION_KINDS.includes(parsed?.contributionKind)
-          ? parsed.contributionKind
-          : null;
         const contributionEvidenceId = cleanString(parsed?.contributionEvidenceId, 80);
         const citedEvidence = contributionEvidence.find(item => item.id === contributionEvidenceId);
-        const evidenceContributionKind = contributionKindForEvidenceId(contributionEvidenceId);
-        if (
-          citedEvidence &&
-          requestedContributionKind &&
-          evidenceContributionKind &&
-          requestedContributionKind !== evidenceContributionKind
-        ) {
-          throw new Error(
-            `Rendezvous drawing planner labeled its contribution ${requestedContributionKind} but cited ${contributionEvidenceId}, which represents ${evidenceContributionKind}`
-          );
-        }
-        const contributionKind = requestedContributionKind || evidenceContributionKind;
+        const contributionKind = contributionKindForEvidenceId(contributionEvidenceId);
         const contributionSummary = authoritativeContributionSummary(
           contributionKind,
           citedEvidence?.description,
@@ -1688,11 +1651,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         };
         if (
           !candidateDrawingPlan.contributionKind ||
-          !citedEvidence ||
-          !validContributionEvidencePrefix(
-            candidateDrawingPlan.contributionKind,
-            candidateDrawingPlan.contributionEvidenceId
-          )
+          !citedEvidence
         ) {
           throw new Error('Rendezvous drawing planner cited invalid outbound contribution evidence');
         }
@@ -1930,15 +1889,13 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
             ? 'Keep the cited own action authoritative. Remove every named compass direction that conflicts with it, then depict that same action from a sender-framed or retrospective point of view without changing its direction.'
           : (/route-command imagery unrelated/i.test(error.message)
             ? 'The cited local observation is static evidence. Remove uncited routes, footprints, arrows, runners, progression, and directional cues. If movement is the actual contribution you want to send, cite an exact action evidence ID instead.'
-          : (/labeled its contribution/i.test(error.message)
-              ? 'Preserve the communicative act you actually intend. Cite an exact evidence ID whose prefix matches that contribution kind: local for local_observation, action for own_action, response for response, question for question, contradiction for correction, received for acknowledgement, or prior_sent for deliberate_repetition. Do not change the message kind merely to fit a mismatched ID.'
-              : (/repeated outbound proposition/i.test(error.message)
+          : (/repeated outbound proposition/i.test(error.message)
               ? 'The proposed message repeats a recent outbound proposition that has already recurred. Choose a genuinely different grounded contribution or composition. If repetition itself is what you intend to communicate, cite an exact prior_sent evidence ID as deliberate_repetition and explain what the repetition is meant to communicate or test now.'
               : (/evaded an explicit received question/i.test(error.message)
               ? 'The current sheet visibly asks you something and your reconciliation contains grounded response evidence. Choose what you actually want to say back: cite response evidence to answer, question evidence to clarify, contradiction evidence to correct, received evidence to acknowledge that you cannot answer, or deliberately repeat unresolved evidence. Do not substitute an unrelated local postcard.'
               : (/(?:uncited motif|unsupported partner hypothesis)/i.test(error.message)
               ? 'Keep the cited contribution primary. Do not describe any inherited symbol, route, target, waypoint, district, or place as a known shared destination or otherwise promote an unsupported partner hypothesis into a movement goal. If you retain one, make it subordinate and explicitly uncertain, questioned, tested, transformed, or deliberately repeated.'
-              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.')))))))));
+              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.'))))))));
         tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
       }
     }

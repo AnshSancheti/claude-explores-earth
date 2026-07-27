@@ -343,32 +343,18 @@ test('a local question may compare its cited subject with a received drawing', (
   }), true);
 });
 
-test('drawing planner corrects a kind and evidence mismatch without changing the intended act', async () => {
+test('drawing planner derives contribution kind from the selected evidence ID', async () => {
   const requests = [];
-  let drawingAttempts = 0;
   const service = new RendezvousModelService({
     client: stagedClient(requests, {
-      drawing(request) {
-        drawingAttempts += 1;
-        if (drawingAttempts === 1) {
-          return drawingResponse({
-            contributionKind: 'question',
-            contributionEvidenceId: 'received:0'
-          });
-        }
-        assert.match(
-          request.messages[1].content[0].text,
-          /AUTHORITATIVE PLANNING CORRECTION.*Preserve the communicative act/
-        );
-        return drawingResponse({
-          contributionKind: 'question',
-          contributionEvidenceId: 'question:0',
-          drawingIntent: 'Ask whether the circle represents a lamp or a destination.',
-          messageAction: 'unclear',
-          drawingPrompt: 'Draw a circle suspended between a lamp and a destination symbol.',
-          groundedFeatureEvidenceIds: ['question:0']
-        });
-      }
+      drawing: drawingResponse({
+        contributionKind: 'response',
+        contributionEvidenceId: 'local:0',
+        drawingIntent: 'Show the three repeated stone arches I can currently see.',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw three repeated stone arches as the dominant observed feature.',
+        groundedFeatureEvidenceIds: ['local:0']
+      })
     }),
     logger: { warn() {} }
   });
@@ -376,14 +362,20 @@ test('drawing planner corrects a kind and evidence mismatch without changing the
   const decision = await service.decide(input());
 
   assert.equal(decision.fallbackCause, null);
-  assert.equal(decision.contributionKind, 'question');
-  assert.equal(decision.contributionEvidenceId, 'question:0');
-  assert.match(decision.contributionSummary, /Question I am sending/);
+  assert.equal(decision.contributionKind, 'local_observation');
+  assert.equal(decision.contributionEvidenceId, 'local:0');
+  assert.match(decision.contributionSummary, /New local observation/);
   assert.equal(decision.informationDelta, decision.contributionSummary);
-  assert.match(decision.drawingPrompt, /circle suspended/);
+  assert.match(decision.drawingPrompt, /three repeated stone arches/);
   assert.equal(requests.filter(request =>
     /currently hold the one physical sheet/.test(request.messages[0].content)
-  ).length, 2);
+  ).length, 1);
+  assert.doesNotMatch(
+    requests.find(request =>
+      /currently hold the one physical sheet/.test(request.messages[0].content)
+    ).messages[0].content,
+    /"contributionKind"/
+  );
 });
 
 test('a static local observation cannot add an uncited movement scene', async () => {
@@ -2421,8 +2413,7 @@ test('distinct planner corrections receive one bounded extra attempt', async () 
         drawingAttempts += 1;
         if (drawingAttempts === 1) {
           return drawingResponse({
-            contributionKind: 'question',
-            contributionEvidenceId: 'local:0'
+            contributionEvidenceId: 'local:99'
           });
         }
         if (drawingAttempts === 2) {
