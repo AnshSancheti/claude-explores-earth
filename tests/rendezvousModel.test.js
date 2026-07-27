@@ -809,6 +809,45 @@ test('a local observation cannot become route guidance through an inferred propo
   assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
 });
 
+test('an inferred shared proposal cannot direct movement when authored intent is unavailable', async () => {
+  let routeAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'shared_proposal',
+        frameOfReference: 'shared',
+        sheetInterpretation: 'A crosswalk recedes toward a distant point as if offering a route.'
+      },
+      route() {
+        routeAttempts += 1;
+        return routeResponse({
+          reasoning: 'Ada’s latest crosswalk drawing suggests continuing along a receding path toward a distant point. I proceed along the crosswalk-like route because it aligns with that new evidence.',
+          memoryUpdate: {
+            currentPlan: 'Follow the crosswalk route inferred from Ada’s latest drawing.'
+          }
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    sheetMessage: {
+      sequence: 7,
+      from: 'theo',
+      to: 'ada'
+    }
+  }));
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /crosswalk drawing suggests|aligns with that new evidence/i);
+  assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
+});
+
 test('a new-sheet hint cannot causally justify continuing a route', async () => {
   const copiedReasoning = 'New sheet hints at a continuing forward progression along a tree-lined urban corridor. The visible local route options favor the eastward street, so I choose the direct continuation.';
   const service = new RendezvousModelService({
@@ -1596,6 +1635,63 @@ test('an echoed partner observation counts toward shared channel repetition', as
         primarySubject: 'Three repeated stone arches',
         literalContents: ['three masonry arches in a row'],
         interpretation: 'A recognizable stone arcade'
+      }]
+    }
+  }));
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.contributionKind, 'question');
+});
+
+test('a partner observation misread as a shared proposal still counts toward repetition', async () => {
+  let drawingAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route: routeResponse({
+        observation: 'A zebra crosswalk recedes toward a vanishing point.',
+        observedFeatures: ['zebra crosswalk receding toward vanishing point']
+      }),
+      drawing() {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'local_observation',
+            contributionEvidenceId: 'local:0',
+            drawingIntent: 'Show the zebra crosswalk receding toward a vanishing point.',
+            messageAction: 'unclear',
+            drawingPrompt: 'Sketch the zebra crosswalk receding toward a vanishing point.',
+            groundedFeatureEvidenceIds: ['local:0']
+          });
+        }
+        return drawingResponse({
+          contributionKind: 'question',
+          contributionEvidenceId: 'question:0',
+          drawingIntent: 'Ask whether the recurring crossing is a place clue or only shared scenery.',
+          messageAction: 'unclear',
+          drawingPrompt: 'Draw one uncertain crossing balanced between a place marker and ordinary scenery.',
+          groundedFeatureEvidenceIds: ['question:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      sentMessages: [{
+        sequence: 4,
+        contributionKind: 'local_observation',
+        contributionSummary: 'New local observation: zebra crosswalk visible ahead',
+        informationDelta: 'New local observation: zebra crosswalk visible ahead',
+        intent: 'Show the zebra crosswalk visible ahead.'
+      }],
+      receivedSheets: [{
+        sequence: 5,
+        communicationFunction: 'shared_proposal',
+        primarySubject: 'the zebra crossing pattern extending into the distance',
+        literalContents: ['a zebra crosswalk receding toward a vanishing point'],
+        interpretation: 'A long crosswalk may propose a route forward.'
       }]
     }
   }));
