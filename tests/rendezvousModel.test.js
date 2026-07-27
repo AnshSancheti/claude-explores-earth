@@ -3691,6 +3691,18 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence(
+      'New local observation: a central, straight road that recedes to a distant vanishing point'
+    ),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence(
+      'New local observation: south-east oriented street canyon with tall brick buildings on both sides'
+    ),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('New local observation: row of parked cars along the curb on both sides'),
     false
   );
@@ -3743,6 +3755,10 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     true
   );
   assert.equal(isConcreteLocalEvidence('a dense queue of yellow taxis beneath an iron viaduct'), true);
+  assert.equal(
+    isConcreteLocalEvidence('a south-east oriented street passing beneath an iron viaduct'),
+    true
+  );
   assert.equal(
     isConcreteLocalEvidence('orange construction barriers beneath dense scaffolding'),
     true

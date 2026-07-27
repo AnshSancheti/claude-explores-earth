@@ -113,13 +113,13 @@ const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'across', 'active', 'activity', 'adjacent', 'along', 'an', 'and', 'are', 'area', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'boulevard', 'brick', 'building', 'buildings', 'car',
   'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'canyon', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'central', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
-  'am', 'architectural', 'between', 'beyond', 'clear', 'cloudy', 'converging', 'corridor', 'corridors', 'dense', 'depth', 'detail', 'distinct', 'elements', 'empty', 'expansive', 'extend', 'extending', 'extends', 'facade', 'facades', 'flanked', 'horizon', 'i', 'image', 'including', 'intersections', 'into', 'lane', 'lanes', 'large', 'lead', 'leading', 'ledge', 'left', 'lengthy', 'like', 'lined', 'lintel', 'local', 'long', 'm', 'minimal', 'multi',
+  'am', 'architectural', 'between', 'beyond', 'clear', 'cloudy', 'converging', 'corridor', 'corridors', 'dense', 'depth', 'detail', 'distinct', 'east', 'eastern', 'elements', 'empty', 'expansive', 'extend', 'extending', 'extends', 'facade', 'facades', 'flanked', 'horizon', 'i', 'image', 'including', 'intersections', 'into', 'is', 'lane', 'lanes', 'large', 'lead', 'leading', 'ledge', 'left', 'lengthy', 'like', 'lined', 'lintel', 'local', 'long', 'm', 'minimal', 'multi',
   'line', 'linear', 'lines', 'manhattan', 'marked', 'marking', 'markings', 'modern', 'multiple', 'narrow', 'narrowed', 'narrowing', 'near', 'nearby', 'new',
-  'observation', 'occupying', 'of', 'on', 'other', 'pale', 'parked', 'path', 'paths', 'pathway', 'pathways', 'paved', 'pavement', 'pedestrian', 'pedestrians', 'plaza', 'plazas', 'point', 'present', 'promenade', 'promenades', 'protruding', 'public', 'recede', 'recedes', 'receding', 'rectangular',
+  'north', 'northeast', 'northern', 'northwest', 'observation', 'occupying', 'of', 'on', 'oriented', 'other', 'pale', 'parked', 'path', 'paths', 'pathway', 'pathways', 'paved', 'pavement', 'pedestrian', 'pedestrians', 'plaza', 'plazas', 'point', 'present', 'promenade', 'promenades', 'protruding', 'public', 'recede', 'recedes', 'receding', 'rectangular',
   'perspective', 'prominent', 'pronounced', 'right', 'road', 'roads', 'roadway', 'roadways', 'row', 'rows', 'scene', 'several', 'side', 'sides', 'sidewalk', 'sidewalks', 'small', 'stories', 'story', 'storefront', 'strong',
-  'shading', 'storefronts', 'straight', 'street', 'subtle', 'traffic', 'streets', 'stripe', 'striped', 'stripes',
-  'sill', 'single', 'sky', 'stone', 'suggest', 'suggesting', 'suggests', 'surrounded', 'surrounding', 'tall', 'taxi', 'taxis', 'the', 'urban', 'vehicle',
-  'vehicles', 'vanishing', 'visible', 'wall', 'walls', 'walkway', 'walkways', 'white', 'wide', 'widened', 'widening', 'widthy', 'window', 'windows', 'with', 'tiled', 'to',
+  'shading', 'south', 'southeast', 'southern', 'southwest', 'storefronts', 'straight', 'street', 'subtle', 'traffic', 'streets', 'stripe', 'striped', 'stripes',
+  'sill', 'single', 'sky', 'stone', 'suggest', 'suggesting', 'suggests', 'surrounded', 'surrounding', 'tall', 'taxi', 'taxis', 'that', 'the', 'urban', 'vehicle',
+  'vehicles', 'vanishing', 'visible', 'wall', 'walls', 'walkway', 'walkways', 'was', 'were', 'west', 'western', 'which', 'white', 'wide', 'widened', 'widening', 'widthy', 'window', 'windows', 'with', 'tiled', 'to',
   'toward', 'towards'
 ]);
 
