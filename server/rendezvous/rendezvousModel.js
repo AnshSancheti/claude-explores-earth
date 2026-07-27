@@ -786,7 +786,8 @@ function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
     3000
   );
   if (!currentEvidence && !currentVisual) return false;
-  const matchingRecentMessages = (privateMemory?.sentMessages || []).slice(-6)
+  const recentSentMessages = (privateMemory?.sentMessages || []).slice(-6);
+  const matchingRecentMessages = recentSentMessages
     .filter(message => message?.contributionKind === contributionKind)
     .filter(message => {
       const previousEvidence = contributionEvidenceText(
@@ -803,30 +804,47 @@ function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
       return repeatsEvidence || repeatsVisual ||
         (genericMovementProposition(currentVisual) && genericMovementProposition(previousVisual));
     }).length;
-  const matchingReceivedObservations = contributionKind === 'local_observation'
+  const recentReceivedObservations = contributionKind === 'local_observation'
     ? (privateMemory?.receivedSheets || []).slice(-6)
       .filter(sheet => ['report', 'shared_proposal', 'unclear'].includes(sheet?.communicationFunction))
-      .filter(sheet => {
-        const receivedVisual = cleanString(
-          [
-            sheet?.primarySubject,
-            ...(Array.isArray(sheet?.literalContents) ? sheet.literalContents : []),
-            sheet?.interpretation
-          ].filter(Boolean).join(' '),
-          3000
+    : [];
+  const receivedVisualDescription = sheet => cleanString(
+    [
+      sheet?.primarySubject,
+      ...(Array.isArray(sheet?.literalContents) ? sheet.literalContents : []),
+      sheet?.interpretation
+    ].filter(Boolean).join(' '),
+    3000
+  );
+  const matchingReceivedObservations = recentReceivedObservations
+    .filter(sheet => {
+      const receivedVisual = receivedVisualDescription(sheet);
+      return currentEvidence && receivedVisual &&
+        visualDescriptionSimilarity(currentEvidence, receivedVisual) >= 0.72;
+    });
+  const latestMatchingReceived = matchingReceivedObservations.at(-1);
+  const latestRelatedSent = latestMatchingReceived
+    ? recentSentMessages
+      .filter(message => message?.contributionKind === 'local_observation')
+      .filter(message => Number(message?.sequence) < Number(latestMatchingReceived.sequence))
+      .findLast(message => {
+        const previousEvidence = contributionEvidenceText(
+          message?.informationDelta || message?.contributionSummary
         );
-        return currentEvidence && receivedVisual &&
-          visualDescriptionSimilarity(currentEvidence, receivedVisual) >= 0.72;
-      }).length
-    : 0;
+        return currentEvidence && previousEvidence &&
+          visualDescriptionSimilarity(currentEvidence, previousEvidence) >= 0.3;
+      })
+    : null;
+  const alternatingEchoLoop = Boolean(latestMatchingReceived && latestRelatedSent);
 
   // A recurring observation, question, or correction may be useful once. After
   // that, the sender must either add information or label the repetition
   // honestly. Received observations count too, so the same postcard cannot
   // evade the limit by alternating authors. Generic action scenes are
   // challenged after the first recurrence.
-  return matchingRecentMessages + matchingReceivedObservations >=
-    (['local_observation'].includes(contributionKind) ? 2 : 1);
+  return matchingRecentMessages + matchingReceivedObservations.length >=
+    (['local_observation'].includes(contributionKind) ? 2 : 1) ||
+    alternatingEchoLoop;
 }
 
 function fallbackDecision(options, visitedPanos, cause) {

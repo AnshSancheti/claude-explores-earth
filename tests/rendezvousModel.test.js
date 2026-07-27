@@ -2022,6 +2022,63 @@ test('one partner observation can still be echoed as corroboration', async () =>
   assert.equal(decision.contributionKind, 'local_observation');
 });
 
+test('an alternating local-observation echo cannot hide behind a narrower authored summary', async () => {
+  let drawingAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route: routeResponse({
+        observation: 'A row of storefronts with awnings.',
+        observedFeatures: ['row of storefronts with awnings']
+      }),
+      drawing() {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'local_observation',
+            contributionEvidenceId: 'local:0',
+            drawingIntent: 'Align with Theo by showing the same storefront row and striped awnings.',
+            messageAction: 'stillness',
+            drawingPrompt: 'Sketch a row of storefronts with striped awnings.',
+            groundedFeatureEvidenceIds: ['local:0']
+          });
+        }
+        return drawingResponse({
+          contributionKind: 'question',
+          contributionEvidenceId: 'question:0',
+          drawingIntent: 'Ask whether the recurring storefront motif is meaningful or ordinary scenery.',
+          messageAction: 'unclear',
+          drawingPrompt: 'Draw one storefront motif balanced between a distinct clue and ordinary background.',
+          groundedFeatureEvidenceIds: ['question:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      sentMessages: [{
+        sequence: 19,
+        contributionKind: 'local_observation',
+        contributionSummary: 'New local observation: Storefronts and yellow taxis visible',
+        informationDelta: 'New local observation: Storefronts and yellow taxis visible',
+        intent: 'Show storefronts and yellow taxis.'
+      }],
+      receivedSheets: [{
+        sequence: 20,
+        communicationFunction: 'report',
+        primarySubject: 'the row of storefronts with awnings and ground-floor windows',
+        literalContents: ['storefront buildings with striped and solid awnings'],
+        interpretation: 'A quiet urban commercial strip with repeating awnings'
+      }]
+    }
+  }));
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.contributionKind, 'question');
+});
+
 test('distinct planner corrections receive one bounded extra attempt', async () => {
   let drawingAttempts = 0;
   const service = new RendezvousModelService({
