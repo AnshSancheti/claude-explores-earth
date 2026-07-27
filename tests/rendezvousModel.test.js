@@ -3140,6 +3140,10 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence('New local observation: Active traffic including taxis and pedestrians'),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('row of storefronts with striped awnings'),
     true
   );
@@ -4416,6 +4420,46 @@ test('local-observation review recognizes a skyline framed by a receding avenue'
     messageAction: 'unclear',
     drawingPrompt: 'Draw a distant city core visible along a central axis.',
     groundedFeatures: ['Distant city core visible along a central axis'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, true);
+});
+
+test('local-observation review recognizes a continuous avenue-axis paraphrase', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: [
+          'a long straight avenue lined with trees and street furniture'
+        ],
+        primarySubject:
+          'Long, straight avenue lined with trees and street furniture, receding toward the city center',
+        likelyMessage: 'The sender sees a continuous avenue leading into the city.',
+        dominantAction: 'unclear',
+        frameOfReference: 'sender',
+        frameBasis: 'The avenue is the central static subject.',
+        communicationFunction: 'report',
+        movementCues: [],
+        stillnessCues: ['static avenue perspective'],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    contributionKind: 'local_observation',
+    contributionSummary:
+      'New local observation: a visible avenue layout suggesting a continuous public axis toward the city.',
+    drawingIntent: 'Show the continuous avenue axis through the city.',
+    informationDelta:
+      'New local observation: a visible avenue layout suggesting a continuous public axis toward the city.',
+    messageAction: 'unclear',
+    drawingPrompt: 'Draw a long avenue as a continuous perspective axis.',
+    groundedFeatures: ['a visible avenue layout suggesting a continuous public axis toward the city'],
     imageBuffer: Buffer.from('generated-image')
   });
 

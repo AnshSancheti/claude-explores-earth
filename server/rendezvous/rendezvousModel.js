@@ -113,7 +113,7 @@ const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'active', 'an', 'and', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
   'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'central', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
-  'expansive', 'flanked', 'intersections', 'lane', 'lanes', 'lengthy', 'like', 'lined', 'local', 'long',
+  'expansive', 'flanked', 'including', 'intersections', 'lane', 'lanes', 'lengthy', 'like', 'lined', 'local', 'long',
   'manhattan', 'marked', 'marking', 'markings', 'multiple', 'narrow', 'narrowed', 'narrowing', 'new',
   'observation', 'of', 'on', 'pedestrian', 'pedestrians', 'point', 'recede', 'recedes', 'receding',
   'road', 'roads', 'row', 'rows', 'scene', 'side', 'sides', 'sidewalk', 'sidewalks', 'storefront',
@@ -161,10 +161,11 @@ function atomizeLocalEvidenceDescription(description) {
 const VISUAL_SIMILARITY_STOPWORDS = new Set([
   'about', 'ahead', 'along', 'also', 'and', 'around', 'away', 'background',
   'been', 'being', 'both', 'city', 'could', 'distance', 'distant', 'down',
-  'foreground', 'from', 'into', 'large', 'left', 'might', 'one', 'other',
-  'person', 'right', 'scene', 'shows', 'side', 'street', 'the', 'their',
-  'there', 'these', 'they', 'this', 'through', 'toward', 'towards', 'urban',
-  'viewer', 'visible', 'with', 'would'
+  'foreground', 'from', 'into', 'large', 'layout', 'left', 'might', 'one',
+  'other', 'person', 'public', 'right', 'scene', 'shows', 'side', 'street',
+  'suggesting', 'the', 'their', 'there', 'these', 'they', 'this', 'through',
+  'toward', 'towards', 'urban', 'viewer', 'visible', 'with', 'would',
+  'continuous'
 ]);
 
 function normalizeVisualToken(token) {
