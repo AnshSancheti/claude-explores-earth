@@ -3652,6 +3652,10 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     true
   );
   assert.equal(
+    isConcreteLocalEvidence('New local observation: a street labeled as part of a dense downtown axis'),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('New local observation: No visible storefronts blocking the way'),
     false
   );

@@ -155,7 +155,10 @@ function isLowInformationUrbanObservation(description) {
 export function isConcreteLocalEvidence(description) {
   const value = contributionEvidenceText(description);
   if (!value || value.toLowerCase() === 'context') return false;
-  if (/\bstreet\s+(?:label|name)\b/i.test(value) || containsNamedStreetReference(value)) {
+  if (
+    /\bstreet\s+(?:(?:is|was)\s+)?(?:label(?:ed|led|ing)?|name[ds]?)\b/i.test(value) ||
+    containsNamedStreetReference(value)
+  ) {
     return false;
   }
   if (/\b(?:no|none|without|lacks?|lacking|absent|missing|not\s+visible)\b/i.test(value)) {
