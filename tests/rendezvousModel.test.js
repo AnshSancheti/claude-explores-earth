@@ -248,7 +248,7 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(serialized, /strongest visual cue.*messageAction/);
   assert.match(serialized, /wordless drawing/);
   assert.match(serialized, /no readable text/);
-  assert.match(serialized, /one to four distinctive, drawable facts/);
+  assert.match(serialized, /zero to four distinctive, drawable facts/);
   assert.ok(requests[1].messages[1].content
     .filter(item => item.type === 'image_url')
     .every(item => item.image_url.detail === 'high'));
@@ -3460,6 +3460,14 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence('New local observation: wide, straight urban street with adjacent sidewalks'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('New local observation: distinct crosswalk markings at intersections'),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('rectangular tiled pavement converging to a vanishing point'),
     false
   );
@@ -3509,6 +3517,32 @@ test('generic local context remains private while outbound features require dist
     'broad urban street canyon between tall buildings; pedestrian and vehicle activity along the avenue'
   );
   assert.deepEqual(decision.observedFeatures, []);
+});
+
+test('a branch may proceed without inventing a shareable feature from generic surroundings', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route: routeResponse({
+        observation: 'wide, straight urban street with adjacent sidewalks',
+        observedFeatures: []
+      }),
+      drawing: drawingResponse({
+        contributionKind: 'own_action',
+        contributionEvidenceId: 'action:0',
+        groundedFeatureEvidenceIds: ['action:0'],
+        drawingIntent: 'Show my own movement as a retrospective report.',
+        drawingPrompt: 'Sketch one traveler leaving a branching corner, with no text.'
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.observation, 'wide, straight urban street with adjacent sidewalks');
+  assert.deepEqual(decision.observedFeatures, []);
+  assert.equal(decision.contributionKind, 'own_action');
 });
 
 test('a local question must ask about its cited feature, not use it as scenery', () => {

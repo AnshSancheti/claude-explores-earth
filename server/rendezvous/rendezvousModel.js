@@ -110,13 +110,13 @@ function validateCorroborationProvenance(
 }
 
 const LOW_INFORMATION_URBAN_WORDS = new Set([
-  'a', 'active', 'activity', 'along', 'an', 'and', 'are', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
+  'a', 'active', 'activity', 'adjacent', 'along', 'an', 'and', 'are', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
   'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'canyon', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'central', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
-  'am', 'between', 'converging', 'corridor', 'corridors', 'depth', 'empty', 'expansive', 'extend', 'extending', 'extends', 'flanked', 'i', 'including', 'intersections', 'into', 'lane', 'lanes', 'lengthy', 'like', 'lined', 'local', 'long',
-  'manhattan', 'marked', 'marking', 'markings', 'multiple', 'narrow', 'narrowed', 'narrowing', 'new',
+  'am', 'between', 'converging', 'corridor', 'corridors', 'dense', 'depth', 'distinct', 'empty', 'expansive', 'extend', 'extending', 'extends', 'flanked', 'i', 'including', 'intersections', 'into', 'lane', 'lanes', 'large', 'lengthy', 'like', 'lined', 'local', 'long',
+  'manhattan', 'marked', 'marking', 'markings', 'modern', 'multiple', 'narrow', 'narrowed', 'narrowing', 'near', 'nearby', 'new',
   'observation', 'of', 'on', 'other', 'pathway', 'pathways', 'pavement', 'pedestrian', 'pedestrians', 'plaza', 'plazas', 'point', 'present', 'promenade', 'promenades', 'public', 'recede', 'recedes', 'receding', 'rectangular',
-  'road', 'roads', 'roadway', 'row', 'rows', 'scene', 'several', 'side', 'sides', 'sidewalk', 'sidewalks', 'storefront',
+  'prominent', 'road', 'roads', 'roadway', 'row', 'rows', 'scene', 'several', 'side', 'sides', 'sidewalk', 'sidewalks', 'small', 'storefront',
   'shading', 'storefronts', 'straight', 'street', 'subtle', 'traffic', 'streets', 'stripe', 'striped', 'stripes',
   'suggest', 'suggesting', 'suggests', 'surrounded', 'tall', 'taxi', 'taxis', 'the', 'urban', 'vehicle',
   'vehicles', 'vanishing', 'visible', 'walkway', 'walkways', 'white', 'wide', 'widened', 'widening', 'widthy', 'with', 'tiled', 'to',
@@ -1326,7 +1326,7 @@ If fresh environmental evidence supports only your local movement, it does not c
 
 A separate call will let you decide what to draw. Explain your actual thinking in first person, including how the drawing affected you when relevant. Do not claim certainty that the evidence does not support.
 
-Inspect the local route-option images closely enough to preserve useful visual detail. In "observedFeatures", report one to four distinctive, drawable facts that a friend could recognize again: favor unusual objects or structures, counts, materials, colors, shapes, atmosphere, and spatial relationships. Do not use a bare street canyon, traffic, storefronts, crosswalk, sidewalk, generic buildings, or direction of travel as an observed feature unless a concrete distinguishing detail makes it specific. If the scene truly has no distinctive feature, keep that generic context in "observation" rather than padding "observedFeatures" with ordinary street substrate.
+Inspect the local route-option images closely enough to preserve useful visual detail. In "observedFeatures", report zero to four distinctive, drawable facts that a friend could recognize again: favor unusual objects or structures, meaningful counts, materials, colors, shapes, atmosphere, and spatial relationships. Adjectives such as wide, straight, adjacent, prominent, distinct, busy, or dense do not make a bare street, traffic, storefront, crosswalk, sidewalk, or generic building distinctive. If the scene truly has no distinctive feature, keep that generic context in "observation" and return an empty "observedFeatures" array rather than padding it with ordinary street substrate. An empty array is an honest valid result.
 
 Return only JSON:
 {
@@ -1451,7 +1451,7 @@ ${recentFieldNotes}`
         ) {
           validationErrors.push('Rendezvous selected route contradicts its intended heading');
         }
-        if (!routeDecision.observation || routeDecision.observedFeatures.length === 0) {
+        if (!routeDecision.observation) {
           throw new Error('Rendezvous route decision omitted its current observation');
         }
         if (!routeDecision.memoryUpdate.currentPlan) {
