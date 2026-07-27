@@ -244,6 +244,12 @@ function localObservationReviewDescription(value) {
   const description = cleanString(value, 1200);
   const concepts = [];
   if (
+    /\b(?:river|shoreline|water body|waterfront)\b/i.test(description) ||
+    /\bwater\b[^.!;]{0,40}\b(?:bank|edge|shore)\b/i.test(description)
+  ) {
+    concepts.push('waterfront-waterbody');
+  }
+  if (
     /\b(?:city core|city cent(?:er|re)|downtown|skyline)\b/i.test(description) ||
     /\bdistant city\b/i.test(description)
   ) {

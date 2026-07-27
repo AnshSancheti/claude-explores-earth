@@ -4996,6 +4996,51 @@ test('local-observation review accepts a clock when the clock is cited local evi
   assert.equal(review.accepted, true);
 });
 
+test('local-observation review recognizes a river from a shoreline drawing', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: ['a broad water edge with a tree-lined shoreline'],
+        primarySubject: 'water and shoreline with trees',
+        likelyMessage: 'The sender is beside a broad body of water.',
+        dominantAction: 'stillness',
+        frameOfReference: 'sender',
+        frameBasis: 'The water fills most of the composition.',
+        communicationFunction: 'report',
+        movementCues: [],
+        stillnessCues: ['broad still water'],
+        readableText: false
+      },
+      review: {
+        accepted: true,
+        contributionPrimary: true,
+        materialContributionConflict: false,
+        visualNovelty: 'distinct',
+        assessment: 'The waterfront is the primary observation.',
+        revisionPrompt: ''
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'local_observation',
+    contributionSummary:
+      'New local observation: river or water body visible to the right',
+    drawingIntent: 'Show the river or water body visible to the right.',
+    informationDelta:
+      'New local observation: river or water body visible to the right',
+    messageAction: 'stillness',
+    drawingPrompt: 'Draw the broad water edge as the dominant observed landmark.',
+    groundedFeatures: ['river or water body visible to the right'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, true);
+});
+
 test('local-observation review recognizes a midtown-scale urban canyon', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {
