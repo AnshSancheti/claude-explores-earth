@@ -1430,6 +1430,50 @@ test('a persisted low-information street report is abandoned after semantic repl
   }
 });
 
+test('a persisted crosswalk-only report cannot gain information from stripe adjectives', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-crosswalk-revalidation-test-'));
+  let generatedImages = 0;
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: {},
+      imageModel: {
+        async generate() {
+          generatedImages += 1;
+          throw new Error('A crosswalk-only draft should not reach image generation');
+        }
+      },
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'persisted-crosswalk-only-report',
+      agentId: 'ada',
+      turn: 23,
+      contributionKind: 'local_observation',
+      contributionEvidenceId: 'local:0',
+      contributionSummary: 'New local observation: Crosswalk markings with bold white stripes ahead',
+      drawingIntent: 'Show the bold white crosswalk stripes ahead.',
+      informationDelta: 'New local observation: Crosswalk markings with bold white stripes ahead',
+      messageAction: 'stillness',
+      drawingPrompt: 'Sketch crosswalk markings with bold white stripes ahead.',
+      groundedFeatures: ['Crosswalk markings with bold white stripes ahead']
+    });
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+    controller.state.scratchpad.pendingMessage.replanFailureCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(generatedImages, 0);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /low-information urban street/);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a persisted response cannot depict a route after withholding destination certainty', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-response-revalidation-test-'));
   let generatedImages = 0;
@@ -1469,6 +1513,50 @@ test('a persisted response cannot depict a route after withholding destination c
     assert.equal(controller.state.scratchpad.pendingMessage, null);
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
     assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /route uncertainty/);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a persisted response cannot invent route coordination from a received report', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-invented-coordination-test-'));
+  let generatedImages = 0;
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: {},
+      imageModel: {
+        async generate() {
+          generatedImages += 1;
+          throw new Error('An invented coordination response should not reach image generation');
+        }
+      },
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'persisted-invented-coordination-response',
+      agentId: 'ada',
+      turn: 24,
+      contributionKind: 'response',
+      contributionEvidenceId: 'response:0',
+      contributionSummary: 'My response to the received drawing: Crosswalk-focused urban movement cue; supports continuing along a public corridor rather than copying a specific drawn route.',
+      drawingIntent: 'Crosswalk-focused urban movement cue',
+      informationDelta: 'My response to the received drawing: Crosswalk-focused urban movement cue; supports continuing along a public corridor rather than copying a specific drawn route.',
+      messageAction: 'movement',
+      drawingPrompt: 'Sketch a lone pedestrian crossing a broad public corridor.',
+      groundedFeatures: ['Crosswalk-focused urban movement cue']
+    });
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+    controller.state.scratchpad.pendingMessage.replanFailureCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(generatedImages, 0);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /route coordination/);
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }

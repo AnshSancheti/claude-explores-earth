@@ -121,14 +121,14 @@ const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
 
 const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'an', 'and', 'asphalt', 'at', 'ahead', 'building', 'buildings', 'car',
-  'bordered', 'both', 'broad', 'busy', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
+  'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
   'expansive', 'flanked', 'intersections', 'lane', 'lanes', 'lengthy', 'lined', 'local', 'long',
   'marked', 'marking', 'markings', 'multiple', 'narrow', 'narrowed', 'narrowing', 'new',
   'observation', 'of', 'on', 'pedestrian', 'pedestrians', 'traffic',
   'road', 'roads', 'scene', 'side', 'sides', 'sidewalk', 'sidewalks', 'straight', 'street',
-  'streets', 'surrounded', 'tall', 'the', 'urban', 'vehicle', 'vehicles', 'visible', 'wide',
-  'widened', 'widening', 'widthy', 'with'
+  'streets', 'stripe', 'striped', 'stripes', 'surrounded', 'tall', 'the', 'urban', 'vehicle',
+  'vehicles', 'visible', 'white', 'wide', 'widened', 'widening', 'widthy', 'with'
 ]);
 
 function isLowInformationUrbanObservation(description) {
@@ -266,6 +266,22 @@ export function responseDrawingContradictsRouteUncertainty(message) {
   return routeCommandCues(
     `${message?.drawingIntent || ''} ${message?.drawingPrompt || ''}`
   ).some(cue => !citedRouteCues.includes(cue));
+}
+
+export function responseInventsRouteCoordination(message) {
+  if (message?.contributionKind !== 'response') return false;
+  const positiveText = cleanString(
+    `${message?.contributionSummary || message?.informationDelta || ''} ${message?.drawingIntent || ''}`,
+    1800
+  ).replace(
+    /\b(?:do not|does not|doesn't|never|not|rather than|without)\b[^.!;]{0,120}/gi,
+    ' '
+  );
+  const affirmativeCoordination =
+    /\b(?:align|coordinat|favor|recommend|support|synchroniz)\w*\b[^.!;]{0,120}\b(?:advanc|continu|cross|follow|head|mov|proceed|travel|walk)\w*\b/i;
+  const coordinatedRoute =
+    /\b(?:coordinat|synchroniz)\w*\b[^.!;]{0,100}\b(?:axis|corridor|crossing|direction|path|route)\b/i;
+  return affirmativeCoordination.test(positiveText) || coordinatedRoute.test(positiveText);
 }
 
 function questionContrastsStillnessAndMovement(value) {
@@ -733,7 +749,7 @@ export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = 
 function copiesSheetRoute(...descriptions) {
   const text = descriptions.map(value => cleanString(value, 1200)).join(' ');
   const positiveText = text.replace(
-    /\b(?:do not|don't|never|not|without)\b[^.!?]{0,120}/gi,
+    /\b(?:do not|don't|never|not|without)\b[^.!?;]{0,120}/gi,
     ' '
   );
   const statements = positiveText
@@ -744,7 +760,10 @@ function copiesSheetRoute(...descriptions) {
   const copyAction = '(?:align(?:s|ed|ing)? with|continue|follow|in line with|mirror|move|preserve|proceed|pursue|reproduce)';
   const crossClausePrompt = /\b(?:drawing|sheet)\b[^.!?]{0,180}\b(?:cue|prompt)\b[^.!?]{0,140}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
     .test(positiveText);
-  return crossClausePrompt || statements.some(statement => {
+  const crossClauseCoordination =
+    /\b(?:latest|newest|new)\s+sheet\b[^.!;]{0,160}\b(?:coordinat|synchroniz)\w*\b[^.!]{0,140}[.;][^.!;]{0,120}\b(?:advanc|continu|head|mov|proceed)\w*\b/i
+      .test(positiveText);
+  return crossClausePrompt || crossClauseCoordination || statements.some(statement => {
     if (/\b(?:intercept|opposite|counter|cross(?:ing)? path)\b/i.test(statement)) return false;
     return new RegExp(`\\b${copyAction}\\b[^.!;]{0,120}\\b${cue}\\b`, 'i').test(statement) ||
       new RegExp(`\\b${cue}\\b[^.!;]{0,120}\\b(?:reinforce|suggest|tell|direct|ask|imply)\\w*\\b[^.!;]{0,100}\\b(?:continue|follow|move|proceed|advance|head)\\w*\\b`, 'i')
@@ -1633,6 +1652,11 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         if (responseWithholdsRoute && unsupportedRouteCues.length > 0) {
           throw new Error(
             'Rendezvous response drawing contradicted its stated route uncertainty with directional imagery'
+          );
+        }
+        if (responseInventsRouteCoordination(candidateDrawingPlan)) {
+          throw new Error(
+            'Rendezvous response promoted an inferred sheet meaning into route coordination'
           );
         }
         if (candidateDrawingPlan.contributionKind === 'own_action') {

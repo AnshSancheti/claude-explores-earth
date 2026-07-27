@@ -8,7 +8,8 @@ import {
   RendezvousModelService,
   reconcileRendezvousContributionAction,
   repeatsRecentOutboundProposition,
-  responseDrawingContradictsRouteUncertainty
+  responseDrawingContradictsRouteUncertainty,
+  responseInventsRouteCoordination
 } from './rendezvousModel.js';
 import { RendezvousImageService } from './rendezvousImage.js';
 import {
@@ -1601,12 +1602,20 @@ export class RendezvousController {
     const lowInformationObservation = pending.contributionKind === 'local_observation' &&
       !isConcreteLocalEvidence(pending.contributionSummary || pending.informationDelta);
     const contradictoryResponse = responseDrawingContradictsRouteUncertainty(pending);
-    if (repeatsChannel || lowInformationObservation || contradictoryResponse) {
+    const inventedRouteCoordination = responseInventsRouteCoordination(pending);
+    if (
+      repeatsChannel ||
+      lowInformationObservation ||
+      contradictoryResponse ||
+      inventedRouteCoordination
+    ) {
       const error = repeatsChannel
         ? 'Pending drawing repeats a recent shared-channel proposition without declaring deliberate repetition'
         : lowInformationObservation
         ? 'Pending drawing contains only low-information urban street substrate'
-        : 'Pending response contradicts its stated route uncertainty with directional imagery';
+        : contradictoryResponse
+        ? 'Pending response contradicts its stated route uncertainty with directional imagery'
+        : 'Pending response promoted an inferred sheet meaning into route coordination';
       if (
         pending.replanCount < MAX_DRAWING_REPLANS &&
         typeof this.agentModel.replanUnrenderableDrawing === 'function'

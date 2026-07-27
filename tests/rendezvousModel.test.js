@@ -6,6 +6,7 @@ import {
   reconcileRendezvousContributionAction,
   reconcileRendezvousMessageAction,
   responseDrawingContradictsRouteUncertainty,
+  responseInventsRouteCoordination,
   sanitizeRendezvousDecision
 } from '../server/rendezvous/rendezvousModel.js';
 
@@ -815,6 +816,56 @@ test('a sheet-emphasized navigation axis cannot justify proceeding', async () =>
   assert.match(decision.reasoning, /what I can currently see/i);
   assert.doesNotMatch(decision.reasoning, /emphasizes navigation|so proceeding/i);
   assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
+});
+
+test('a sheet coordination disclaimer cannot justify movement after a semicolon', async () => {
+  const copiedReasoning = 'Current local evidence supports the public corridor. The newest sheet emphasizes coordinating near the crosswalk, not a fixed route; moving northwest preserves momentum.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'shared_proposal',
+        frameOfReference: 'shared',
+        sheetInterpretation: 'A crosswalk may invite coordinated movement.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    sheetMessage: {
+      sequence: 7,
+      from: 'theo',
+      to: 'ada',
+      contributionKind: 'local_observation'
+    }
+  }));
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.doesNotMatch(decision.reasoning, /coordinating near|moving northwest/i);
+});
+
+test('a response cannot turn an inferred crossing meaning into route coordination', () => {
+  assert.equal(responseInventsRouteCoordination({
+    contributionKind: 'response',
+    contributionSummary: 'My response to the received drawing: Crosswalk-focused urban movement cue; supports continuing along a public corridor rather than copying a specific drawn route.',
+    drawingIntent: 'Crosswalk-focused urban movement cue'
+  }), true);
+  assert.equal(responseInventsRouteCoordination({
+    contributionKind: 'own_action',
+    contributionSummary: 'My current chosen action: I chose to continue along the public corridor.'
+  }), false);
+  assert.equal(responseInventsRouteCoordination({
+    contributionKind: 'response',
+    contributionSummary: 'My response to the received drawing: It does not support continuing along a shared route.'
+  }), false);
 });
 
 test('a local observation cannot become route guidance through an inferred proposal', async () => {
@@ -2555,6 +2606,7 @@ test('bare street substrate is omitted while distinctive local evidence remains'
           'a long street lined with tall buildings',
           'pedestrians and vehicles in the distance',
           'busy urban street with crosswalk markings',
+          'crosswalk markings with bold white stripes ahead',
           'orange construction barriers beneath dense scaffolding'
         ]
       }),
@@ -2581,7 +2633,7 @@ test('bare street substrate is omitted while distinctive local evidence remains'
     'New local observation: orange construction barriers beneath dense scaffolding');
   assert.doesNotMatch(
     catalogText,
-    /street with lane markings|cross-street environment|curb, sidewalk|broad urban street flanked|widthy urban street|long street lined|pedestrians and vehicles|busy urban street/
+    /street with lane markings|cross-street environment|curb, sidewalk|broad urban street flanked|widthy urban street|long street lined|pedestrians and vehicles|busy urban street|bold white stripes/
   );
   assert.match(catalogText, /orange construction barriers beneath dense scaffolding/);
 });
