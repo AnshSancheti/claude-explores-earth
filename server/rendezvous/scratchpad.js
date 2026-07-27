@@ -12,7 +12,7 @@ export const RASTER_SCRATCHPAD_VERSION = 5;
 export const RASTER_SCRATCHPAD_WIDTH = 1152;
 export const RASTER_SCRATCHPAD_HEIGHT = 768;
 export const RASTER_SCRATCHPAD_MAX_MESSAGES = 160;
-export const RASTER_SCRATCHPAD_ATTEMPTS_PER_PLAN = 3;
+export const RASTER_SCRATCHPAD_ATTEMPTS_PER_PLAN = 2;
 
 const SCRATCHPAD_VERSION = 4;
 const SKETCH_SCENES = new Set(['intersection', 'storefront', 'park', 'station', 'landmark']);

@@ -1511,8 +1511,9 @@ test('a bounded question retry cannot waive a preferred route directive', async 
     await controller.resumePendingDrawing();
 
     assert.notEqual(controller.state.scratchpad.currentMessage?.id, 'preferred-route-question');
-    assert.equal(controller.state.scratchpad.pendingMessage.id, 'preferred-route-question');
-    assert.match(controller.state.scratchpad.pendingMessage.lastError, /answers its own question/i);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /answers its own question/i);
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
