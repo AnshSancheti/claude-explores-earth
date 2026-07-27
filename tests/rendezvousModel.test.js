@@ -3292,6 +3292,46 @@ test('response review rejects route guidance that contradicts explicit uncertain
   assert.equal(requests.length, 1);
 });
 
+test('response review preserves sender framing unless the response explicitly directs the recipient', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      blindRead: {
+        literalContents: ['a large arrow points forward along an avenue'],
+        primarySubject: 'a dominant forward arrow projected down the street',
+        likelyMessage: 'The viewer should proceed straight along the indicated route.',
+        dominantAction: 'movement',
+        frameOfReference: 'shared',
+        frameBasis: 'The arrow continues ahead of the viewer with no acting sender.',
+        communicationFunction: 'directive',
+        movementCues: ['large forward arrow'],
+        stillnessCues: [],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    contributionKind: 'response',
+    contributionSummary:
+      'My response to the received drawing: Grounded local continuation decision toward a new street axis; avoids copying the drawn route.',
+    drawingIntent: 'Report the locally grounded continuation I chose.',
+    informationDelta: 'I chose a new local continuation.',
+    messageAction: 'movement',
+    drawingPrompt: 'Draw a large arrow sweeping forward down an avenue.',
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /sender-framed response as route guidance/);
+  assert.match(review.revisionPrompt, /sender observed, concluded, chose, or did/);
+  assert.match(review.revisionPrompt, /Remove any standalone arrow/);
+  assert.equal(requests.length, 1);
+});
+
 test('question review requires both sides of a stop-versus-move contrast', async () => {
   const requests = [];
   const service = new RendezvousModelService({

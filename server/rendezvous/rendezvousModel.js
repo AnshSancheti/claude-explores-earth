@@ -254,6 +254,17 @@ function questionContrastsStillnessAndMovement(value) {
     /\b(?:advance|continue|move|proceed|travel|walk)\w*\b/i.test(text);
 }
 
+function responseExplicitlyDirectsRecipient(value) {
+  const evidence = contributionEvidenceText(value);
+  const movement = '(?:advance|continue|follow|go|head|move|proceed|take|travel|turn|walk)';
+  const recipient = '(?:ada|theo|friend|partner|recipient|viewer|you)';
+  return new RegExp(`^\\s*(?:please\\s+)?${movement}\\b`, 'i').test(evidence) ||
+    new RegExp(`\\b${recipient}\\b[^.!;]{0,100}\\b(?:should\\s+)?${movement}\\w*\\b`, 'i')
+      .test(evidence) ||
+    new RegExp(`\\b${movement}\\w*\\b[^.!;]{0,100}\\b${recipient}\\b`, 'i')
+      .test(evidence);
+}
+
 function historicalSheetLiteralContents(privateMemory, currentSequence) {
   return (privateMemory?.receivedSheets || [])
     .filter(sheet => Number(sheet?.sequence) !== Number(currentSequence))
@@ -2044,6 +2055,24 @@ Return only JSON:
         accepted: false,
         assessment: `Blind recipient saw route guidance in a response that explicitly withholds route certainty: ${blindRead.likelyMessage}`,
         revisionPrompt: 'Remove arrows, paths, vanishing-point movement, and directional commands. Make the non-confirmation, mismatch, interruption, or unresolved relationship itself visually primary, choosing your own wordless composition rather than issuing a route cue.',
+        blindRead
+      };
+    }
+    if (
+      contributionKind === 'response' &&
+      !responseExplicitlyDirectsRecipient(contributionSummary) &&
+      (
+        blindRead.communicationFunction === 'directive' ||
+        (
+          ['recipient', 'shared'].includes(blindRead.frameOfReference) &&
+          ['movement', 'transition'].includes(blindRead.dominantAction)
+        )
+      )
+    ) {
+      return {
+        accepted: false,
+        assessment: `Blind recipient read a sender-framed response as route guidance for them: ${blindRead.likelyMessage}`,
+        revisionPrompt: 'Frame the response as something the sender observed, concluded, chose, or did, not as a command or shared route projected ahead of the viewer. Remove any standalone arrow or open path that continues toward the recipient unless the cited response itself explicitly asks the recipient to move.',
         blindRead
       };
     }
