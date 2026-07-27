@@ -67,6 +67,8 @@ test('raster sheet changes and transfers only after a durable image commit', () 
     pendingId: 'message-one',
     imageFile: 'message-one.webp',
     imageSha256: 'hash',
+    sourceImageFile: 'message-one-source.jpg',
+    renderMode: 'source_grounded',
     imageModel: 'gpt-image-2'
   });
   assert.equal(committed.owner, 'theo');
@@ -82,6 +84,8 @@ test('raster sheet changes and transfers only after a durable image commit', () 
   assert.match(committed.messageAudit[0].continuityReason, /repeat Theo/);
   assert.equal(committed.messageAudit[0].messageAction, 'stillness');
   assert.deepEqual(committed.messageAudit[0].groundedFeatures, ['two stone arches', 'a round lamp between them']);
+  assert.equal(committed.messageAudit[0].sourceImageFile, 'message-one-source.jpg');
+  assert.equal(committed.messageAudit[0].renderMode, 'source_grounded');
 
   const publicSheet = publicRasterScratchpad(committed, {
     imageUrlFor: message => `/drawings/${message.id}`
@@ -91,7 +95,7 @@ test('raster sheet changes and transfers only after a durable image commit', () 
   assert.equal(Object.hasOwn(publicSheet, 'pendingMessage'), false);
   assert.equal(Object.hasOwn(publicSheet.currentMessage, 'imageFile'), false);
   assert.equal(Object.hasOwn(publicSheet.currentMessage, 'imageSha256'), false);
-  assert.doesNotMatch(JSON.stringify(publicSheet), /arches|converge|drawingPrompt|drawingIntent|contributionKind|contributionEvidenceId|contributionSummary|informationDelta|continuityReason|messageAction|groundedFeatures|sourcePanoId/);
+  assert.doesNotMatch(JSON.stringify(publicSheet), /arches|converge|drawingPrompt|drawingIntent|contributionKind|contributionEvidenceId|contributionSummary|informationDelta|continuityReason|messageAction|groundedFeatures|sourcePanoId|sourceImageFile|renderMode/);
 
   const history = publicRasterScratchpadHistory(committed, {
     imageUrlFor: message => `/drawings/${message.id}`
@@ -100,7 +104,7 @@ test('raster sheet changes and transfers only after a durable image commit', () 
   assert.equal(history.items[0].snapshot.agents.ada.panoId, 'ada-branch');
   assert.equal(history.items[0].snapshot.agents.ada.pathLength, 4);
   assert.equal(history.items[0].snapshot.agents.ada.lastThought.reasoning, 'I will mark the arches.');
-  assert.doesNotMatch(JSON.stringify(history), /drawingPrompt|drawingIntent|contributionKind|contributionEvidenceId|contributionSummary|informationDelta|continuityReason|messageAction|groundedFeatures/);
+  assert.doesNotMatch(JSON.stringify(history), /drawingPrompt|drawingIntent|contributionKind|contributionEvidenceId|contributionSummary|informationDelta|continuityReason|messageAction|groundedFeatures|sourceImageFile|renderMode/);
 });
 
 test('primitive model output is composed into one authored street sketch', async () => {

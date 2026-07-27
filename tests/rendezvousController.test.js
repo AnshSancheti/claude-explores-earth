@@ -829,6 +829,29 @@ test('a persisted pending drawing resumes after controller restart', async () =>
       mimeType: 'image/jpeg'
     });
     await assert.rejects(fsp.access(referencePath), { code: 'ENOENT' });
+    const retainedSourcePath = path.join(
+      referenceDirectory,
+      'restart-message-source.jpg'
+    );
+    assert.equal(
+      await fsp.readFile(retainedSourcePath, 'utf8'),
+      'durable-private-source'
+    );
+    assert.equal(
+      restarted.state.scratchpad.messageAudit[0].sourceImageFile,
+      'restart-message-source.jpg'
+    );
+    assert.equal(
+      restarted.state.scratchpad.messageAudit[0].renderMode,
+      'source_grounded'
+    );
+    assert.equal(
+      restarted.getDrawingPath(
+        restarted.state.runId,
+        'restart-message-source'
+      ),
+      null
+    );
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
     else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
@@ -2559,6 +2582,13 @@ test('drawing failure preserves a retryable handoff across controller restart', 
       'retry-source-view'
     );
     await assert.rejects(fsp.access(referencePath), { code: 'ENOENT' });
+    assert.equal(
+      await fsp.readFile(
+        path.join(referenceDirectory, 'retry-message-source.jpg'),
+        'utf8'
+      ),
+      'retry-source-view'
+    );
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
@@ -2711,8 +2741,15 @@ test('drawing cleanup removes only raster files no longer referenced by durable 
     await first.resumePendingDrawing();
 
     const drawingDir = path.join(tempDir, 'rendezvous-drawings', first.state.runId);
+    first.state.scratchpad.messageAudit[0].sourceImageFile = 'retained-first-source.jpg';
+    first.state.scratchpad.messageAudit[0].renderMode = 'source_grounded';
+    await fsp.writeFile(
+      path.join(drawingDir, 'retained-first-source.jpg'),
+      'private source'
+    );
     await fsp.writeFile(path.join(drawingDir, 'orphaned.webp'), 'orphan');
     await fsp.writeFile(path.join(drawingDir, 'orphaned.png'), 'orphan');
+    await fsp.writeFile(path.join(drawingDir, 'orphaned.jpg'), 'orphan');
     await fsp.writeFile(path.join(drawingDir, 'operator-note.txt'), 'keep non-raster files');
     await first.saveState();
 
@@ -2725,8 +2762,13 @@ test('drawing cleanup removes only raster files no longer referenced by durable 
     });
     await restarted.loadState();
     assert.equal(await fsp.readFile(path.join(drawingDir, 'retained-first.webp'), 'utf8'), 'fake-raster-1');
+    assert.equal(
+      await fsp.readFile(path.join(drawingDir, 'retained-first-source.jpg'), 'utf8'),
+      'private source'
+    );
     await assert.rejects(fsp.access(path.join(drawingDir, 'orphaned.webp')), { code: 'ENOENT' });
     await assert.rejects(fsp.access(path.join(drawingDir, 'orphaned.png')), { code: 'ENOENT' });
+    await assert.rejects(fsp.access(path.join(drawingDir, 'orphaned.jpg')), { code: 'ENOENT' });
     assert.equal(await fsp.readFile(path.join(drawingDir, 'operator-note.txt'), 'utf8'), 'keep non-raster files');
 
     await fsp.writeFile(path.join(drawingDir, 'post-load-orphan.webp'), 'orphan');

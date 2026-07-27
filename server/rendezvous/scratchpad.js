@@ -216,6 +216,10 @@ export function normalizeRasterScratchpad(raw, { turn = 0 } = {}) {
         imageFile: cleanString(entry?.imageFile, 240) || null,
         imageMimeType: cleanString(entry?.imageMimeType, 80) || null,
         imageSha256: cleanString(entry?.imageSha256, 128) || null,
+        sourceImageFile: cleanString(entry?.sourceImageFile, 240) || null,
+        renderMode: ['source_grounded', 'authored'].includes(entry?.renderMode)
+          ? entry.renderMode
+          : 'authored',
         snapshot: normalizeRasterSnapshot(entry?.snapshot),
         imageModel: cleanString(entry?.imageModel, 120) || null,
         requestId: cleanString(entry?.requestId, 240) || null,
@@ -296,6 +300,8 @@ export function commitRasterScratchpadMessage(scratchpad, {
   imageFile,
   imageMimeType = 'image/webp',
   imageSha256 = null,
+  sourceImageFile = null,
+  renderMode = 'authored',
   imageModel = null,
   requestId = null,
   reviewAssessment = null,
@@ -326,6 +332,8 @@ export function commitRasterScratchpadMessage(scratchpad, {
     imageFile,
     imageMimeType,
     imageSha256,
+    sourceImageFile: cleanString(sourceImageFile, 240) || null,
+    renderMode: renderMode === 'source_grounded' ? 'source_grounded' : 'authored',
     imageModel,
     requestId,
     reviewAssessment: cleanString(reviewAssessment, 500) || null,

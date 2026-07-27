@@ -1543,6 +1543,7 @@ export class RendezvousController {
     const referenced = new Set([
       scratchpad.currentMessage?.imageFile,
       ...scratchpad.messageAudit.map(message => message.imageFile),
+      ...scratchpad.messageAudit.map(message => message.sourceImageFile),
       ...(scratchpad.pendingMessage?.referenceViewIndices || []).map(index =>
         `${scratchpad.pendingMessage.id}-reference-${index}.jpg`
       )
@@ -1725,6 +1726,31 @@ export class RendezvousController {
       if (error.code !== 'ENOENT') {
         this.logger.warn?.(
           `Could not read rendezvous source view ${index} for ${pending.id}: ${error.message}`
+        );
+      }
+      return null;
+    }
+  }
+
+  async #retainSentReference(pending, runId = this.state.runId) {
+    const index = Array.isArray(pending?.referenceViewIndices)
+      ? pending.referenceViewIndices[0]
+      : null;
+    if (!Number.isInteger(index)) return null;
+    const sourceImageFile = `${pending.id}-source.jpg`;
+    try {
+      await fsp.copyFile(
+        path.join(
+          this.#drawingDirectory(runId),
+          `${pending.id}-reference-${index}.jpg`
+        ),
+        path.join(this.#drawingDirectory(runId), sourceImageFile)
+      );
+      return sourceImageFile;
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        this.logger.warn?.(
+          `Could not retain private source view for rendezvous drawing ${pending.id}: ${error.message}`
         );
       }
       return null;
@@ -2119,11 +2145,16 @@ export class RendezvousController {
         const currentPending = normalizeRasterScratchpad(this.state.scratchpad).pendingMessage;
         if (!currentPending || currentPending.id !== pending.id) return null;
         const imageSha256 = createHash('sha256').update(generated.buffer).digest('hex');
+        const sourceImageFile = referenceImage
+          ? await this.#retainSentReference(pending, runId)
+          : null;
         this.state.scratchpad = commitRasterScratchpadMessage(this.state.scratchpad, {
           pendingId: pending.id,
           imageFile,
           imageMimeType: generated.mimeType,
           imageSha256,
+          sourceImageFile,
+          renderMode: sourceImageFile ? 'source_grounded' : 'authored',
           imageModel: generated.model,
           requestId: generated.requestId,
           reviewAssessment: review.assessment,
@@ -2153,6 +2184,7 @@ export class RendezvousController {
           to: sent.to,
           sequence: sent.sequence,
           imageSha256,
+          renderMode: sourceImageFile ? 'source_grounded' : 'authored',
           renderAttempts,
           reviewAssessment: review.assessment
         });
