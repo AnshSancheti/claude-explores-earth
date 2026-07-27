@@ -3063,6 +3063,43 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
     assert.equal(publicState.eventLog.some(entry => entry.type === 'agent_step' && entry.payload.searchTargetName), false);
     assert.equal(publicState.eventLog.some(entry => Object.hasOwn(entry.payload || {}, 'targetName')), false);
     assert.equal(publicState.eventLog.some(entry => Object.hasOwn(entry.payload || {}, 'distanceToTarget')), false);
+    controller.state.eventLog.push({
+      type: 'scratchpad_sent',
+      turn: controller.state.turn,
+      payload: {
+        id: 'private-audit-boundary',
+        from: 'ada',
+        to: 'theo',
+        sequence: 2,
+        imageSha256: 'private-hash',
+        renderMode: 'source_grounded',
+        renderAttempts: 2,
+        reviewAssessment: 'private blind review'
+      }
+    });
+    controller.state.eventLog.push({
+      type: 'scratchpad_retry_scheduled',
+      turn: controller.state.turn,
+      payload: {
+        id: 'private-retry-boundary',
+        from: 'theo',
+        to: 'ada',
+        attempts: 1,
+        retryAt: '2026-07-27T22:00:00.000Z',
+        error: 'private renderer rejection'
+      }
+    });
+    const auditSafePublicState = controller.getPublicState();
+    const auditSafeEvents = auditSafePublicState.eventLog.filter(entry =>
+      entry.payload?.id?.startsWith('private-')
+    );
+    assert.equal(auditSafeEvents.length, 2);
+    assert.doesNotMatch(
+      JSON.stringify(auditSafeEvents),
+      /imageSha256|renderMode|renderAttempts|reviewAssessment|private-hash|private blind review|error|private renderer rejection/
+    );
+    assert.equal(auditSafeEvents[0].payload.sequence, 2);
+    assert.equal(auditSafeEvents[1].payload.attempts, 1);
 
     const legacyTelegram = {
       id: 'legacy-wire',

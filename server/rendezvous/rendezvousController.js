@@ -498,6 +498,35 @@ function sanitizePublicAgent(agent) {
   };
 }
 
+const PRIVATE_SCRATCHPAD_EVENT_FIELDS = new Set([
+  'availableReferenceFeatures',
+  'availableReferenceViewIndices',
+  'contributionEvidenceId',
+  'contributionKind',
+  'contributionSummary',
+  'drawingIntent',
+  'drawingPrompt',
+  'error',
+  'groundedFeatures',
+  'imageSha256',
+  'informationDelta',
+  'literalContents',
+  'medium',
+  'possibleIntentions',
+  'receipt',
+  'renderAttempts',
+  'renderMode',
+  'reviewAssessment',
+  'sourceImageFile',
+  'sourcePanoId'
+]);
+
+function stripScratchpadEventInternal(payload) {
+  return Object.fromEntries(
+    Object.entries(payload).filter(([key]) => !PRIVATE_SCRATCHPAD_EVENT_FIELDS.has(key))
+  );
+}
+
 function sanitizePublicEvent(event) {
   if (!event || typeof event !== 'object') return event;
   const payload = event.payload || event.data;
@@ -510,15 +539,18 @@ function sanitizePublicEvent(event) {
       data: event.data ? sanitizedTelegram : event.data
     };
   }
-  const agentName = payload.agentName || payload.name || payload.agentId;
-  const fallback = publicLegacyReason({ name: agentName || 'The agent', status: payload.status });
+  const publicPayload = event.type?.startsWith('scratchpad_')
+    ? stripScratchpadEventInternal(payload)
+    : payload;
+  const agentName = publicPayload.agentName || publicPayload.name || publicPayload.agentId;
+  const fallback = publicLegacyReason({ name: agentName || 'The agent', status: publicPayload.status });
   const sanitizedPayload = {
-    ...payload,
-    reasoning: sanitizeLegacyNotebookText(payload.reasoning, fallback),
-    reason: sanitizeLegacyNotebookText(payload.reason, fallback),
+    ...publicPayload,
+    reasoning: sanitizeLegacyNotebookText(publicPayload.reasoning, fallback),
+    reason: sanitizeLegacyNotebookText(publicPayload.reason, fallback),
     target: event.type === 'run_created' || event.type === 'run_started'
       ? undefined
-      : payload.target
+      : publicPayload.target
   };
   delete sanitizedPayload.targetName;
   delete sanitizedPayload.distanceToTarget;
