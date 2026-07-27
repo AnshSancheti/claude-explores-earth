@@ -210,7 +210,7 @@ function visualDescriptionSimilarity(first, second) {
 
 function contributionEvidenceText(value) {
   return cleanString(value, 700)
-    .replace(/^(?:New local observation|My current chosen action|Question I am sending|Correction I am sending|Acknowledging received visual evidence without claiming it as my own|Deliberately repeating existing visual evidence without treating it as new):\s*/i, '');
+    .replace(/^(?:New local observation|My current chosen action|Question I am sending(?: about this local evidence)?|Correction I am sending|Acknowledging received visual evidence without claiming it as my own|Deliberately repeating existing visual evidence without treating it as new):\s*/i, '');
 }
 
 const ROUTE_COMMAND_CUES = [
@@ -331,6 +331,40 @@ export function questionAlternativesVisible(value, blindRead) {
     if (visualDescriptionTokens(alternative).size === 0) return true;
     return visualDescriptionSimilarity(alternative, blindDescription) >= 0.25;
   });
+}
+
+export function localQuestionPreservesCitedSubject(message) {
+  if (
+    message?.contributionKind !== 'question' ||
+    !String(message?.contributionEvidenceId || '').startsWith('question_local:')
+  ) {
+    return true;
+  }
+  const localEvidence = contributionEvidenceText(
+    message?.contributionSummary || message?.informationDelta
+  ).replace(/^about this local evidence:\s*/i, '');
+  const drawingIntent = cleanString(message?.drawingIntent, 1200);
+  const drawingPlan = cleanString(
+    `${drawingIntent} ${message?.drawingPrompt || ''}`,
+    3000
+  );
+  if (
+    !localEvidence ||
+    visualDescriptionSimilarity(localEvidence, drawingPlan) < 0.25
+  ) {
+    return false;
+  }
+  const questionClause = drawingIntent.match(/\b(?:whether|if)\b([\s\S]*)/i)?.[1] ||
+    drawingIntent;
+  const receivedCueIsSubject =
+    /\b(?:ada|theo|friend|partner)(?:'s|’s)?\b[^.!?]{0,80}\b(?:cue|drawing|message|sheet|signal|symbol)\b/i
+      .test(questionClause) ||
+    /\b(?:her|his|their)\b[^.!?]{0,50}\b(?:cue|drawing|message|sheet|signal|symbol)\b/i
+      .test(questionClause) ||
+    /\b(?:incoming|latest|newest|received)\b[^.!?]{0,30}\b(?:drawing|message|sheet|signal)\b/i
+      .test(questionClause);
+  return !receivedCueIsSubject ||
+    visualDescriptionSimilarity(localEvidence, questionClause) >= 0.25;
 }
 
 function responseExplicitlyDirectsRecipient(value) {
@@ -1672,6 +1706,18 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           throw new Error('Rendezvous drawing planner omitted its intended message, information delta, or dominant action');
         }
         if (
+          candidateDrawingPlan.contributionKind === 'question' &&
+          !questionAlternativesVisible(candidateDrawingPlan.contributionSummary, {
+            likelyMessage:
+              `${candidateDrawingPlan.drawingIntent} ${candidateDrawingPlan.drawingPrompt}`
+          })
+        ) {
+          throw new Error('Rendezvous drawing planner omitted one or both visual question alternatives');
+        }
+        if (!localQuestionPreservesCitedSubject(candidateDrawingPlan)) {
+          throw new Error('Rendezvous local question displaced its cited subject with the received cue');
+        }
+        if (
           ['acknowledgement', 'deliberate_repetition'].includes(candidateDrawingPlan.contributionKind) &&
           !candidateDrawingPlan.continuityReason
         ) {
@@ -1876,6 +1922,10 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           ? 'Start from a blank page and use one coherent composition centered on the cited contribution. You may retain one small recurring symbol, but do not use panels, a triptych, or the received sheet layout.'
           : (/response drawing contradicted/i.test(error.message)
             ? 'Your cited response explicitly withholds route certainty. Remove arrows, paths, vanishing-point movement, and directional commands. Communicate the uncertainty, non-confirmation, or unresolved relationship itself without turning it into a route.'
+          : (/omitted one or both visual question alternatives/i.test(error.message)
+            ? 'Preserve the exact unresolved question from the cited evidence. Name both alternatives in the drawing intent or drawing prompt and give each a concrete visual presence without favoring or resolving either one.'
+          : (/local question displaced its cited subject/i.test(error.message)
+            ? 'Your question_local evidence ID grounds a question about that concrete local feature. Keep that feature inside the actual whether-or-if clause. If you instead mean to ask what the received drawing meant, cite an available question evidence ID.'
           : (/own-action drawing contradicted the cited compass direction/i.test(error.message)
             ? 'Keep the cited own action authoritative. Remove every named compass direction that conflicts with it, then depict that same action from a sender-framed or retrospective point of view without changing its direction.'
           : (/route-command imagery unrelated/i.test(error.message)
@@ -1888,7 +1938,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
               ? 'The current sheet visibly asks you something and your reconciliation contains grounded response evidence. Choose what you actually want to say back: cite response evidence to answer, question evidence to clarify, contradiction evidence to correct, received evidence to acknowledge that you cannot answer, or deliberately repeat unresolved evidence. Do not substitute an unrelated local postcard.'
               : (/(?:uncited motif|unsupported partner hypothesis)/i.test(error.message)
               ? 'Keep the cited contribution primary. Do not describe any inherited symbol, route, target, waypoint, district, or place as a known shared destination or otherwise promote an unsupported partner hypothesis into a movement goal. If you retain one, make it subordinate and explicitly uncertain, questioned, tested, transformed, or deliberately repeated.'
-              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.')))))));
+              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.')))))))));
         tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
       }
     }
@@ -2092,6 +2142,14 @@ ${JSON.stringify(catalog, null, 2)}`
           /^(?:movement|stillness|transition|unclear)$/i.test(drawingIntent)
         ) {
           throw new Error('Rendezvous drawing replan omitted its visual message');
+        }
+        if (
+          cited.kind === 'question' &&
+          !questionAlternativesVisible(contributionSummary, {
+            likelyMessage: `${drawingIntent} ${drawingPrompt}`
+          })
+        ) {
+          throw new Error('Rendezvous drawing replan omitted one or both visual question alternatives');
         }
         if (
           requestedMessageAction !== 'unclear' &&

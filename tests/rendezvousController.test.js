@@ -801,8 +801,8 @@ test('a rejected question revision cannot resolve its own alternatives', async (
       turn: 2,
       contributionKind: 'question',
       contributionSummary: 'Question I am sending: is this a crossing point or a continuation?',
-      drawingIntent: 'Ask which of two possible spatial readings is intended.',
-      drawingPrompt: 'Draw two possible readings around an uncertain crossing.',
+      drawingIntent: 'Ask whether this is a crossing point or a continuation.',
+      drawingPrompt: 'Draw a crossing point and a continuation with equal visual weight.',
       messageAction: 'unclear',
       groundedFeatures: ['crossing point', 'continuation']
     });
@@ -858,6 +858,46 @@ test('a persisted question revision gains the unresolved constraint without rese
     assert.equal(upgraded.totalAttempts, 5);
     assert.match(upgraded.drawingPrompt, /remain an unresolved question/i);
     assert.match(upgraded.drawingPrompt, /Remove readable text and preserve the crossing/i);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a persisted local question cannot substitute the received cue for its cited subject', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-local-question-subject-test-'));
+  const imageModel = new FakeImageModel();
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: {},
+      imageModel,
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'misattributed-local-question',
+      agentId: 'ada',
+      turn: 3,
+      contributionKind: 'question',
+      contributionEvidenceId: 'question_local:0',
+      contributionSummary: 'Question I am sending about this local evidence: crosswalks in the foreground',
+      drawingIntent: 'Ask Theo whether his forward cue means literal movement or a symbolic axis.',
+      drawingPrompt: 'Draw a street fork with crosswalks in the foreground.',
+      messageAction: 'unclear',
+      groundedFeatures: ['crosswalks in the foreground']
+    });
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(imageModel.calls.length, 0);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.match(
+      controller.state.scratchpad.messageAudit.at(-1).error,
+      /displaced its cited subject with the received cue/i
+    );
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
@@ -1440,10 +1480,10 @@ test('a bounded retry accepts a legible unresolved visual question', async () =>
       contributionKind: 'question',
       contributionEvidenceId: 'question:0',
       contributionSummary: 'Question I am sending: is this a shared crossing or a continuation?',
-      drawingIntent: 'Show two equally unresolved readings of the crossing.',
+      drawingIntent: 'Ask whether this is a shared crossing or a continuation.',
       informationDelta: 'Question I am sending: is this a shared crossing or a continuation?',
       messageAction: 'unclear',
-      drawingPrompt: 'Draw two equally unresolved readings of the crossing.',
+      drawingPrompt: 'Draw a shared crossing and a continuation with equal visual weight.',
       groundedFeatures: ['shared crossing', 'continuation']
     });
     controller.state.scratchpad.pendingMessage.attempts = 6;
@@ -1498,10 +1538,10 @@ test('a bounded question retry cannot waive a preferred route directive', async 
       contributionKind: 'question',
       contributionEvidenceId: 'question:0',
       contributionSummary: 'Question I am sending: is this a shared crossing or a continuation?',
-      drawingIntent: 'Show two equally unresolved readings of the crossing.',
+      drawingIntent: 'Ask whether this is a shared crossing or a continuation.',
       informationDelta: 'Question I am sending: is this a shared crossing or a continuation?',
       messageAction: 'unclear',
-      drawingPrompt: 'Draw two equally unresolved readings of the crossing.',
+      drawingPrompt: 'Draw a shared crossing and a continuation with equal visual weight.',
       groundedFeatures: ['shared crossing', 'continuation']
     });
     controller.state.scratchpad.pendingMessage.attempts = 6;

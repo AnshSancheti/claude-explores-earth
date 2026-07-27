@@ -6,6 +6,7 @@ import { calculateBearing } from '../utils/geoUtils.js';
 import {
   deliberateRepetitionHasPurpose,
   isConcreteLocalEvidence,
+  localQuestionPreservesCitedSubject,
   questionAlternativesVisible,
   RendezvousModelService,
   reconcileRendezvousContributionAction,
@@ -1654,12 +1655,19 @@ export class RendezvousController {
     const contradictoryResponse = responseDrawingContradictsRouteUncertainty(pending);
     const inventedRouteCoordination = responseInventsRouteCoordination(pending);
     const unmotivatedRepetition = !deliberateRepetitionHasPurpose(pending);
+    const incompleteQuestionPlan = pending.contributionKind === 'question' &&
+      !questionAlternativesVisible(pending.contributionSummary, {
+        likelyMessage: `${pending.drawingIntent || ''} ${pending.drawingPrompt || ''}`
+      });
+    const displacedLocalQuestion = !localQuestionPreservesCitedSubject(pending);
     if (
       repeatsChannel ||
       lowInformationObservation ||
       contradictoryResponse ||
       inventedRouteCoordination ||
-      unmotivatedRepetition
+      unmotivatedRepetition ||
+      incompleteQuestionPlan ||
+      displacedLocalQuestion
     ) {
       const error = repeatsChannel
         ? 'Pending drawing repeats a recent shared-channel proposition without declaring deliberate repetition'
@@ -1669,7 +1677,11 @@ export class RendezvousController {
         ? 'Pending response contradicts its stated route uncertainty with directional imagery'
         : inventedRouteCoordination
         ? 'Pending response promoted an inferred sheet meaning into route coordination'
-        : 'Pending deliberate repetition does not explain what repeating it communicates now';
+        : unmotivatedRepetition
+        ? 'Pending deliberate repetition does not explain what repeating it communicates now'
+        : incompleteQuestionPlan
+        ? 'Pending question plan does not include both authored visual alternatives'
+        : 'Pending local question displaced its cited subject with the received cue';
       if (
         pending.replanCount < MAX_DRAWING_REPLANS &&
         typeof this.agentModel.replanUnrenderableDrawing === 'function'

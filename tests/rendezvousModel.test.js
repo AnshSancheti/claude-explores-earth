@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   deliberateRepetitionHasPurpose,
   isCueDependentSearchPlan,
+  localQuestionPreservesCitedSubject,
   questionAlternativesVisible,
   RendezvousModelService,
   reconcileRendezvousContributionAction,
@@ -291,6 +292,57 @@ test('an agent can turn concrete local evidence into its own visual question', a
   assert.match(drawingRequest.messages[1].content[0].text, /"kind": "question"/);
 });
 
+test('a local question cannot hide a question about the received cue', async () => {
+  let drawingAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing(request) {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'question',
+            contributionEvidenceId: 'question_local:0',
+            drawingIntent: 'Ask Theo whether his forward cue means literal movement or a symbolic axis.',
+            messageAction: 'unclear',
+            drawingPrompt: 'Draw a street fork with the local arches in the background.',
+            groundedFeatureEvidenceIds: ['question_local:0']
+          });
+        }
+        assert.match(
+          request.messages[1].content[0].text,
+          /Keep that feature inside the actual whether-or-if clause/
+        );
+        return drawingResponse({
+          contributionKind: 'question',
+          contributionEvidenceId: 'question_local:0',
+          drawingIntent: 'Ask whether Theo recognizes the relationship among these repeated arches.',
+          messageAction: 'unclear',
+          drawingPrompt: 'Draw three stone arches with two equally unresolved relationships.',
+          groundedFeatureEvidenceIds: ['question_local:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionEvidenceId, 'question_local:0');
+  assert.match(decision.drawingIntent, /these repeated arches/);
+});
+
+test('a local question may compare its cited subject with a received drawing', () => {
+  assert.equal(localQuestionPreservesCitedSubject({
+    contributionKind: 'question',
+    contributionEvidenceId: 'question_local:0',
+    contributionSummary: 'Question I am sending about this local evidence: three repeated stone arches',
+    drawingIntent: 'Ask whether Theo’s drawing shows the same repeated arches that I see here.',
+    drawingPrompt: 'Draw these three arches beside a faint echo of the received forms.'
+  }), true);
+});
+
 test('drawing planner corrects a kind and evidence mismatch without changing the intended act', async () => {
   const requests = [];
   let drawingAttempts = 0;
@@ -311,9 +363,9 @@ test('drawing planner corrects a kind and evidence mismatch without changing the
         return drawingResponse({
           contributionKind: 'question',
           contributionEvidenceId: 'question:0',
-          drawingIntent: 'Ask whether the circle is a place or a movement cue.',
+          drawingIntent: 'Ask whether the circle represents a lamp or a destination.',
           messageAction: 'unclear',
-          drawingPrompt: 'Draw a circle suspended between two visibly different possibilities.',
+          drawingPrompt: 'Draw a circle suspended between a lamp and a destination symbol.',
           groundedFeatureEvidenceIds: ['question:0']
         });
       }
@@ -936,6 +988,41 @@ test('a binary visual question must show both authored alternatives', () => {
     movementCues: [],
     stillnessCues: []
   }), true);
+});
+
+test('a binary question plan cannot replace its alternatives with generic progression', async () => {
+  let drawingAttempts = 0;
+  const perception = perceptionResponse();
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perception,
+        evidenceDelta: {
+          ...perception.evidenceDelta,
+          unresolvedQuestions: [
+            'Whether the implied endpoint is a cross-street or a continuing axis'
+          ]
+        }
+      },
+      drawing() {
+        drawingAttempts += 1;
+        return drawingResponse({
+          contributionKind: 'question',
+          contributionEvidenceId: 'question:0',
+          drawingIntent: 'Depict ongoing movement through a generic corridor.',
+          messageAction: 'movement',
+          drawingPrompt: 'Draw one line progressing through a corridor.',
+          groundedFeatureEvidenceIds: ['question:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.fallbackCause, 'drawing_plan_error');
 });
 
 test('a local observation cannot become route guidance through an inferred proposal', async () => {
@@ -1840,9 +1927,9 @@ test('a generic walking-away composition cannot present a recent movement propos
         return drawingResponse({
           contributionKind: 'question',
           contributionEvidenceId: 'question:0',
-          drawingIntent: 'Ask whether the recurring circle identifies a place or only movement.',
+          drawingIntent: 'Ask whether the recurring circle represents a lamp or a destination.',
           messageAction: 'unclear',
-          drawingPrompt: 'Draw a large uncertain circle suspended between two visibly different possibilities.',
+          drawingPrompt: 'Draw a large uncertain circle suspended between a lamp and a destination symbol.',
           groundedFeatureEvidenceIds: ['question:0']
         });
       }
@@ -1934,9 +2021,9 @@ test('a third copy of the same local observation must adapt or repeat deliberate
         return drawingResponse({
           contributionKind: 'question',
           contributionEvidenceId: 'question:0',
-          drawingIntent: 'Ask whether the repeated fork means a choice or uncertainty.',
+          drawingIntent: 'Ask whether the recurring circle represents a lamp or a destination.',
           messageAction: 'unclear',
-          drawingPrompt: 'Draw one fork balanced between two uncertain, unchosen branches.',
+          drawingPrompt: 'Draw one uncertain circle balanced between a lamp and a destination symbol.',
           groundedFeatureEvidenceIds: ['question:0']
         });
       }
@@ -2042,9 +2129,9 @@ test('a partner observation misread as a shared proposal still counts toward rep
         return drawingResponse({
           contributionKind: 'question',
           contributionEvidenceId: 'question:0',
-          drawingIntent: 'Ask whether the recurring crossing is a place clue or only shared scenery.',
+          drawingIntent: 'Ask whether the recurring circle represents a lamp or a destination.',
           messageAction: 'unclear',
-          drawingPrompt: 'Draw one uncertain crossing balanced between a place marker and ordinary scenery.',
+          drawingPrompt: 'Draw one uncertain circle balanced between a lamp and a destination symbol.',
           groundedFeatureEvidenceIds: ['question:0']
         });
       }
@@ -2266,9 +2353,9 @@ test('an alternating local-observation echo cannot hide behind a narrower author
         return drawingResponse({
           contributionKind: 'question',
           contributionEvidenceId: 'question:0',
-          drawingIntent: 'Ask whether the recurring storefront motif is meaningful or ordinary scenery.',
+          drawingIntent: 'Ask whether the recurring circle represents a lamp or a destination.',
           messageAction: 'unclear',
-          drawingPrompt: 'Draw one storefront motif balanced between a distinct clue and ordinary background.',
+          drawingPrompt: 'Draw one uncertain circle balanced between a lamp and a destination symbol.',
           groundedFeatureEvidenceIds: ['question:0']
         });
       }
