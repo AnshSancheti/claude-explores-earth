@@ -4687,6 +4687,77 @@ test('local-observation review recognizes a continuous avenue-axis paraphrase', 
   assert.equal(review.accepted, true);
 });
 
+test('local-observation review recognizes a distant focal building along an axis', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: ['an avenue receding toward a distant building'],
+        primarySubject: 'the central perspective of an avenue receding to a distant building',
+        likelyMessage: 'The sender sees a continuous public axis toward a distant focal point.',
+        dominantAction: 'unclear',
+        frameOfReference: 'sender',
+        frameBasis: 'The avenue and building form a static perspective study.',
+        communicationFunction: 'report',
+        movementCues: [],
+        stillnessCues: ['static avenue and distant building'],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: General sense of a continuous public axis toward a distant focal point',
+    drawingIntent: 'Show the continuous public axis toward a distant focal point.',
+    informationDelta: 'New local observation: General sense of a continuous public axis toward a distant focal point',
+    messageAction: 'unclear',
+    drawingPrompt: 'Draw a static avenue receding toward a distant focal building.',
+    groundedFeatures: ['General sense of a continuous public axis toward a distant focal point'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, true);
+});
+
+test('local-observation focal-landmark review still requires the perspective axis', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: ['a distant building framed inside a circular opening'],
+        primarySubject: 'the circular opening framing a distant building',
+        likelyMessage: 'The sender sees a distant building through a round frame.',
+        dominantAction: 'stillness',
+        frameOfReference: 'sender',
+        frameBasis: 'The circular opening dominates the composition.',
+        communicationFunction: 'report',
+        movementCues: [],
+        stillnessCues: ['static circular frame'],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: General sense of a continuous public axis toward a distant focal point',
+    drawingIntent: 'Show the continuous public axis toward a distant focal point.',
+    informationDelta: 'New local observation: General sense of a continuous public axis toward a distant focal point',
+    messageAction: 'unclear',
+    drawingPrompt: 'Draw a static avenue receding toward a distant focal building.',
+    groundedFeatures: ['General sense of a continuous public axis toward a distant focal point'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /circular opening.*not the cited local observation/);
+});
+
 test('local-observation review recognizes crosswalk wording as the cited subject', async () => {
   const requests = [];
   const service = new RendezvousModelService({

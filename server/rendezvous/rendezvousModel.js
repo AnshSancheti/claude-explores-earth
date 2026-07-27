@@ -171,12 +171,12 @@ const VISUAL_SIMILARITY_STOPWORDS = new Set([
   'about', 'ahead', 'along', 'also', 'and', 'around', 'away', 'background',
   'been', 'being', 'both', 'city', 'cited', 'coherent', 'complete',
   'context', 'continuous', 'contribution', 'could', 'create', 'distance',
-  'distant', 'down', 'drawing', 'features', 'foreground', 'from', 'grounded',
+  'distant', 'down', 'drawing', 'features', 'focal', 'foreground', 'from', 'general', 'grounded',
   'handmade', 'include', 'into', 'labels', 'large', 'layout', 'left',
   'letters', 'local', 'logos', 'make', 'message', 'might', 'numbers',
-  'observation', 'one', 'only', 'other', 'person', 'primary', 'public',
+  'observation', 'one', 'only', 'other', 'person', 'point', 'primary', 'public',
   'readable', 'rendering', 'represent', 'right', 'scene', 'show', 'shows',
-  'side', 'street', 'suggesting', 'text', 'the', 'their', 'there', 'these',
+  'sense', 'side', 'street', 'suggesting', 'text', 'the', 'their', 'there', 'these',
   'they', 'this', 'through', 'toward', 'towards', 'unmistakably', 'urban',
   'use', 'viewer', 'visible', 'visually', 'watermarks', 'with', 'without',
   'wordless', 'words', 'would'
@@ -231,6 +231,13 @@ function localObservationReviewDescription(value) {
       .test(description)
   ) {
     concepts.push('perspective-axis');
+  }
+  if (
+    /\bfocal point\b/i.test(description) ||
+    /\bdistant\b[^.!;]{0,40}\b(?:building|landmark|monument|structure|tower)\b/i
+      .test(description)
+  ) {
+    concepts.push('distant-focal-landmark');
   }
   return `${description} ${concepts.join(' ')}`.trim();
 }
