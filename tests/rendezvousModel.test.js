@@ -2192,6 +2192,16 @@ test('a genuinely moving local subject can remain movement-dominant', () => {
   ), 'movement');
 });
 
+test('a single-frame local observation cannot invent a temporal transition', () => {
+  assert.equal(reconcileRendezvousContributionAction(
+    'local_observation',
+    'New local observation: crosswalks',
+    'transition',
+    'Show the crosswalks.',
+    'Draw before and after states around the crosswalks.'
+  ), 'unclear');
+});
+
 test('a durable paused route retry is reconciled to transition', () => {
   assert.equal(reconcileRendezvousMessageAction(
     'stillness',

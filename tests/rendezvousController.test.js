@@ -924,9 +924,9 @@ test('a persisted static observation drops a spurious movement requirement', asy
       contributionKind: 'local_observation',
       contributionSummary: 'New local observation: a clear northward corridor ahead. The approach appears navigable',
       informationDelta: 'New local observation: a clear northward corridor ahead. The approach appears navigable',
-      messageAction: 'movement',
+      messageAction: 'transition',
       drawingIntent: 'Show the clear urban corridor itself.',
-      drawingPrompt: 'Draw a runner moving through the clear urban corridor.'
+      drawingPrompt: 'Draw before and after states around the clear urban corridor.'
     });
 
     await controller.resumePendingDrawing();

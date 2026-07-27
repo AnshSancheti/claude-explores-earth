@@ -536,12 +536,17 @@ export function reconcileRendezvousContributionAction(
   }
   if (
     contributionKind === 'local_observation' &&
-    requestedAction === 'movement' &&
-    !(
-      /\b(?:cyclist|pedestrian|person|runner|someone|vehicle|car|bus|truck|traffic)\b[^.!;]{0,80}\b(?:approach|cross|depart|head|move|ride|run|travel|walk)\w*\b/i
-        .test(evidence) ||
-      /\b(?:approach|cross|depart|head|move|ride|run|travel|walk)\w*\b[^.!;]{0,80}\b(?:cyclist|pedestrian|person|runner|someone|vehicle|car|bus|truck|traffic)\b/i
-        .test(evidence)
+    (
+      requestedAction === 'transition' ||
+      (
+        requestedAction === 'movement' &&
+        !(
+          /\b(?:cyclist|pedestrian|person|runner|someone|vehicle|car|bus|truck|traffic)\b[^.!;]{0,80}\b(?:approach|cross|depart|head|move|ride|run|travel|walk)\w*\b/i
+            .test(evidence) ||
+          /\b(?:approach|cross|depart|head|move|ride|run|travel|walk)\w*\b[^.!;]{0,80}\b(?:cyclist|pedestrian|person|runner|someone|vehicle|car|bus|truck|traffic)\b/i
+            .test(evidence)
+        )
+      )
     )
   ) {
     return 'unclear';
@@ -1694,7 +1699,7 @@ ${JSON.stringify(catalog, null, 2)}`
           messageAction !== requestedMessageAction &&
           !(
             cited.kind === 'local_observation' &&
-            requestedMessageAction === 'movement' &&
+            ['movement', 'transition'].includes(requestedMessageAction) &&
             messageAction === 'unclear'
           )
         ) {
