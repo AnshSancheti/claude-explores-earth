@@ -734,11 +734,30 @@ function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
       return repeatsEvidence || repeatsVisual ||
         (genericMovementProposition(currentVisual) && genericMovementProposition(previousVisual));
     }).length;
+  const matchingReceivedObservations = contributionKind === 'local_observation'
+    ? (privateMemory?.receivedSheets || []).slice(-6)
+      .filter(sheet => ['report', 'unclear'].includes(sheet?.communicationFunction))
+      .filter(sheet => {
+        const receivedVisual = cleanString(
+          [
+            sheet?.primarySubject,
+            ...(Array.isArray(sheet?.literalContents) ? sheet.literalContents : []),
+            sheet?.interpretation
+          ].filter(Boolean).join(' '),
+          3000
+        );
+        return currentEvidence && receivedVisual &&
+          visualDescriptionSimilarity(currentEvidence, receivedVisual) >= 0.72;
+      }).length
+    : 0;
 
   // A recurring observation, question, or correction may be useful once. After
   // that, the sender must either add information or label the repetition
-  // honestly. Generic action scenes are challenged after the first recurrence.
-  return matchingRecentMessages >= (contributionKind === 'own_action' ? 1 : 2);
+  // honestly. Received observations count too, so the same postcard cannot
+  // evade the limit by alternating authors. Generic action scenes are
+  // challenged after the first recurrence.
+  return matchingRecentMessages + matchingReceivedObservations >=
+    (contributionKind === 'own_action' ? 1 : 2);
 }
 
 function fallbackDecision(options, visitedPanos, cause) {

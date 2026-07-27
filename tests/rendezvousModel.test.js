@@ -1551,6 +1551,91 @@ test('a third copy of the same local observation must adapt or repeat deliberate
   assert.match(decision.drawingPrompt, /uncertain/);
 });
 
+test('an echoed partner observation counts toward shared channel repetition', async () => {
+  let drawingAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing() {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'local_observation',
+            contributionEvidenceId: 'local:0',
+            drawingIntent: 'Show the three repeated stone arches.',
+            messageAction: 'unclear',
+            drawingPrompt: 'Sketch three repeated stone arches.',
+            groundedFeatureEvidenceIds: ['local:0']
+          });
+        }
+        return drawingResponse({
+          contributionKind: 'question',
+          contributionEvidenceId: 'question:0',
+          drawingIntent: 'Ask whether the recurring circle is a lamp or destination.',
+          messageAction: 'unclear',
+          drawingPrompt: 'Draw one uncertain circle between a lamp and a distant place.',
+          groundedFeatureEvidenceIds: ['question:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      sentMessages: [{
+        sequence: 7,
+        contributionKind: 'local_observation',
+        contributionSummary: 'New local observation: three repeated stone arches',
+        informationDelta: 'New local observation: three repeated stone arches',
+        intent: 'Show three repeated stone arches.'
+      }],
+      receivedSheets: [{
+        sequence: 8,
+        communicationFunction: 'report',
+        primarySubject: 'Three repeated stone arches',
+        literalContents: ['three masonry arches in a row'],
+        interpretation: 'A recognizable stone arcade'
+      }]
+    }
+  }));
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.contributionKind, 'question');
+});
+
+test('one partner observation can still be echoed as corroboration', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing: drawingResponse({
+        contributionKind: 'local_observation',
+        contributionEvidenceId: 'local:0',
+        drawingIntent: 'Show the three repeated stone arches.',
+        messageAction: 'unclear',
+        drawingPrompt: 'Sketch three repeated stone arches.',
+        groundedFeatureEvidenceIds: ['local:0']
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      receivedSheets: [{
+        sequence: 8,
+        communicationFunction: 'report',
+        primarySubject: 'Three repeated stone arches',
+        literalContents: ['three masonry arches in a row'],
+        interpretation: 'A recognizable stone arcade'
+      }]
+    }
+  }));
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'local_observation');
+});
+
 test('distinct planner corrections receive one bounded extra attempt', async () => {
   let drawingAttempts = 0;
   const service = new RendezvousModelService({
