@@ -294,6 +294,28 @@ function questionContrastsStillnessAndMovement(value) {
     /\b(?:advance|continue|move|proceed|travel|walk)\w*\b/i.test(text);
 }
 
+export function questionAlternativesVisible(value, blindRead) {
+  const alternatives = contributionEvidenceText(value)
+    .replace(/\?+\s*$/, '')
+    .split(/\s+\bor\b\s+/i)
+    .map(alternative => cleanString(alternative, 500).replace(/-/g, ' '))
+    .filter(Boolean);
+  if (alternatives.length !== 2) return true;
+  const blindDescription = cleanString([
+    blindRead?.primarySubject,
+    blindRead?.likelyMessage,
+    blindRead?.frameBasis,
+    ...(Array.isArray(blindRead?.literalContents) ? blindRead.literalContents : []),
+    ...(Array.isArray(blindRead?.movementCues) ? blindRead.movementCues : []),
+    ...(Array.isArray(blindRead?.stillnessCues) ? blindRead.stillnessCues : [])
+  ].filter(Boolean).join(' '), 3000).replace(/-/g, ' ');
+  if (!blindDescription) return false;
+  return alternatives.every(alternative => {
+    if (visualDescriptionTokens(alternative).size === 0) return true;
+    return visualDescriptionSimilarity(alternative, blindDescription) >= 0.25;
+  });
+}
+
 function responseExplicitlyDirectsRecipient(value) {
   const evidence = contributionEvidenceText(value);
   const movement = '(?:advance|continue|follow|go|head|move|proceed|take|travel|turn|walk)';
@@ -2294,6 +2316,17 @@ Return only JSON:
         accepted: false,
         assessment: `Blind recipient could not see both sides of the stated stillness-versus-movement question: ${blindRead.likelyMessage}`,
         revisionPrompt: 'Make both alternatives visibly concrete: one unmistakably stationary, anchored, stopped, or waiting state and one unmistakably moving or continuing state. Choose your own wordless composition, but do not substitute a left-versus-right route choice for the stated stop-versus-continue contrast.',
+        blindRead
+      };
+    }
+    if (
+      contributionKind === 'question' &&
+      !questionAlternativesVisible(contributionSummary, blindRead)
+    ) {
+      return {
+        accepted: false,
+        assessment: `Blind recipient could not see both stated alternatives in the question: ${blindRead.likelyMessage}`,
+        revisionPrompt: 'Make each stated alternative separately visible and give them equal visual weight. Keep the relationship unresolved. Do not replace either alternative with a generic line, arrow, path, question mark, or vague sense of uncertainty.',
         blindRead
       };
     }

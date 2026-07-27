@@ -5,6 +5,7 @@ import { StreetViewHeadless } from '../services/streetViewHeadless.js';
 import { calculateBearing } from '../utils/geoUtils.js';
 import {
   isConcreteLocalEvidence,
+  questionAlternativesVisible,
   RendezvousModelService,
   reconcileRendezvousContributionAction,
   repeatsRecentOutboundProposition,
@@ -143,6 +144,7 @@ function canAcceptRecipientLegibleRetry(review, pending, attemptNumber) {
       if (
         addressesRecipient &&
         expressesUncertainty &&
+        questionAlternativesVisible(pending.contributionSummary, blindRead) &&
         !prefersDirection
       ) {
         return true;

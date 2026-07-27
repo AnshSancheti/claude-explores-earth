@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   isCueDependentSearchPlan,
+  questionAlternativesVisible,
   RendezvousModelService,
   reconcileRendezvousContributionAction,
   reconcileRendezvousMessageAction,
@@ -915,6 +916,25 @@ test('a response cannot turn an inferred crossing meaning into route coordinatio
     contributionKind: 'response',
     contributionSummary: 'My response to the received drawing: the broad axis remains ambiguous and does not indicate a route.'
   }), false);
+});
+
+test('a binary visual question must show both authored alternatives', () => {
+  const question =
+    'Question I am sending: Is the implied movement toward a specific cross-street or a continuing axis along local street?';
+  assert.equal(questionAlternativesVisible(question, {
+    primarySubject: 'a diagonal line rising from a flat baseline',
+    likelyMessage: 'A path or ascent suggests forward movement toward an unknown destination.',
+    literalContents: ['one horizontal line', 'one diagonal line'],
+    movementCues: ['diagonal progression'],
+    stillnessCues: []
+  }), false);
+  assert.equal(questionAlternativesVisible(question, {
+    primarySubject: 'a cross street beside a straight avenue axis',
+    likelyMessage: 'An unresolved comparison between turning onto the cross street and continuing along the avenue axis.',
+    literalContents: ['one route branches across', 'one route continues straight'],
+    movementCues: [],
+    stillnessCues: []
+  }), true);
 });
 
 test('a local observation cannot become route guidance through an inferred proposal', async () => {

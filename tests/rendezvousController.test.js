@@ -1419,7 +1419,7 @@ test('a bounded retry accepts a legible unresolved visual question', async () =>
           frameOfReference: 'recipient',
           communicationFunction: 'directive',
           readableText: false,
-          likelyMessage: 'There is uncertainty about which of two paths is the shared crossing.'
+          likelyMessage: 'There is uncertainty between the shared crossing and a continuation.'
         }
       };
     }
