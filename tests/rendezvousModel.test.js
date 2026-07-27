@@ -695,6 +695,45 @@ test('a route cannot move in line with a partner prompt', async () => {
   assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
 });
 
+test('a route cannot align its movement with surrounding sheet sketches', async () => {
+  let routeAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'A broad, tree-lined street recedes toward a distant crossing.'
+      },
+      route() {
+        routeAttempts += 1;
+        return routeResponse({
+          reasoning: 'Private evidence favors continuing north rather than retracing. Heading north aligns with advancing along a continuing corridor seen in the surrounding street-scene sketches.',
+          memoryUpdate: {
+            currentPlan: 'Continue north using the visible local arches, then reassess.'
+          }
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    sheetMessage: {
+      sequence: 7,
+      from: 'theo',
+      to: 'ada',
+      contributionKind: 'local_observation'
+    }
+  }));
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.doesNotMatch(decision.reasoning, /aligns with|sketches/i);
+  assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
+});
+
 test('a local observation cannot become route guidance through an inferred proposal', async () => {
   let routeAttempts = 0;
   const service = new RendezvousModelService({
@@ -2131,6 +2170,26 @@ test('own-action wait evidence is always rendered as stillness', () => {
     'Keep the fork visible while I wait.',
     'Draw two route options around a stationary figure.'
   ), 'stillness');
+});
+
+test('a static local corridor cannot force a moving subject into the drawing', () => {
+  assert.equal(reconcileRendezvousContributionAction(
+    'local_observation',
+    'New local observation: a clear northward corridor ahead. The approach appears navigable',
+    'movement',
+    'Show a broad urban street receding toward the corridor.',
+    'Draw the navigable approach in perspective.'
+  ), 'unclear');
+});
+
+test('a genuinely moving local subject can remain movement-dominant', () => {
+  assert.equal(reconcileRendezvousContributionAction(
+    'local_observation',
+    'New local observation: a cyclist crossing beneath the tree canopy',
+    'movement',
+    'Show the cyclist crossing beneath the trees.',
+    'Draw the moving cyclist as the primary observed subject.'
+  ), 'movement');
 });
 
 test('a durable paused route retry is reconciled to transition', () => {

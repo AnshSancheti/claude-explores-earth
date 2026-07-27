@@ -889,6 +889,59 @@ test('a persisted own-action wait is reconciled to stillness before rendering', 
   }
 });
 
+test('a persisted static observation drops a spurious movement requirement', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-static-observation-test-'));
+  const reviews = [];
+  const agentModel = {
+    async reviewDrawing(input) {
+      reviews.push(input);
+      return {
+        accepted: true,
+        assessment: 'The corridor itself is the primary observed subject.',
+        blindRead: {
+          dominantAction: 'unclear',
+          frameOfReference: 'sender',
+          communicationFunction: 'report',
+          readableText: false,
+          likelyMessage: 'The sender sees a clear urban corridor.'
+        }
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'persisted-static-observation',
+      agentId: 'ada',
+      turn: 4,
+      contributionKind: 'local_observation',
+      contributionSummary: 'New local observation: a clear northward corridor ahead. The approach appears navigable',
+      informationDelta: 'New local observation: a clear northward corridor ahead. The approach appears navigable',
+      messageAction: 'movement',
+      drawingIntent: 'Show the clear urban corridor itself.',
+      drawingPrompt: 'Draw a runner moving through the clear urban corridor.'
+    });
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(reviews.length, 1);
+    assert.equal(reviews[0].messageAction, 'unclear');
+    assert.match(reviews[0].drawingPrompt, /Show the clear urban corridor itself/i);
+    assert.doesNotMatch(reviews[0].drawingPrompt, /runner|movement requirement/i);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).messageAction, 'unclear');
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a recipient-legible own-action drawing escapes an intent-review livelock after repeated retries', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-review-livelock-test-'));
   const agentModel = {

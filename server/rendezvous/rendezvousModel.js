@@ -529,10 +529,22 @@ export function reconcileRendezvousContributionAction(
   requestedAction,
   ...descriptions
 ) {
+  const evidence = cleanString(contributionSummary, 500);
   if (contributionKind === 'own_action') {
-    const evidence = cleanString(contributionSummary, 500);
     if (/\bchose to wait\b/i.test(evidence)) return 'stillness';
     if (/\bchose to (?:move|retrace)\b/i.test(evidence)) return 'movement';
+  }
+  if (
+    contributionKind === 'local_observation' &&
+    requestedAction === 'movement' &&
+    !(
+      /\b(?:cyclist|pedestrian|person|runner|someone|vehicle|car|bus|truck|traffic)\b[^.!;]{0,80}\b(?:approach|cross|depart|head|move|ride|run|travel|walk)\w*\b/i
+        .test(evidence) ||
+      /\b(?:approach|cross|depart|head|move|ride|run|travel|walk)\w*\b[^.!;]{0,80}\b(?:cyclist|pedestrian|person|runner|someone|vehicle|car|bus|truck|traffic)\b/i
+        .test(evidence)
+    )
+  ) {
+    return 'unclear';
   }
   return reconcileRendezvousMessageAction(requestedAction, ...descriptions);
 }
@@ -631,8 +643,8 @@ function copiesSheetRoute(...descriptions) {
     .split(/[.!?;]+/)
     .map(value => value.trim())
     .filter(Boolean);
-  const cue = '(?:arrow|cue|depicted|direction|drawing|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheet|motif|new sheet|newest sheet|path|prompts?|route|sheet|visual|vector)';
-  const copyAction = '(?:align(?:ing)? with|continue|follow|in line with|mirror|move|preserve|proceed|pursue|reproduce)';
+  const cue = '(?:arrow|cue|depicted|direction|drawing|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheet|motif|new sheet|newest sheet|path|prompts?|route|sheet|sketch(?:es)?|visual|vector)';
+  const copyAction = '(?:align(?:s|ed|ing)? with|continue|follow|in line with|mirror|move|preserve|proceed|pursue|reproduce)';
   const crossClausePrompt = /\b(?:drawing|sheet)\b[^.!?]{0,180}\b(?:cue|prompt)\b[^.!?]{0,140}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
     .test(positiveText);
   return crossClausePrompt || statements.some(statement => {
@@ -1659,7 +1671,13 @@ ${JSON.stringify(catalog, null, 2)}`
           .includes(parsed?.messageAction)
           ? parsed.messageAction
           : 'unclear';
-        const messageAction = reconcileRendezvousMessageAction(
+        const contributionSummary = authoritativeContributionSummary(
+          cited.kind,
+          cited.description
+        );
+        const messageAction = reconcileRendezvousContributionAction(
+          cited.kind,
+          contributionSummary,
           requestedMessageAction,
           drawingIntent,
           drawingPrompt
@@ -1673,7 +1691,12 @@ ${JSON.stringify(catalog, null, 2)}`
         }
         if (
           requestedMessageAction !== 'unclear' &&
-          messageAction !== requestedMessageAction
+          messageAction !== requestedMessageAction &&
+          !(
+            cited.kind === 'local_observation' &&
+            requestedMessageAction === 'movement' &&
+            messageAction === 'unclear'
+          )
         ) {
           throw new Error('Rendezvous drawing replan action contradicted its visual instructions');
         }
@@ -1685,9 +1708,9 @@ ${JSON.stringify(catalog, null, 2)}`
         return {
           contributionKind: cited.kind,
           contributionEvidenceId: cited.id,
-          contributionSummary: authoritativeContributionSummary(cited.kind, cited.description),
+          contributionSummary,
           drawingIntent,
-          informationDelta: authoritativeContributionSummary(cited.kind, cited.description),
+          informationDelta: contributionSummary,
           continuityReason: '',
           messageAction,
           drawingPrompt,
