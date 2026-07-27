@@ -1545,7 +1545,8 @@ ${recentFieldNotes}`
         }
         if (validationErrors.length > 0) {
           const onlyNonSupportingSheetCausality = validationErrors.every(error =>
-            /partner cue|attributed absent motif|copied a non-supporting sheet route/i.test(error)
+            /partner cue|unsupported partner hypothesis motif|attributed absent motif|copied a non-supporting sheet route/i
+              .test(error)
           );
           if (
             attempt >= this.maxAttempts &&

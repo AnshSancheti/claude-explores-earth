@@ -3644,6 +3644,52 @@ test('route planning neutralizes one stubborn unsupported motif after retries', 
   assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
 });
 
+test('overlapping non-supporting sheet errors normalize as one route failure', async () => {
+  const priorMemory = {
+    ...input().privateMemory,
+    partnerHypotheses: [{
+      key: 'forward-destination',
+      description: 'Ada may intend a recurring forward motif as a physical destination.',
+      confidence: 0.4,
+      basisSequences: [5],
+      evidenceStatus: 'unclear'
+    }]
+  };
+  let routeAttempts = 0;
+  const warnings = [];
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route() {
+        routeAttempts += 1;
+        return routeResponse({
+          action: 'move',
+          selectedIndex: 1,
+          reasoning:
+            'I will move when Ada cues me because the newest sheet points forward along the public axis.',
+          memoryUpdate: {
+            currentPlan:
+              'Continue toward the forward motif as our destination when Ada signals readiness.'
+          }
+        });
+      }
+    }),
+    logger: { warn(message) { warnings.push(message); } }
+  });
+
+  const decision = await service.decide(input({ privateMemory: priorMemory }));
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.action, 'move');
+  assert.equal(decision.selectedIndex, 1);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /Ada cues|points forward/i);
+  assert.doesNotMatch(decision.memoryUpdate.currentPlan, /destination|signals readiness/i);
+  assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
+  assert.ok(warnings.some(message => /normalized partner-cue route causality/i.test(message)));
+});
+
 test('ordinary spatial language is not mistaken for an unsupported visual motif', async () => {
   const priorMemory = {
     ...input().privateMemory,
