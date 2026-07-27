@@ -365,7 +365,7 @@ export function deliberateRepetitionHasPurpose(message) {
     )
     .trim();
   return reason.length >= 20 &&
-    /\b(?:again|answer|ask|clarif|connect|correct|deliberat|emphas|intend|link|remain|repeat|signal|still|surface|test|unchang|unresolved|useful)\w*\b/i
+    /\b(?:again|answer|ask|clarif|connect|correct|link|remain|signal|still|surface|test|unchang|unresolved|useful)\w*\b/i
       .test(reason);
 }
 
@@ -1858,7 +1858,11 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
                 );
               })
             : null;
-          if (correctionBudgetExhausted && repeatedEvidence) {
+          if (
+            correctionBudgetExhausted &&
+            repeatedEvidence &&
+            repeatedSentMessage?.contributionKind === 'question'
+          ) {
             candidateDrawingPlan.contributionKind = 'deliberate_repetition';
             candidateDrawingPlan.contributionEvidenceId = repeatedEvidence.id;
             candidateDrawingPlan.contributionSummary = authoritativeContributionSummary(
@@ -2498,6 +2502,17 @@ Return only JSON:
       contributionSummary,
       informationDelta
     });
+    const hasProspectiveArrowWithoutSenderTrail =
+      /\barrows?\b/i.test(positiveBlindActionDescription) &&
+      !hasRetrospectiveActionFrame;
+    if (reportsOwnAction && hasProspectiveArrowWithoutSenderTrail) {
+      return {
+        accepted: false,
+        assessment: `Blind recipient saw a prospective arrow without a completed sender trail, so the action can read as route guidance even though its frame was labeled ${blindRead.frameOfReference}: ${blindRead.likelyMessage}`,
+        revisionPrompt: 'Remove every standalone or forward-projecting arrow. Make this a retrospective report of the sender\'s own action: put completed motion behind the acting subject through footprints, a fading trail, changed posture, or another sender-authored relationship. Keep the open route ahead visually subordinate and do not address the viewer.',
+        blindRead
+      };
+    }
     if (
       contributionKind === 'response' &&
       responseWithholdsRouteCertainty(contributionSummary) &&

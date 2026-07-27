@@ -3006,6 +3006,10 @@ test('deliberate repetition needs a communicative reason beyond omitted motifs',
     contributionKind: 'deliberate_repetition',
     continuityReason: 'The unchanged question remains unresolved, so I am deliberately asking it again. The recurring "forward" motif is omitted because its physical meaning remains unsupported.'
   }), true);
+  assert.equal(deliberateRepetitionHasPurpose({
+    contributionKind: 'deliberate_repetition',
+    continuityReason: 'Introduce a genuinely new composition that emphasizes movement along a broad axis while using landmarks for coordination, rather than repeating a previous forward motif as a destination. The recurring "forward" motif is omitted because its physical meaning remains unsupported.'
+  }), false);
 });
 
 test('planner-authored fields cannot reintroduce private place names for an own-action reply', async () => {
@@ -4258,8 +4262,8 @@ test('own-action drawing review rejects a recipient-framed command', async () =>
   });
 
   assert.equal(review.accepted, false);
-  assert.match(review.assessment, /recipient.*not clearly the sender's own action/);
-  assert.match(review.revisionPrompt, /Avoid any standalone arrow/);
+  assert.match(review.assessment, /prospective arrow.*frame was labeled recipient/i);
+  assert.match(review.revisionPrompt, /Remove every standalone or forward-projecting arrow/);
   assert.match(review.revisionPrompt, /completed motion behind/);
   assert.equal(requests.length, 1);
 });
@@ -4342,8 +4346,52 @@ test('repeating an own action retains sender-frame review', async () => {
   });
 
   assert.equal(review.accepted, false);
-  assert.match(review.assessment, /recipient.*not clearly the sender's own action/);
-  assert.match(review.revisionPrompt, /Avoid any standalone arrow/);
+  assert.match(review.assessment, /prospective arrow.*frame was labeled recipient/i);
+  assert.match(review.revisionPrompt, /Remove every standalone or forward-projecting arrow/);
+  assert.equal(requests.length, 1);
+});
+
+test('a sender-labeled action still rejects a prospective standalone arrow', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      blindRead: {
+        literalContents: [
+          'a yellow taxi beneath a large northeast arrow on an otherwise empty road'
+        ],
+        primarySubject: 'a yellow taxi moving toward a large northeast arrow',
+        likelyMessage: 'Move northeast along the open road.',
+        dominantAction: 'movement',
+        frameOfReference: 'sender',
+        frameBasis: 'The taxi may stand for the sender, but the arrow projects ahead.',
+        communicationFunction: 'report',
+        movementCues: ['a large arrow pointing northeast', 'a taxi moving forward'],
+        stillnessCues: [],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'deliberate_repetition',
+    contributionSummary:
+      'Deliberately repeating existing visual evidence without treating it as new: My current chosen action: I chose to move northeast along the selected public route.',
+    drawingIntent: 'Repeat my northeast movement report.',
+    informationDelta:
+      'Deliberately repeating existing visual evidence without treating it as new: My current chosen action: I chose to move northeast along the selected public route.',
+    continuityReason: 'The unchanged movement report is useful to repeat.',
+    messageAction: 'movement',
+    drawingPrompt: 'Draw a taxi traveling beneath a large northeast arrow.',
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /prospective arrow without a completed sender trail/i);
+  assert.match(review.revisionPrompt, /Remove every standalone or forward-projecting arrow/i);
+  assert.match(review.revisionPrompt, /completed motion behind/i);
   assert.equal(requests.length, 1);
 });
 
