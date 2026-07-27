@@ -1613,6 +1613,12 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
     ].filter(item =>
       !priorContribution ||
       visualDescriptionSimilarity(priorContribution, item.description) < 0.55
+    ).filter(item =>
+      !repeatsRecentOutboundProposition({
+        contributionKind: item.kind,
+        contributionSummary: authoritativeContributionSummary(item.kind, item.description),
+        informationDelta: authoritativeContributionSummary(item.kind, item.description)
+      }, privateMemory)
     );
     if (catalog.length === 0) return null;
 

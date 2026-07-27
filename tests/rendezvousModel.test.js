@@ -1149,6 +1149,54 @@ test('a drawing replan atomizes long relational streetscape descriptions', async
   assert.match(requestText, /"description": "storefronts to the right"/);
 });
 
+test('a drawing replan cannot reintroduce an exhausted outbound proposition', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      replan: {
+        contributionEvidenceId: 'local:1',
+        drawingIntent: 'Show the row of parked vans as the new local fact.',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw one quiet row of parked vans.',
+        groundedFeatureEvidenceIds: ['local:1']
+      }
+    }),
+    logger: { warn() {} }
+  });
+  const repeatedObservation = {
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: tree-lined urban street',
+    informationDelta: 'New local observation: tree-lined urban street',
+    intent: 'Show the tree-lined urban street.'
+  };
+
+  const replan = await service.replanUnrenderableDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    pending: {
+      contributionKind: 'local_observation',
+      contributionSummary: 'New local observation: crosswalk markings ahead',
+      groundedFeatures: ['crosswalk markings ahead']
+    },
+    privateMemory: {
+      ownObservations: [{
+        description: 'tree-lined urban street; row of parked vans',
+        sourcePanoId: 'ada-current'
+      }],
+      sentMessages: [
+        { sequence: 5, ...repeatedObservation },
+        { sequence: 7, ...repeatedObservation }
+      ]
+    }
+  });
+
+  assert.equal(replan.contributionEvidenceId, 'local:1');
+  assert.equal(replan.contributionSummary, 'New local observation: row of parked vans');
+  const requestText = requests[0].messages.at(-1).content;
+  assert.doesNotMatch(requestText, /tree-lined urban street/);
+  assert.match(requestText, /row of parked vans/);
+});
+
 test('a drawing replan retries a placeholder intent and contradictory action', async () => {
   let attempts = 0;
   const requests = [];
