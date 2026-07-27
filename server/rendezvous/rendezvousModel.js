@@ -631,8 +631,8 @@ function copiesSheetRoute(...descriptions) {
     .split(/[.!?;]+/)
     .map(value => value.trim())
     .filter(Boolean);
-  const cue = '(?:arrow|cue|depicted|direction|drawing|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheet|motif|new sheet|newest sheet|path|prompt|route|sheet|visual|vector)';
-  const copyAction = '(?:align(?:ing)? with|continue|follow|mirror|move|preserve|proceed|pursue|reproduce)';
+  const cue = '(?:arrow|cue|depicted|direction|drawing|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheet|motif|new sheet|newest sheet|path|prompts?|route|sheet|visual|vector)';
+  const copyAction = '(?:align(?:ing)? with|continue|follow|in line with|mirror|move|preserve|proceed|pursue|reproduce)';
   const crossClausePrompt = /\b(?:drawing|sheet)\b[^.!?]{0,180}\b(?:cue|prompt)\b[^.!?]{0,140}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
     .test(positiveText);
   return crossClausePrompt || statements.some(statement => {

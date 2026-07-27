@@ -656,6 +656,45 @@ test('a route cannot treat an unresolved sheet cue as a prompt to keep moving', 
   assert.doesNotMatch(decision.reasoning, /prompt to keep moving/i);
 });
 
+test('a route cannot move in line with a partner prompt', async () => {
+  let routeAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'question',
+        frameOfReference: 'shared',
+        sheetInterpretation: 'The sender asks whether a fork is meaningful.'
+      },
+      route() {
+        routeAttempts += 1;
+        return routeResponse({
+          reasoning: 'In line with Ada’s open-ended prompts, I move along the northern public route while preserving options.',
+          memoryUpdate: {
+            currentPlan: 'Use the locally visible arches and traffic light, then reassess.'
+          }
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    sheetMessage: {
+      sequence: 7,
+      from: 'theo',
+      to: 'ada',
+      contributionKind: 'question'
+    }
+  }));
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.doesNotMatch(decision.reasoning, /in line with|prompts/i);
+  assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
+});
+
 test('a local observation cannot become route guidance through an inferred proposal', async () => {
   let routeAttempts = 0;
   const service = new RendezvousModelService({
