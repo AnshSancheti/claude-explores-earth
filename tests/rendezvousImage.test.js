@@ -63,3 +63,46 @@ test('image service generates from the sender prompt without Street View attachm
     else process.env.OPENAI_API_KEY = previousKey;
   }
 });
+
+test('image service grounds an authored sketch through one private source image', async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'test-key';
+  let request;
+  try {
+    const service = new RendezvousImageService({
+      fetchImpl: async (url, options) => {
+        request = { url, options };
+        return {
+          ok: true,
+          headers: { get: () => null },
+          async json() {
+            return { data: [{ b64_json: Buffer.from('grounded-raster').toString('base64') }] };
+          }
+        };
+      },
+      logger: { warn() {} }
+    });
+    await service.generate({
+      drawingPrompt: 'Sketch the actual railing as a sparse landmark.',
+      groundedFeatures: ['a plain metal railing beside open water'],
+      referenceImage: {
+        buffer: Buffer.from('private-source-view'),
+        mimeType: 'image/jpeg'
+      }
+    });
+
+    assert.match(request.url, /\/images\/edits$/);
+    assert.ok(request.options.body instanceof FormData);
+    assert.equal(request.options.headers['Content-Type'], undefined);
+    assert.equal(request.options.body.get('model'), 'gpt-image-2');
+    assert.equal(request.options.body.get('image[]').type, 'image/jpeg');
+    assert.match(
+      request.options.body.get('prompt'),
+      /do not replace a real object's geometry with a generic decorative version/i
+    );
+    assert.match(request.options.body.get('prompt'), /Do not copy the photograph as a scene/i);
+  } finally {
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+  }
+});

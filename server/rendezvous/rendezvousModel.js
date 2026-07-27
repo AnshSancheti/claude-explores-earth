@@ -681,22 +681,36 @@ function describeChosenAction(routeDecision, options) {
 function buildContributionEvidence({ routeDecision, perception, privateMemory, options }) {
   const catalog = [];
   const routeLabels = (Array.isArray(options) ? options : []).map(option => option?.label);
-  const add = (prefix, values, { concreteLocalOnly = false, kind = '' } = {}) => {
+  const add = (
+    prefix,
+    values,
+    { concreteLocalOnly = false, kind = '', referenceViewIndices = [] } = {}
+  ) => {
     cleanStringList(values, { limit: 6, maxLength: 220 })
       .map(description => sanitizeOutboundPlaceNames(description, routeLabels, 220))
       .filter(description => !concreteLocalOnly || isConcreteLocalEvidence(description))
       .filter(Boolean)
       .forEach((description, index) => {
-      catalog.push({ id: `${prefix}:${index}`, kind, description });
+      const referenceViewIndex = Number(referenceViewIndices[index]);
+      catalog.push({
+        id: `${prefix}:${index}`,
+        kind,
+        description,
+        referenceViewIndices: Number.isInteger(referenceViewIndex)
+          ? [referenceViewIndex]
+          : []
+      });
     });
   };
   add('local', routeDecision.observedFeatures, {
     concreteLocalOnly: true,
-    kind: 'local_observation'
+    kind: 'local_observation',
+    referenceViewIndices: routeDecision.observedFeatureViewIndices
   });
   add('question_local', routeDecision.observedFeatures, {
     concreteLocalOnly: true,
-    kind: 'question'
+    kind: 'question',
+    referenceViewIndices: routeDecision.observedFeatureViewIndices
   });
   add('action', [describeChosenAction(routeDecision, options)], { kind: 'own_action' });
   add('received', perception.literalContents, { kind: 'acknowledgement' });
@@ -949,9 +963,30 @@ export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = 
     if (selectedDelta > 12 && matches.length === 1) selectedIndex = matches[0].index;
   }
   const numericSheetConfidence = Number(raw?.sheetConfidence);
-  const observedFeatures = cleanStringList(raw?.observedFeatures, { limit: 20 })
-    .filter(isConcreteLocalEvidence)
+  const rawObservedFeatures = Array.isArray(raw?.observedFeatures)
+    ? raw.observedFeatures
+    : [];
+  const rawObservedFeatureViewIndices = Array.isArray(raw?.observedFeatureViewIndices)
+    ? raw.observedFeatureViewIndices
+    : [];
+  const observedFeatureRecords = rawObservedFeatures
+    .map((value, index) => ({
+      description: cleanString(value, 400),
+      viewIndex: Number(rawObservedFeatureViewIndices[index])
+    }))
+    .filter(record => record.description && isConcreteLocalEvidence(record.description))
+    .filter((record, index, records) =>
+      records.findIndex(candidate => candidate.description === record.description) === index
+    )
     .slice(0, 5);
+  const observedFeatures = observedFeatureRecords.map(record => record.description);
+  const observedFeatureViewIndices = observedFeatureRecords.map(record =>
+    Number.isInteger(record.viewIndex) &&
+    record.viewIndex >= 0 &&
+    record.viewIndex < optionCount
+      ? record.viewIndex
+      : selectedIndex
+  );
   const rawObservation = cleanString(raw?.observation, 700);
   const observation = (
     isConcreteLocalEvidence(rawObservation) ||
@@ -967,6 +1002,7 @@ export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = 
     reasoning: cleanString(raw?.reasoning, 700) || 'I choose the most promising unfamiliar public route.',
     observation,
     observedFeatures,
+    observedFeatureViewIndices,
     sheetInterpretation: cleanString(raw?.sheetInterpretation, 700),
     sheetConfidence: Number.isFinite(numericSheetConfidence)
       ? Math.min(1, Math.max(0, numericSheetConfidence))
@@ -1423,6 +1459,7 @@ Return only JSON:
   "reasoning": "one concise first-person account of why this action best supports finding your friend",
   "observation": "a grounded description of what you currently notice and want to remember",
   "observedFeatures": ["literal concrete physical feature visible in a current local route-option image; never a navigation arrow or interface overlay, abstract route, sheet motif, inferred destination, shared cue, or remembered feature"],
+  "observedFeatureViewIndices": ["for each observedFeatures item, the zero-based LOCAL ROUTE-OPTION IMAGE index where that exact feature is visible"],
   "sheetReconciliation": {
     "currentSenderAction": "movement" | "stillness" | "transition" | "unclear",
     "currentSenderActionBasis": "specific literal cue in the newest sheet, or why it remains unclear",
@@ -1910,7 +1947,21 @@ ${JSON.stringify(availableEvidence, null, 2)}`
             drawingPrompt
           ),
           drawingPrompt,
-          groundedFeatures: [...new Set(groundedFeatures)].slice(0, 6)
+          groundedFeatures: [...new Set(groundedFeatures)].slice(0, 6),
+          referenceViewIndices: (
+            contributionKind === 'local_observation' ||
+            contributionEvidenceId.startsWith('question_local:')
+          )
+            ? [
+                ...new Set([
+                  ...(citedEvidence?.referenceViewIndices || []),
+                  ...allowedGroundedFeatureEvidenceIds.flatMap(id =>
+                    availableContributionEvidence.find(item => item.id === id)
+                      ?.referenceViewIndices || []
+                  )
+                ])
+              ].slice(0, 1)
+            : []
         };
         if (
           !candidateDrawingPlan.contributionKind ||
@@ -2207,7 +2258,9 @@ ${JSON.stringify(availableEvidence, null, 2)}`
       ...routeDecision,
       ...drawingPlan,
       observedFeatures: routeDecision.observedFeatures,
+      observedFeatureViewIndices: routeDecision.observedFeatureViewIndices,
       drawingGroundedFeatures: drawingPlan.groundedFeatures,
+      referenceViewIndices: drawingPlan.referenceViewIndices,
       sheetInterpretation: perception.sheetInterpretation,
       sheetConfidence: perception.sheetConfidence,
       sheetPerception: perception,

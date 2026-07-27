@@ -1,6 +1,7 @@
 import path from 'path';
 import * as fsp from 'fs/promises';
 import { createHash, randomUUID } from 'crypto';
+import sharp from 'sharp';
 import { StreetViewHeadless } from '../services/streetViewHeadless.js';
 import { calculateBearing } from '../utils/geoUtils.js';
 import {
@@ -1352,6 +1353,11 @@ export class RendezvousController {
           }
           if (decision.drawingPrompt) {
             const pendingId = randomUUID();
+            const referenceViewIndices = await this.#persistPendingReferences(
+              pendingId,
+              screenshots,
+              decision.referenceViewIndices
+            );
             this.state.scratchpad = queueRasterScratchpadMessage(scratchpad, {
               id: pendingId,
               agentId,
@@ -1365,6 +1371,7 @@ export class RendezvousController {
               continuityReason: decision.continuityReason,
               messageAction: decision.messageAction,
               groundedFeatures: decision.drawingGroundedFeatures,
+              referenceViewIndices,
               sourcePanoId: current.panoId,
               snapshot: this.#captureSheetSnapshot(agentId, {
                 reasoning: decision.reasoning,
@@ -1379,7 +1386,9 @@ export class RendezvousController {
               id: pendingId,
               from: agentId,
               to: partner.id,
-              medium: 'symbolic_prompt_only'
+              medium: referenceViewIndices.length > 0
+                ? 'source_grounded_symbolic_prompt'
+                : 'symbolic_prompt_only'
             });
           }
         }
@@ -1533,7 +1542,10 @@ export class RendezvousController {
     const scratchpad = normalizeRasterScratchpad(this.state.scratchpad, { turn: this.state.turn });
     const referenced = new Set([
       scratchpad.currentMessage?.imageFile,
-      ...scratchpad.messageAudit.map(message => message.imageFile)
+      ...scratchpad.messageAudit.map(message => message.imageFile),
+      ...(scratchpad.pendingMessage?.referenceViewIndices || []).map(index =>
+        `${scratchpad.pendingMessage.id}-reference-${index}.jpg`
+      )
     ].filter(Boolean));
 
     let entries;
@@ -1549,7 +1561,7 @@ export class RendezvousController {
     await Promise.all(entries.map(async entry => {
       if (
         !entry.isFile() ||
-        !/\.(?:png|webp)$/i.test(entry.name) ||
+        !/\.(?:jpe?g|png|webp)$/i.test(entry.name) ||
         referenced.has(entry.name)
       ) {
         return;
@@ -1655,6 +1667,68 @@ export class RendezvousController {
     await Promise.all(Array.from({ length: 4 }, (_, index) =>
       fsp.unlink(path.join(this.#drawingDirectory(runId), `${pendingId}-reference-${index}.jpg`)).catch(() => {})
     ));
+  }
+
+  async #persistPendingReferences(pendingId, screenshots, referenceViewIndices) {
+    const requested = [...new Set((Array.isArray(referenceViewIndices)
+      ? referenceViewIndices
+      : [])
+      .map(Number)
+      .filter(index =>
+        Number.isInteger(index) &&
+        index >= 0 &&
+        Buffer.isBuffer(screenshots?.[index]) &&
+        screenshots[index].length > 0
+      ))]
+      .slice(0, 1);
+    if (requested.length === 0) return [];
+    await fsp.mkdir(this.#drawingDirectory(), { recursive: true });
+    const persisted = [];
+    for (const index of requested) {
+      const destination = path.join(
+        this.#drawingDirectory(),
+        `${pendingId}-reference-${index}.jpg`
+      );
+      const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+      try {
+        const buffer = await sharp(screenshots[index])
+          .resize({ width: 640, height: 384, fit: 'inside', withoutEnlargement: true })
+          .jpeg({ quality: 72, mozjpeg: true })
+          .toBuffer();
+        await fsp.writeFile(temporary, buffer);
+        await fsp.rename(temporary, destination);
+        persisted.push(index);
+      } catch (error) {
+        await fsp.unlink(temporary).catch(() => {});
+        this.logger.warn?.(
+          `Could not persist rendezvous source view ${index} for ${pendingId}: ${error.message}`
+        );
+      }
+    }
+    return persisted;
+  }
+
+  async #readPendingReference(pending, runId = this.state.runId) {
+    const index = Array.isArray(pending?.referenceViewIndices)
+      ? pending.referenceViewIndices[0]
+      : null;
+    if (!Number.isInteger(index)) return null;
+    try {
+      return {
+        buffer: await fsp.readFile(path.join(
+          this.#drawingDirectory(runId),
+          `${pending.id}-reference-${index}.jpg`
+        )),
+        mimeType: 'image/jpeg'
+      };
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        this.logger.warn?.(
+          `Could not read rendezvous source view ${index} for ${pending.id}: ${error.message}`
+        );
+      }
+      return null;
+    }
   }
 
   #rememberFailedDrawing(pending, failureReason) {
@@ -1936,6 +2010,7 @@ export class RendezvousController {
         const reviewVisualHistory = typeof this.agentModel.reviewDrawing === 'function'
           ? await this.#readVisualHistory(pending.from, this.state.scratchpad, 2)
           : [];
+        const referenceImage = await this.#readPendingReference(pending, runId);
         let generated = await this.imageModel.generate({
           drawingPrompt: pending.drawingPrompt,
           groundedFeatures: compatibleRevisionFeatures(
@@ -1944,7 +2019,8 @@ export class RendezvousController {
             pending.messageAction,
             pending.contributionKind,
             pending.contributionSummary
-          )
+          ),
+          referenceImage
         });
         let review = typeof this.agentModel.reviewDrawing === 'function'
           ? await this.agentModel.reviewDrawing({
@@ -1981,7 +2057,8 @@ export class RendezvousController {
               pending.messageAction,
               pending.contributionKind,
               pending.contributionSummary
-            )
+            ),
+            referenceImage
           });
           renderAttempts += 1;
           review = typeof this.agentModel.reviewDrawing === 'function'
@@ -2149,7 +2226,9 @@ export class RendezvousController {
         this.logger.warn?.(`Rendezvous drawing ${pending.id} will retry: ${error.message}`);
         return null;
       } finally {
-        await this.#removePendingReferences(pending.id, runId);
+        const stillPending = this.state.runId === runId &&
+          normalizeRasterScratchpad(this.state.scratchpad).pendingMessage?.id === pending.id;
+        if (!stillPending) await this.#removePendingReferences(pending.id, runId);
         if (this.state.runId === runId) await this.#pruneUnreferencedDrawingFiles();
       }
     })();

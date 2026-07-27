@@ -209,7 +209,13 @@ class FakeImageModel {
   async generate(input) {
     this.calls.push({
       drawingPrompt: input.drawingPrompt,
-      groundedFeatures: input.groundedFeatures
+      groundedFeatures: input.groundedFeatures,
+      referenceImage: input.referenceImage
+        ? {
+            content: input.referenceImage.buffer.toString(),
+            mimeType: input.referenceImage.mimeType
+          }
+        : null
     });
     return {
       buffer: Buffer.from(`fake-raster-${this.calls.length}`),
@@ -788,8 +794,20 @@ test('a persisted pending drawing resumes after controller restart', async () =>
       id: 'restart-message',
       agentId: 'ada',
       turn: 3,
-      drawingPrompt: 'A soft graphite sketch of three receding arches.'
+      drawingPrompt: 'A soft graphite sketch of three receding arches.',
+      referenceViewIndices: [1]
     });
+    const referenceDirectory = path.join(
+      tempDir,
+      'rendezvous-drawings',
+      first.state.runId
+    );
+    const referencePath = path.join(
+      referenceDirectory,
+      'restart-message-reference-1.jpg'
+    );
+    await fsp.mkdir(referenceDirectory, { recursive: true });
+    await fsp.writeFile(referencePath, 'durable-private-source');
     await first.saveState();
 
     const imageModel = new FakeImageModel();
@@ -806,6 +824,11 @@ test('a persisted pending drawing resumes after controller restart', async () =>
     assert.equal(restarted.state.scratchpad.currentMessage.id, 'restart-message');
     assert.equal(restarted.state.scratchpad.owner, 'theo');
     assert.equal(imageModel.calls.length, 1);
+    assert.deepEqual(imageModel.calls[0].referenceImage, {
+      content: 'durable-private-source',
+      mimeType: 'image/jpeg'
+    });
+    await assert.rejects(fsp.access(referencePath), { code: 'ENOENT' });
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
     else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
@@ -2489,8 +2512,20 @@ test('drawing failure preserves a retryable handoff across controller restart', 
       agentId: 'ada',
       turn: 3,
       drawingIntent: 'Preserve this message until it can cross.',
-      drawingPrompt: 'Draw two circles separated by an arch.'
+      drawingPrompt: 'Draw two circles separated by an arch.',
+      referenceViewIndices: [0]
     });
+    const referenceDirectory = path.join(
+      tempDir,
+      'rendezvous-drawings',
+      first.state.runId
+    );
+    const referencePath = path.join(
+      referenceDirectory,
+      'retry-message-reference-0.jpg'
+    );
+    await fsp.mkdir(referenceDirectory, { recursive: true });
+    await fsp.writeFile(referencePath, 'retry-source-view');
 
     await first.resumePendingDrawing();
 
@@ -2500,14 +2535,16 @@ test('drawing failure preserves a retryable handoff across controller restart', 
     assert.equal(first.state.scratchpad.pendingMessage.attempts, 1);
     assert.match(first.state.scratchpad.pendingMessage.lastError, /temporary image outage/);
     assert.equal(first.state.scratchpad.messageAudit.length, 0);
+    assert.equal((await fsp.readFile(referencePath, 'utf8')), 'retry-source-view');
 
     first.state.scratchpad.pendingMessage.nextAttemptAt = new Date(0).toISOString();
     await first.saveState();
+    const restartedImageModel = new FakeImageModel();
     const restarted = new RendezvousController({
       dataDir: tempDir,
       streetView: new FakeStreetView(),
       agentModel: new FakeRendezvousModel(),
-      imageModel: new FakeImageModel(),
+      imageModel: restartedImageModel,
       logger: { warn() {}, error() {} }
     });
     await restarted.loadState();
@@ -2517,6 +2554,11 @@ test('drawing failure preserves a retryable handoff across controller restart', 
     assert.equal(restarted.state.scratchpad.currentMessage.id, 'retry-message');
     assert.equal(restarted.state.scratchpad.owner, 'theo');
     assert.equal(restarted.state.scratchpad.messageAudit[0].status, 'sent');
+    assert.equal(
+      restartedImageModel.calls[0].referenceImage.content,
+      'retry-source-view'
+    );
+    await assert.rejects(fsp.access(referencePath), { code: 'ENOENT' });
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }

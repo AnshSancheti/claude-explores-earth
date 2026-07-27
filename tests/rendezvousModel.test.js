@@ -104,6 +104,7 @@ function routeResponse(overrides = {}) {
     reasoning: 'Theo may be describing an arcade, and the northern opening has the closest matching repeated masonry.',
     observation: 'Repeated stone arches line the northern opening.',
     observedFeatures: ['three repeated stone arches', 'a suspended traffic light beside them'],
+    observedFeatureViewIndices: [1, 1],
     sheetReconciliation: {
       currentSenderAction: 'movement',
       currentSenderActionBasis: 'A small figure visibly approaches the nearer arches.',
@@ -230,6 +231,7 @@ test('a branch separates interpretation, route choice, and visual communication'
     'three repeated stone arches',
     'a suspended traffic light beside them'
   ]);
+  assert.deepEqual(decision.referenceViewIndices, [1]);
   assert.equal(decision.messageAction, 'stillness');
   assert.match(decision.drawingPrompt, /suspended traffic light/);
 
