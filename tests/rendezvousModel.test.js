@@ -1468,11 +1468,11 @@ test('a later drawing replan excludes the proposition that already failed', asyn
   const service = new RendezvousModelService({
     client: stagedClient(requests, {
       replan: {
-        contributionEvidenceId: 'local:1',
+        contributionEvidenceId: 'local:0',
         drawingIntent: 'Show the elevated footbridge as a new local fact.',
         messageAction: 'stillness',
         drawingPrompt: 'Draw one elevated footbridge as the sole dominant subject.',
-        groundedFeatureEvidenceIds: ['local:1']
+        groundedFeatureEvidenceIds: ['local:0']
       }
     }),
     logger: { warn() {} }
@@ -2370,6 +2370,7 @@ test('bare street substrate is omitted while distinctive local evidence remains'
           'street with lane markings and crosswalks',
           'a cross-street environment',
           'curb, sidewalk, and asphalt street',
+          'a broad urban street flanked by tall buildings on both sides',
           'orange construction barriers beneath dense scaffolding'
         ]
       }),
@@ -2394,7 +2395,10 @@ test('bare street substrate is omitted while distinctive local evidence remains'
   assert.equal(decision.fallbackCause, null);
   assert.equal(decision.contributionSummary,
     'New local observation: orange construction barriers beneath dense scaffolding');
-  assert.doesNotMatch(catalogText, /street with lane markings|cross-street environment|curb, sidewalk/);
+  assert.doesNotMatch(
+    catalogText,
+    /street with lane markings|cross-street environment|curb, sidewalk|broad urban street flanked/
+  );
   assert.match(catalogText, /orange construction barriers beneath dense scaffolding/);
 });
 

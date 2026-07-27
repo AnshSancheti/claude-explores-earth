@@ -121,11 +121,11 @@ const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
 
 const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'an', 'and', 'asphalt', 'at', 'ahead', 'building', 'buildings', 'car',
-  'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
+  'both', 'broad', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'environment', 'foreground', 'in', 'intersection',
-  'intersections', 'lane', 'lanes', 'local', 'marked', 'marking', 'markings',
+  'flanked', 'intersections', 'lane', 'lanes', 'local', 'marked', 'marking', 'markings',
   'multiple', 'new', 'observation', 'of', 'on', 'pedestrian', 'pedestrians',
-  'road', 'roads', 'scene', 'sidewalk', 'sidewalks', 'straight', 'street',
+  'road', 'roads', 'scene', 'side', 'sides', 'sidewalk', 'sidewalks', 'straight', 'street',
   'streets', 'tall', 'the', 'urban', 'vehicle', 'vehicles', 'visible', 'wide',
   'with'
 ]);
