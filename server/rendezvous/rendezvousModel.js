@@ -1096,12 +1096,36 @@ function matchingCurrentFailedPropositions(candidateDrawingPlan, privateMemory) 
   const currentSheetSequence = Number(
     (privateMemory?.receivedSheets || []).at(-1)?.sequence
   ) || 0;
+  const candidateEvidence = contributionEvidenceText(
+    candidateDrawingPlan?.informationDelta || candidateDrawingPlan?.contributionSummary
+  );
+  const independentlyRecorroborated = failedMessage => {
+    if (
+      candidateDrawingPlan?.contributionKind !== 'local_observation' ||
+      failedMessage?.contributionKind !== 'local_observation' ||
+      !candidateEvidence ||
+      !Number.isFinite(Number(failedMessage?.turn))
+    ) {
+      return false;
+    }
+    return (privateMemory?.ownObservations || [])
+      .filter(observation => Number(observation?.turn) > Number(failedMessage.turn))
+      .flatMap(observation => atomizeLocalEvidenceDescription(observation?.description))
+      .some(description =>
+        isConcreteLocalEvidence(description) &&
+        visualDescriptionSimilarity(
+          localObservationReviewDescription(candidateEvidence),
+          localObservationReviewDescription(description)
+        ) >= 0.4
+      );
+  };
   return matchingRecentSentPropositions(
     candidateDrawingPlan,
     {
       ...privateMemory,
       sentMessages: (privateMemory?.failedMessages || [])
         .filter(message => Number(message?.sheetSequence) === currentSheetSequence)
+        .filter(message => !independentlyRecorroborated(message))
         .slice(-6)
     }
   );

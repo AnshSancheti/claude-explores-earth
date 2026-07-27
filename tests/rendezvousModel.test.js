@@ -3052,6 +3052,48 @@ test('a failed proposition is suppressed only while the same received sheet is c
   }), false);
 });
 
+test('a later independent local observation can corroborate a failed same-sheet clue', () => {
+  const candidate = {
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: river or water body visible to the right',
+    informationDelta: 'New local observation: river or water body visible to the right',
+    drawingIntent: 'Depict the visible river edge.'
+  };
+  const failedMessage = {
+    draftId: 'failed-river',
+    turn: 100,
+    sheetSequence: 55,
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: river or water body visible to the right',
+    informationDelta: 'New local observation: river or water body visible to the right',
+    intent: 'Depict the visible river edge.'
+  };
+  const secondFailedMessage = {
+    ...failedMessage,
+    draftId: 'failed-river-again',
+    turn: 110
+  };
+
+  assert.equal(repeatsRecentOutboundProposition(candidate, {
+    receivedSheets: [{ sequence: 55 }],
+    failedMessages: [failedMessage, secondFailedMessage],
+    ownObservations: [{
+      turn: 90,
+      description: 'river visible beside a broad urban boulevard'
+    }],
+    sentMessages: []
+  }), true);
+  assert.equal(repeatsRecentOutboundProposition(candidate, {
+    receivedSheets: [{ sequence: 55 }],
+    failedMessages: [failedMessage, secondFailedMessage],
+    ownObservations: [{
+      turn: 140,
+      description: 'I am beside a broad urban boulevard with a river visible to the right'
+    }],
+    sentMessages: []
+  }), false);
+});
+
 test('the drawing planner can cite any proposition considered by recent-repeat detection', async () => {
   const oldQuestion = {
     sequence: 11,
