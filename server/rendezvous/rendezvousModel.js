@@ -127,7 +127,7 @@ function isConcreteLocalEvidence(description) {
 
 function atomizeLocalEvidenceDescription(description) {
   return cleanString(description, 500)
-    .split(/\s*;\s*/)
+    .split(/\s*;\s*|(?<=[.!?])\s+(?=[A-Z])/)
     .flatMap(segment => segment.length >= 80
       ? segment.split(/\s+(?:with|and)\s+/i)
       : [segment])

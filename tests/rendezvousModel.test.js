@@ -1149,6 +1149,47 @@ test('a drawing replan atomizes long relational streetscape descriptions', async
   assert.match(requestText, /"description": "storefronts to the right"/);
 });
 
+test('a drawing replan separates sentence-level observations into drawable facts', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      replan: {
+        contributionEvidenceId: 'local:1',
+        drawingIntent: 'Show the pedestrians gathered along the sidewalk.',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw a small group of pedestrians along one sidewalk.',
+        groundedFeatureEvidenceIds: ['local:1']
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const replan = await service.replanUnrenderableDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    pending: {
+      contributionKind: 'local_observation',
+      contributionSummary: 'New local observation: crosswalk markings ahead'
+    },
+    privateMemory: {
+      ownObservations: [{
+        description: 'A distant vanishing point. Pedestrians gather along one sidewalk',
+        sourcePanoId: 'theo-current'
+      }]
+    }
+  });
+
+  assert.equal(replan.contributionEvidenceId, 'local:1');
+  assert.equal(
+    replan.contributionSummary,
+    'New local observation: Pedestrians gather along one sidewalk'
+  );
+  const requestText = requests[0].messages.at(-1).content;
+  assert.match(requestText, /"description": "A distant vanishing point."/);
+  assert.match(requestText, /"description": "Pedestrians gather along one sidewalk"/);
+  assert.doesNotMatch(requestText, /vanishing point\. Pedestrians/);
+});
+
 test('a drawing replan cannot reintroduce an exhausted outbound proposition', async () => {
   const requests = [];
   const service = new RendezvousModelService({
