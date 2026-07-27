@@ -651,7 +651,9 @@ function copiesSheetRoute(...descriptions) {
   });
 }
 
-function sheetMayDirectRecipient(perception, routeReconciliation) {
+function sheetMayDirectRecipient(perception, routeReconciliation, sheetMessage) {
+  const authoredContributionKind = cleanString(sheetMessage?.contributionKind, 40);
+  if (authoredContributionKind && authoredContributionKind !== 'shared_proposal') return false;
   return ['request', 'shared_proposal'].includes(perception?.communicationFunction) &&
     ['recipient', 'shared'].includes(perception?.frameOfReference) &&
     routeReconciliation?.propositionNovelty !== 'repeated' &&
@@ -1106,7 +1108,7 @@ ${recentFieldNotes}`
           );
         }
         const copiedSheetRoute = sheetMessage &&
-          !sheetMayDirectRecipient(perception, routeReconciliation) &&
+          !sheetMayDirectRecipient(perception, routeReconciliation, sheetMessage) &&
           copiesSheetRoute(
           routeDecision.reasoning,
           routeDecision.memoryUpdate.currentPlan

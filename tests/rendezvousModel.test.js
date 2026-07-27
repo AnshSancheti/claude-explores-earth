@@ -656,6 +656,46 @@ test('a route cannot treat an unresolved sheet cue as a prompt to keep moving', 
   assert.doesNotMatch(decision.reasoning, /prompt to keep moving/i);
 });
 
+test('a local observation cannot become route guidance through an inferred proposal', async () => {
+  let routeAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'shared_proposal',
+        frameOfReference: 'shared',
+        sheetInterpretation: 'A calm avenue recedes forward and feels like an invitation to proceed.'
+      },
+      route() {
+        routeAttempts += 1;
+        return routeResponse({
+          reasoning: 'The newest sheet invites forward movement, so I will continue along the implied avenue.',
+          memoryUpdate: {
+            currentPlan: 'Follow the forward corridor proposed by the newest sheet.'
+          }
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    sheetMessage: {
+      sequence: 7,
+      from: 'theo',
+      to: 'ada',
+      contributionKind: 'local_observation'
+    }
+  }));
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /invites forward movement/i);
+  assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
+});
+
 test('a new-sheet hint cannot causally justify continuing a route', async () => {
   const copiedReasoning = 'New sheet hints at a continuing forward progression along a tree-lined urban corridor. The visible local route options favor the eastward street, so I choose the direct continuation.';
   const service = new RendezvousModelService({
