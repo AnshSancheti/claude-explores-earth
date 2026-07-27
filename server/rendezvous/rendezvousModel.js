@@ -785,7 +785,10 @@ function copiesSheetRoute(...descriptions) {
   const crossClauseCoordination =
     /\b(?:latest|newest|new)\s+sheet\b[^.!;]{0,160}\b(?:coordinat|synchroniz)\w*\b[^.!]{0,140}[.;][^.!;]{0,120}\b(?:advanc|continu|head|mov|proceed)\w*\b/i
       .test(positiveText);
-  return crossClausePrompt || crossClauseCoordination || statements.some(statement => {
+  const attributedSharedPush =
+    /\b(?:arrows?|cues?|drawings?|sheets?|signals?|sketch(?:es)?|visuals?)\b[^.!;]{0,180}\bshared\s+(?:cue|invitation|push|signal)\b[^.!;]{0,60}\b(?:advanc|continu|head|move|press|proceed)\w*\b/i
+      .test(positiveText);
+  return crossClausePrompt || crossClauseCoordination || attributedSharedPush || statements.some(statement => {
     if (/\b(?:intercept|opposite|counter|cross(?:ing)? path)\b/i.test(statement)) return false;
     return new RegExp(`\\b${copyAction}\\b[^.!;]{0,120}\\b${cue}\\b`, 'i').test(statement) ||
       new RegExp(`\\b${cue}\\b[^.!;]{0,120}\\b(?:reinforce|suggest|tell|direct|ask|imply)\\w*\\b[^.!;]{0,100}\\b(?:continue|follow|move|proceed|advance|head)\\w*\\b`, 'i')

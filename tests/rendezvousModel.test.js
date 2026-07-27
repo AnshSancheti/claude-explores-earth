@@ -1151,6 +1151,34 @@ test('plural sheet cues cannot suggest pressing ahead', async () => {
   assert.doesNotMatch(decision.reasoning, /suggest we should press ahead/i);
 });
 
+test('a sheet cannot become a shared push to proceed', async () => {
+  const copiedReasoning = 'Ada’s latest street-forward cues depict moving along a broad urban axis and a shared push to proceed. Choosing the northeastern public continuation keeps us advancing along the street environment without locking to a fixed Ada route, balancing forward progress with open interpretation of Ada’s signals.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'Ada reports a broad urban street.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /shared push to proceed/i);
+});
+
 test('a remembered motif cannot be attributed to a sheet that does not contain it', async () => {
   let routeAttempts = 0;
   const staleAttribution = 'New sheet evidence treats the fork as a coordination prompt, not a rendezvous. I choose the only unexplored local continuation.';
