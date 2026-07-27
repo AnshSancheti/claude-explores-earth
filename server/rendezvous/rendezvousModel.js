@@ -616,13 +616,20 @@ export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = 
 }
 
 function copiesSheetRoute(...descriptions) {
-  const statements = descriptions
-    .flatMap(value => cleanString(value, 1200).split(/[.!?;]+/))
+  const text = descriptions.map(value => cleanString(value, 1200)).join(' ');
+  const positiveText = text.replace(
+    /\b(?:do not|don't|never|not|without)\b[^.!?]{0,120}/gi,
+    ' '
+  );
+  const statements = positiveText
+    .split(/[.!?;]+/)
     .map(value => value.trim())
     .filter(Boolean);
-  const cue = '(?:arrow|cue|depicted|direction|drawing|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheet|motif|new sheet|newest sheet|path|route|sheet|visual|vector)';
+  const cue = '(?:arrow|cue|depicted|direction|drawing|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheet|motif|new sheet|newest sheet|path|prompt|route|sheet|visual|vector)';
   const copyAction = '(?:align(?:ing)? with|continue|follow|mirror|move|preserve|proceed|pursue|reproduce)';
-  return statements.some(statement => {
+  const crossClausePrompt = /\b(?:drawing|sheet)\b[^.!?]{0,180}\b(?:cue|prompt)\b[^.!?]{0,140}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
+    .test(positiveText);
+  return crossClausePrompt || statements.some(statement => {
     if (/\b(?:intercept|opposite|counter|cross(?:ing)? path)\b/i.test(statement)) return false;
     return new RegExp(`\\b${copyAction}\\b[^.!;]{0,120}\\b${cue}\\b`, 'i').test(statement) ||
       new RegExp(`\\b${cue}\\b[^.!;]{0,120}\\b(?:reinforce|suggest|tell|direct|ask|imply)\\w*\\b[^.!;]{0,100}\\b(?:continue|follow|move|proceed|advance|head)\\w*\\b`, 'i')

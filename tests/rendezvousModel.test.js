@@ -610,6 +610,52 @@ test('a route cannot copy the latest sheet through a local-evidence disclaimer',
   assert.doesNotMatch(decision.reasoning, /both point to continuing/i);
 });
 
+test('a route cannot treat an unresolved sheet cue as a prompt to keep moving', async () => {
+  const copiedReasoning = 'My local options favor the northern opening with stone arches. Ada’s latest sheet remains an unresolved cue; I treat it as a prompt to keep moving along the northern public route.';
+  const requests = [];
+  const warnings = [];
+  let routeAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'The sender reports moving along an unknown route.'
+      },
+      route() {
+        routeAttempts += 1;
+        if (routeAttempts === 1) {
+          return routeResponse({
+            reasoning: copiedReasoning,
+            memoryUpdate: {
+              currentPlan: 'Use the locally visible stone arches and suspended traffic light to choose this route, then reassess.'
+            }
+          });
+        }
+        return routeResponse({
+          reasoning: 'I choose the northern opening because its three repeated stone arches and suspended traffic light are my strongest local evidence.',
+          memoryUpdate: {
+            currentPlan: 'Use the locally visible stone arches and suspended traffic light to choose this route, then reassess.'
+          }
+        });
+      }
+    }),
+    logger: { warn(message) { warnings.push(message); } }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.ok(
+    warnings.some(message => /copied a non-supporting sheet route/i.test(message)),
+    warnings.join('\n')
+  );
+  assert.match(decision.reasoning, /stone arches and suspended traffic light/i);
+  assert.doesNotMatch(decision.reasoning, /prompt to keep moving/i);
+});
+
 test('a new-sheet hint cannot causally justify continuing a route', async () => {
   const copiedReasoning = 'New sheet hints at a continuing forward progression along a tree-lined urban corridor. The visible local route options favor the eastward street, so I choose the direct continuation.';
   const service = new RendezvousModelService({
