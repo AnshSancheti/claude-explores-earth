@@ -1671,7 +1671,13 @@ export class RendezvousController {
       this.state.agents[pending.from]?.privateMemory
     );
     const repeatsChannel = repeatsRecentOutboundProposition(pending, senderMemory);
-    const lowInformationObservation = pending.contributionKind === 'local_observation' &&
+    const localEvidenceContribution =
+      pending.contributionKind === 'local_observation' ||
+      (
+        pending.contributionKind === 'question' &&
+        String(pending.contributionEvidenceId || '').startsWith('question_local:')
+      );
+    const lowInformationObservation = localEvidenceContribution &&
       !isConcreteLocalEvidence(pending.contributionSummary || pending.informationDelta);
     const contradictoryResponse = responseDrawingContradictsRouteUncertainty(pending);
     const inventedRouteCoordination = responseInventsRouteCoordination(pending);

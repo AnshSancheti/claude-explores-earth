@@ -2986,11 +2986,15 @@ test('bare street substrate is omitted while distinctive local evidence remains'
 test('a list of generic city fixtures is not promoted into a locating clue', () => {
   assert.equal(
     isConcreteLocalEvidence(
-      'New local observation: crosswalks, tall buildings, storefronts'
+      'New local observation: crosswalks, tall buildings, storefronts, pedestrians, taxis, and cars'
     ),
     false
   );
   assert.equal(isConcreteLocalEvidence('row of storefronts'), false);
+  assert.equal(
+    isConcreteLocalEvidence('New local observation: A busy Manhattan-like street corner'),
+    false
+  );
   assert.equal(
     isConcreteLocalEvidence('row of storefronts with striped awnings'),
     true
@@ -2999,6 +3003,29 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     isConcreteLocalEvidence('orange construction barriers beneath dense scaffolding'),
     true
   );
+});
+
+test('a local question must ask about its cited feature, not use it as scenery', () => {
+  assert.equal(localQuestionPreservesCitedSubject({
+    contributionKind: 'question',
+    contributionEvidenceId: 'question_local:0',
+    contributionSummary:
+      'Question I am sending about this local evidence: pedestrians and taxis on the road',
+    drawingIntent:
+      'A lone figure stands near taxis. A question mark asks which direction to take or how to coordinate next.',
+    drawingPrompt:
+      'Draw the figure and taxis behind two large directional choices.'
+  }), false);
+  assert.equal(localQuestionPreservesCitedSubject({
+    contributionKind: 'question',
+    contributionEvidenceId: 'question_local:0',
+    contributionSummary:
+      'Question I am sending about this local evidence: three stone arches with one broken arch',
+    drawingIntent:
+      'Ask whether Theo has seen these three arches with the broken arch in the middle.',
+    drawingPrompt:
+      'Draw three stone arches, emphasizing the broken middle arch as an uncertain comparison.'
+  }), true);
 });
 
 test('route planning rejects partner-cue dependency but preserves evidence-based waiting', async () => {

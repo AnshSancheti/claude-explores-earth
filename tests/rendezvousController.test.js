@@ -955,11 +955,12 @@ test('a persisted local question cannot substitute the received cue for its cite
       turn: 3,
       contributionKind: 'question',
       contributionEvidenceId: 'question_local:0',
-      contributionSummary: 'Question I am sending about this local evidence: crosswalks in the foreground',
+      contributionSummary:
+        'Question I am sending about this local evidence: three stone arches with one broken arch',
       drawingIntent: 'Ask Theo whether his forward cue means literal movement or a symbolic axis.',
-      drawingPrompt: 'Draw a street fork with crosswalks in the foreground.',
+      drawingPrompt: 'Draw a street fork behind three stone arches with one broken arch.',
       messageAction: 'unclear',
-      groundedFeatures: ['crosswalks in the foreground']
+      groundedFeatures: ['three stone arches with one broken arch']
     });
     controller.state.scratchpad.pendingMessage.replanCount = 2;
 
@@ -971,6 +972,48 @@ test('a persisted local question cannot substitute the received cue for its cite
     assert.match(
       controller.state.scratchpad.messageAudit.at(-1).error,
       /displaced its cited subject with the received cue/i
+    );
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a persisted local question cannot promote generic city fixtures into a clue', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-local-question-fixture-test-'));
+  const imageModel = new FakeImageModel();
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: {},
+      imageModel,
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'generic-local-question',
+      agentId: 'ada',
+      turn: 3,
+      contributionKind: 'question',
+      contributionEvidenceId: 'question_local:0',
+      contributionSummary:
+        'Question I am sending about this local evidence: pedestrians and vehicles (taxis, cars) on the road',
+      drawingIntent:
+        'A lone figure near taxis asks which direction to take or how to coordinate next.',
+      drawingPrompt: 'Draw the figure and taxis behind two large directional choices.',
+      messageAction: 'unclear',
+      groundedFeatures: ['pedestrians and vehicles (taxis, cars) on the road']
+    });
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(imageModel.calls.length, 0);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.match(
+      controller.state.scratchpad.messageAudit.at(-1).error,
+      /low-information urban street/i
     );
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });

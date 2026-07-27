@@ -113,12 +113,12 @@ const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'active', 'an', 'and', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
   'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'central', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
-  'expansive', 'flanked', 'intersections', 'lane', 'lanes', 'lengthy', 'lined', 'local', 'long',
-  'marked', 'marking', 'markings', 'multiple', 'narrow', 'narrowed', 'narrowing', 'new',
+  'expansive', 'flanked', 'intersections', 'lane', 'lanes', 'lengthy', 'like', 'lined', 'local', 'long',
+  'manhattan', 'marked', 'marking', 'markings', 'multiple', 'narrow', 'narrowed', 'narrowing', 'new',
   'observation', 'of', 'on', 'pedestrian', 'pedestrians', 'point', 'recede', 'recedes', 'receding',
   'road', 'roads', 'row', 'rows', 'scene', 'side', 'sides', 'sidewalk', 'sidewalks', 'storefront',
   'storefronts', 'straight', 'street', 'traffic', 'streets', 'stripe', 'striped', 'stripes',
-  'surrounded', 'tall', 'the', 'urban', 'vehicle',
+  'surrounded', 'tall', 'taxi', 'taxis', 'the', 'urban', 'vehicle',
   'vehicles', 'vanishing', 'visible', 'white', 'wide', 'widened', 'widening', 'widthy', 'with',
   'toward', 'towards'
 ]);
@@ -138,7 +138,7 @@ function isLowInformationUrbanObservation(description) {
 }
 
 export function isConcreteLocalEvidence(description) {
-  const value = cleanString(description, 220);
+  const value = contributionEvidenceText(description);
   if (!value || value.toLowerCase() === 'context') return false;
   if (/\bstreet\s+(?:label|name)\b/i.test(value) || containsNamedStreetReference(value)) {
     return false;
@@ -345,16 +345,15 @@ export function localQuestionPreservesCitedSubject(message) {
   ) {
     return false;
   }
-  const questionClause = drawingIntent.match(/\b(?:whether|if)\b([\s\S]*)/i)?.[1] ||
-    drawingIntent;
-  const receivedCueIsSubject =
-    /\b(?:ada|theo|friend|partner)(?:'s|’s)?\b[^.!?]{0,80}\b(?:cue|drawing|message|sheet|signal|symbol)\b/i
-      .test(questionClause) ||
-    /\b(?:her|his|their)\b[^.!?]{0,50}\b(?:cue|drawing|message|sheet|signal|symbol)\b/i
-      .test(questionClause) ||
-    /\b(?:incoming|latest|newest|received)\b[^.!?]{0,30}\b(?:drawing|message|sheet|signal)\b/i
-      .test(questionClause);
-  return !receivedCueIsSubject ||
+  const explicitClause = drawingPlan.match(/\b(?:whether|if)\b([^.!?;]*)/i)?.[1];
+  const questionSentences = drawingPlan
+    .split(/[.!?;]+/)
+    .filter(sentence =>
+      /\b(?:ask|asking|choice|question|uncertain|uncertainty|which)\b|\bor\b/i.test(sentence)
+    )
+    .join(' ');
+  const questionClause = explicitClause || questionSentences;
+  return Boolean(questionClause) &&
     visualDescriptionSimilarity(localEvidence, questionClause) >= 0.25;
 }
 
