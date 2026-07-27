@@ -21,6 +21,7 @@ import {
 import {
   commitRasterScratchpadMessage,
   createRasterScratchpad,
+  failRasterScratchpadMessage,
   markRasterScratchpadAttempt,
   normalizeScratchpad,
   normalizeRasterScratchpad,
@@ -1748,6 +1749,7 @@ export class RendezvousController {
         if (!review.accepted) {
           const error = new Error(`Sender rejected the generated drawing: ${review.assessment}`);
           error.retryable = true;
+          error.drawingRejected = true;
           error.nextDrawingPrompt = composeDrawingRevisionPrompt(
             pending.drawingPrompt,
             review.revisionPrompt,
@@ -1827,6 +1829,29 @@ export class RendezvousController {
           : null;
         if (currentPending?.id === pending.id) {
           const attempts = Math.max(1, currentPending.attempts);
+          const reviewExhausted = error.drawingRejected === true &&
+            currentPending.replanCount >= MAX_DRAWING_REPLANS &&
+            attempts >= 6;
+          if (reviewExhausted) {
+            this.state.scratchpad = failRasterScratchpadMessage(this.state.scratchpad, {
+              pendingId: pending.id,
+              error: error.message
+            });
+            this.#recordEvent('scratchpad_abandoned', {
+              id: pending.id,
+              from: pending.from,
+              to: pending.to,
+              error: error.message,
+              attempts,
+              replanCount: currentPending.replanCount
+            });
+            await this.saveState();
+            this.broadcastState();
+            this.logger.warn?.(
+              `Rendezvous drawing ${pending.id} was abandoned after exhausting semantic recovery: ${error.message}`
+            );
+            return null;
+          }
           const backoffMs = Math.min(
             this.drawingRetryMaxMs,
             this.drawingRetryBaseMs * (2 ** Math.min(6, attempts - 1))

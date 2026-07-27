@@ -1252,6 +1252,74 @@ test('a second failed replan can accept a recipient-legible local report', async
   }
 });
 
+test('semantic recovery exhaustion abandons only the unsent draft', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-abandoned-draft-test-'));
+  let reviews = 0;
+  const agentModel = {
+    async reviewDrawing() {
+      reviews += 1;
+      return {
+        accepted: false,
+        assessment: 'The perspective reads as an invitation to move, not a local report.',
+        revisionPrompt: 'Make the observed crossing primary without inviting movement.',
+        blindRead: {
+          dominantAction: 'movement',
+          frameOfReference: 'recipient',
+          communicationFunction: 'directive',
+          readableText: false,
+          likelyMessage: 'Walk toward the horizon.'
+        }
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'last-delivered-sheet',
+      agentId: 'ada',
+      turn: 8,
+      contributionKind: 'local_observation',
+      drawingPrompt: 'Draw a stone arcade.'
+    });
+    controller.state.scratchpad = commitRasterScratchpadMessage(controller.state.scratchpad, {
+      pendingId: 'last-delivered-sheet',
+      imageFile: 'last-delivered-sheet.webp'
+    });
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'unsendable-draft',
+      agentId: 'theo',
+      turn: 9,
+      contributionKind: 'local_observation',
+      contributionSummary: 'New local observation: a crossing before a vanishing point',
+      drawingIntent: 'Show the crossing as a stationary local observation.',
+      informationDelta: 'New local observation: a crossing before a vanishing point',
+      messageAction: 'stillness',
+      drawingPrompt: 'Draw a crossing before a vanishing point.'
+    });
+    controller.state.scratchpad.pendingMessage.attempts = 5;
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(reviews, 2);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.sequence, 1);
+    assert.equal(controller.state.scratchpad.owner, 'theo');
+    assert.equal(controller.state.scratchpad.currentMessage.id, 'last-delivered-sheet');
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).id, 'unsendable-draft');
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('failed replanning is retried separately before bounded recipient-legible delivery', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-replan-failure-test-'));
   let replans = 0;
