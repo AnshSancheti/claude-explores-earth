@@ -564,6 +564,31 @@ test('a static local observation cannot add an uncited movement scene', async ()
   assert.doesNotMatch(decision.drawingPrompt, /footprints|route|vanishing point/i);
 });
 
+test('a local observation records only its cited evidence as the intended message', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing: drawingResponse({
+        contributionEvidenceId: 'local:0',
+        drawingIntent:
+          'Continue toward a shared axis while using the arches to coordinate with Theo.',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw the three repeated stone arches as one dark landmark.'
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.contributionKind, 'local_observation');
+  assert.equal(
+    decision.drawingIntent,
+    'Show the cited local observation as the complete message: New local observation: three repeated stone arches.'
+  );
+  assert.doesNotMatch(decision.drawingIntent, /shared axis|coordinate|continue/i);
+  assert.match(decision.drawingPrompt, /three repeated stone arches/);
+});
+
 test('stubborn route imagery is stripped without changing the chosen local contribution', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {

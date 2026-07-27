@@ -275,9 +275,15 @@ function contributionEvidenceText(value) {
 
 const ROUTE_COMMAND_CUES = [
   'arrow',
+  'axis',
+  'continue',
+  'coordinate',
+  'coordination',
   'direction',
   'directional',
+  'directive',
   'footprint',
+  'forward',
   'journey',
   'move',
   'moved',
@@ -293,6 +299,7 @@ const ROUTE_COMMAND_CUES = [
   'run',
   'runner',
   'running',
+  'toward',
   'vanishing',
   'walk',
   'walking'

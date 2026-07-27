@@ -99,6 +99,9 @@ function compatibleRevisionFeatures(
   contributionSummary = ''
 ) {
   if (!String(drawingPrompt || '').startsWith(RENDER_REVISION_MARKER)) return groundedFeatures;
+  if (contributionKind === 'local_observation') {
+    return (Array.isArray(groundedFeatures) ? groundedFeatures : []).slice(0, 1);
+  }
   const explicitlyRemoved = ['arrow', 'barrier', 'figure', 'line', 'motion', 'path', 'route', 'star']
     .filter(term => new RegExp(`\\bremove\\b[^.!;]{0,120}\\b${term}s?\\b`, 'i').test(drawingPrompt));
   const conflictPattern = messageAction === 'stillness'

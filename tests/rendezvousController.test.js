@@ -840,6 +840,61 @@ test('the sender reviews a generated drawing and one rejection produces a revise
   }
 });
 
+test('a rejected local observation revision drops incidental scene anchors', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-local-revision-test-'));
+  let reviewCount = 0;
+  const agentModel = {
+    async reviewDrawing() {
+      reviewCount += 1;
+      return reviewCount === 1
+        ? {
+            accepted: false,
+            assessment: 'The surrounding street displaced the cited bus.',
+            revisionPrompt: 'Make the yellow school bus the only dominant subject.'
+          }
+        : {
+            accepted: true,
+            assessment: 'The cited bus is now unmistakable.',
+            revisionPrompt: ''
+          };
+    }
+  };
+  const imageModel = new FakeImageModel();
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel,
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'local-observation-revision',
+      agentId: 'ada',
+      turn: 2,
+      contributionKind: 'local_observation',
+      contributionSummary: 'New local observation: yellow school bus on the left',
+      informationDelta: 'New local observation: yellow school bus on the left',
+      drawingIntent: 'Show the cited local observation.',
+      drawingPrompt: 'Sketch the bus within the surrounding street.',
+      groundedFeatures: [
+        'yellow school bus on the left',
+        'white delivery van on the right',
+        'bare trees and surrounding buildings'
+      ]
+    });
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(imageModel.calls.length, 2);
+    assert.deepEqual(imageModel.calls[1].groundedFeatures, ['yellow school bus on the left']);
+    assert.equal(controller.state.scratchpad.currentMessage.id, 'local-observation-revision');
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a rejected question revision cannot resolve its own alternatives', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-question-revision-test-'));
   let reviewCount = 0;
