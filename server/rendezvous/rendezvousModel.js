@@ -912,7 +912,7 @@ function copiesSheetRoute(...descriptions) {
         .test(statement) ||
       /\b(?:latest|newest|new)\s+evidence\b[^.!;]{0,120}\b(?:favor|indicate|point|reinforce|support|suggest)\w*\b[^.!;]{0,140}\b(?:advanc|continu|follow|head|move|proceed|pursue)\w*\b[^.!;]{0,100}\b(?:axis|corridor|path|route|vanishing point|way)\b/i
         .test(statement) ||
-      /\b(?:latest|newest|new)\s+(?:drawings?|images?|scenes?|sheets?|sketch(?:es)?)\b[^.!;]{0,160}\b(?:emphasize|frame|indicate|invite|point|present|propos|push|reinforce|show|suggest)\w*\b[^.!;]{0,120}\b(?:avenue|axis|continuation|corridor|direction|forward|motion|movement|navigation|path|route|vanishing point|way)\b/i
+      /\b(?:latest|newest|new)\b[^.!;]{0,80}\b(?:drawings?|images?|scenes?|sheets?|sketch(?:es)?)\b[^.!;]{0,160}\b(?:emphasize|frame|imply|indicate|invite|point|present|propos|push|reinforce|show|suggest)\w*\b[^.!;]{0,120}\b(?:avenue|axis|continuation|corridor|direction|forward|motion|movement|navigation|path|route|vanishing point|way)\b/i
         .test(statement) ||
       /\b(?:latest|newest|new)\s+sheets?\b[^.!;]{0,160}\b(?:align|correspond|fit|match)\w*\s+with\b[^.!;]{0,100}\b(?:continuation|corridor|direction|forward|path|route|street|stretch|way)\b/i
         .test(statement) ||

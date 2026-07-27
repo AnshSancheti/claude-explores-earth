@@ -1352,6 +1352,34 @@ test('latest partner drawings cannot push the recipient toward an axis', async (
   assert.doesNotMatch(decision.reasoning, /drawings push|landmarks for coordination/i);
 });
 
+test('a described latest drawing cannot imply forward motion', async () => {
+  const copiedReasoning = 'Ada’s latest urban-axis drawings imply forward motion along a broad northeast city axis. My private notes describe a dense urban corridor with crosswalks and storefront landmarks, so continuing northeast aligns with the observed environment and preserves forward momentum without locking to a specific Ada route. Route-option 0 visually matches a northeast progression through a dense street canyon with taxis and a crosswalk ahead, consistent with my local surroundings.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'shared',
+        sheetInterpretation: 'A generic dense urban core with taxis and a foreground crosswalk.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /drawings imply|Ada route/i);
+});
+
 test('newest evidence and an ambiguous motif cannot jointly justify movement', async () => {
   const copiedReasoning = 'Following the newest evidence, I continue along the public corridor toward the vanishing point while keeping the fork coordinated. This aligns with the still-ambiguous fork motif, which may mark a generic continuation. Moving preserves forward movement without fixing a meeting point.';
   const service = new RendezvousModelService({
