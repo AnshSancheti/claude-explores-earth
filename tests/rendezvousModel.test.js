@@ -2210,26 +2210,16 @@ test('own-action drawing cannot reverse the cited compass direction', async () =
   assert.doesNotMatch(decision.drawingIntent, /southeast/);
 });
 
-test('a generic walking-away composition cannot present a recent movement proposition as fresh', async () => {
+test('a recent movement proposition is offered only as deliberate repetition', async () => {
   let drawingAttempts = 0;
   const requests = [];
   const service = new RendezvousModelService({
     client: stagedClient(requests, {
       drawing(request) {
         drawingAttempts += 1;
-        if (drawingAttempts === 1) {
-          return drawingResponse({
-            contributionKind: 'own_action',
-            contributionEvidenceId: 'action:0',
-            drawingIntent: 'Show a person walking away along my chosen public route.',
-            drawingPrompt: 'Draw a person walking forward down a tree-lined sidewalk with a path ahead.',
-            groundedFeatureEvidenceIds: ['action:0']
-          });
-        }
-        assert.match(
-          request.messages[1].content[0].text,
-          /AUTHORITATIVE PLANNING CORRECTION.*repeats a recent outbound proposition/
-        );
+        const prompt = request.messages[1].content.map(item => item.text || '').join('\n');
+        assert.doesNotMatch(prompt, /"id": "action:0"/);
+        assert.match(prompt, /"id": "prior_sent:0"/);
         return drawingResponse({
           contributionKind: 'question',
           contributionEvidenceId: 'question:0',
@@ -2255,7 +2245,7 @@ test('a generic walking-away composition cannot present a recent movement propos
     }
   }));
 
-  assert.equal(drawingAttempts, 2);
+  assert.equal(drawingAttempts, 1);
   assert.equal(decision.fallbackCause, null);
   assert.equal(decision.contributionKind, 'question');
   assert.equal(decision.contributionEvidenceId, 'question:0');
@@ -2310,20 +2300,9 @@ test('a third copy of the same local observation must adapt or repeat deliberate
       }),
       drawing(request) {
         drawingAttempts += 1;
-        if (drawingAttempts === 1) {
-          return drawingResponse({
-            contributionKind: 'local_observation',
-            contributionEvidenceId: 'local:0',
-            drawingIntent: 'Show the same tree-lined urban street again.',
-            messageAction: 'stillness',
-            drawingPrompt: 'Draw the same dense tree canopy above an urban sidewalk.',
-            groundedFeatureEvidenceIds: ['local:0']
-          });
-        }
-        assert.match(
-          request.messages[1].content[0].text,
-          /already recurred.*different grounded contribution.*deliberate_repetition/s
-        );
+        const prompt = request.messages[1].content.map(item => item.text || '').join('\n');
+        assert.doesNotMatch(prompt, /"id": "local:0"/);
+        assert.match(prompt, /"id": "prior_sent:/);
         return drawingResponse({
           contributionKind: 'question',
           contributionEvidenceId: 'question:0',
@@ -2353,7 +2332,7 @@ test('a third copy of the same local observation must adapt or repeat deliberate
     }
   }));
 
-  assert.equal(drawingAttempts, 2);
+  assert.equal(drawingAttempts, 1);
   assert.equal(decision.fallbackCause, null);
   assert.equal(decision.contributionKind, 'question');
   assert.match(decision.drawingPrompt, /uncertain/);
@@ -2744,12 +2723,13 @@ test('distinct planner corrections receive one bounded extra attempt', async () 
         }
         if (drawingAttempts === 2) {
           return drawingResponse({
-            contributionKind: 'local_observation',
-            contributionEvidenceId: 'local:0',
-            drawingIntent: 'Show the same tree-lined urban street again.',
+            contributionKind: 'deliberate_repetition',
+            contributionEvidenceId: 'prior_sent:0',
+            drawingIntent: 'Repeat the prior stone-arch report.',
+            continuityReason: '',
             messageAction: 'stillness',
-            drawingPrompt: 'Draw the same tree-lined urban street.',
-            groundedFeatureEvidenceIds: ['local:0']
+            drawingPrompt: 'Draw the same three stone arches.',
+            groundedFeatureEvidenceIds: ['prior_sent:0']
           });
         }
         return drawingResponse({
@@ -2924,19 +2904,23 @@ test('the drawing planner can cite any proposition considered by recent-repeat d
   assert.match(decision.contributionSummary, /stone arch is a place or only a symbol/);
 });
 
-test('a stubborn fresh label becomes honest deliberate repetition after bounded corrections', async () => {
+test('a repeated question is offered directly as deliberate repetition', async () => {
   let drawingAttempts = 0;
   const service = new RendezvousModelService({
     client: stagedClient([], {
-      drawing() {
+      drawing(request) {
         drawingAttempts += 1;
+        const prompt = request.messages[1].content.map(item => item.text || '').join('\n');
+        assert.doesNotMatch(prompt, /"id": "question:0"/);
+        assert.match(prompt, /"id": "prior_sent:0"/);
         return drawingResponse({
-          contributionKind: 'question',
-          contributionEvidenceId: 'question:0',
+          contributionKind: 'deliberate_repetition',
+          contributionEvidenceId: 'prior_sent:0',
           drawingIntent: 'Ask whether the circle is a lamp or a destination.',
+          continuityReason: 'The question remains unresolved, so I am asking it again.',
           messageAction: 'unclear',
           drawingPrompt: 'Draw one uncertain circle poised between a lamp and a distant destination.',
-          groundedFeatureEvidenceIds: ['question:0']
+          groundedFeatureEvidenceIds: ['prior_sent:0']
         });
       }
     }),
@@ -2957,7 +2941,7 @@ test('a stubborn fresh label becomes honest deliberate repetition after bounded 
     }
   }));
 
-  assert.equal(drawingAttempts, 2);
+  assert.equal(drawingAttempts, 1);
   assert.equal(decision.fallbackCause, null);
   assert.equal(decision.contributionKind, 'deliberate_repetition');
   assert.match(decision.contributionSummary, /circle represents a lamp or destination/);

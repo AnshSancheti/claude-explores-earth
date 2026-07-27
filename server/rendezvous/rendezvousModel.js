@@ -1637,6 +1637,19 @@ ${recentFieldNotes}`
         contributionSummary,
         informationDelta: contributionSummary
       }, actionMemory).length === 0;
+    }).filter(evidence => {
+      if (evidence.id.startsWith('prior_sent:')) return true;
+      const contributionKind = contributionKindForEvidenceId(evidence.id);
+      const contributionSummary = authoritativeContributionSummary(
+        contributionKind,
+        evidence.description,
+        evidence.id
+      );
+      return !repeatsRecentOutboundProposition({
+        contributionKind,
+        contributionSummary,
+        informationDelta: contributionSummary
+      }, actionMemory);
     });
     const drawingSystemPrompt = `You are ${agent.name}. You have reached a real choice while trying to find ${partnerName}, and you currently hold the one physical sheet you pass back and forth.
 
