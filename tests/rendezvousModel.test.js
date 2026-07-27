@@ -3884,6 +3884,12 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence(
+      'New local observation: brick building facades forming a canyon-like street'
+    ),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('subtle shading suggesting depth and distance'),
     false
   );
