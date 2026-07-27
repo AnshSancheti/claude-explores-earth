@@ -270,9 +270,12 @@ export function responseDrawingContradictsRouteUncertainty(message) {
 }
 
 export function responseInventsRouteCoordination(message) {
-  if (message?.contributionKind !== 'response') return false;
+  if (!['response', 'deliberate_repetition'].includes(message?.contributionKind)) return false;
+  const contribution = contributionEvidenceText(
+    message?.contributionSummary || message?.informationDelta || ''
+  );
   const positiveText = cleanString(
-    `${message?.contributionSummary || message?.informationDelta || ''} ${message?.drawingIntent || ''}`,
+    `${contribution} ${message?.drawingIntent || ''}`,
     1800
   ).replace(
     /\b(?:do not|does not|doesn't|never|not|rather than|without)\b[^.!;]{0,120}/gi,
