@@ -1323,6 +1323,8 @@ If fresh environmental evidence supports only your local movement, it does not c
 
 A separate call will let you decide what to draw. Explain your actual thinking in first person, including how the drawing affected you when relevant. Do not claim certainty that the evidence does not support.
 
+Inspect the local route-option images closely enough to preserve useful visual detail. In "observedFeatures", report one to four distinctive, drawable facts that a friend could recognize again: favor unusual objects or structures, counts, materials, colors, shapes, atmosphere, and spatial relationships. Do not use a bare street canyon, traffic, storefronts, crosswalk, sidewalk, generic buildings, or direction of travel as an observed feature unless a concrete distinguishing detail makes it specific. If the scene truly has no distinctive feature, keep that generic context in "observation" rather than padding "observedFeatures" with ordinary street substrate.
+
 Return only JSON:
 {
   "action": ${actionSchema},
@@ -1385,7 +1387,7 @@ ${recentFieldNotes}`
         },
         {
           type: 'image_url',
-          image_url: { url: `data:image/jpeg;base64,${buffer.toString('base64')}`, detail: 'low' }
+          image_url: { url: `data:image/jpeg;base64,${buffer.toString('base64')}`, detail: 'high' }
         }
       ]))
     ];

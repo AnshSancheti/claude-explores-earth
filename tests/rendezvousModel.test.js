@@ -248,6 +248,10 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.match(serialized, /strongest visual cue.*messageAction/);
   assert.match(serialized, /wordless drawing/);
   assert.match(serialized, /no readable text/);
+  assert.match(serialized, /one to four distinctive, drawable facts/);
+  assert.ok(requests[1].messages[1].content
+    .filter(item => item.type === 'image_url')
+    .every(item => item.image_url.detail === 'high'));
   assert.match(requests[0].messages[1].content[0].text, /Inspect this image on its own/);
   assert.doesNotMatch(requests[0].messages[1].content[0].text, /private evidence ledger|History image/);
   assert.equal(requests[0].messages[1].content.length, 2);
