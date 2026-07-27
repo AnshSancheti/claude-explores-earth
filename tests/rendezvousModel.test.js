@@ -3674,6 +3674,10 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence('New local observation: central vanishing point / strong linear perspective'),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('subtle shading suggesting depth and distance'),
     false
   );
