@@ -1006,6 +1006,34 @@ test('a sheet cannot frame forward motion as the locally justified path', async 
   assert.doesNotMatch(decision.reasoning, /suggesting forward motion/i);
 });
 
+test('plural sheet cues cannot suggest pressing ahead', async () => {
+  const copiedReasoning = 'The forward, central-axis cues in Ada’s drawings suggest we should press ahead rather than circle back. I treat Ada’s arrows as symbolic guidance at a crossroads rather than a literal route I must duplicate.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'request',
+        frameOfReference: 'shared',
+        sheetInterpretation: 'Ada asks for a direction at a crossroads.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /suggest we should press ahead/i);
+});
+
 test('a remembered motif cannot be attributed to a sheet that does not contain it', async () => {
   let routeAttempts = 0;
   const staleAttribution = 'New sheet evidence treats the fork as a coordination prompt, not a rendezvous. I choose the only unexplored local continuation.';
@@ -2038,8 +2066,7 @@ test('a repeatedly unanswered question cannot keep masquerading as a new message
     privateMemory: {
       ...input().privateMemory,
       sentMessages: [
-        { sequence: 5, ...repeatedQuestion },
-        { sequence: 7, ...repeatedQuestion }
+        { sequence: 5, ...repeatedQuestion }
       ]
     }
   }));
@@ -3262,6 +3289,48 @@ test('response review rejects route guidance that contradicts explicit uncertain
   assert.match(review.assessment, /route guidance.*explicitly withholds route certainty/);
   assert.match(review.revisionPrompt, /Remove arrows, paths/);
   assert.match(review.revisionPrompt, /unresolved relationship itself visually primary/);
+  assert.equal(requests.length, 1);
+});
+
+test('question review requires both sides of a stop-versus-move contrast', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      blindRead: {
+        literalContents: [
+          'a central figure faces arrows pointing left, right, and straight'
+        ],
+        primarySubject: 'a question mark surrounded by three route arrows',
+        likelyMessage: 'The viewer is asked which direction to take.',
+        dominantAction: 'transition',
+        frameOfReference: 'recipient',
+        frameBasis: 'All arrows project ahead of the viewer.',
+        communicationFunction: 'request',
+        movementCues: ['three directional arrows'],
+        stillnessCues: [],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    contributionKind: 'question',
+    contributionSummary:
+      'Question I am sending: Does Theo intend to stop at the crossroads, or continue moving through it?',
+    drawingIntent: 'Ask whether Theo will stop or continue.',
+    informationDelta: 'Does Theo intend to stop or continue moving?',
+    messageAction: 'unclear',
+    drawingPrompt: 'Draw a figure facing left, right, and forward arrows.',
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /both sides.*stillness-versus-movement/);
+  assert.match(review.revisionPrompt, /stationary.*moving/s);
+  assert.match(review.revisionPrompt, /do not substitute a left-versus-right route choice/);
   assert.equal(requests.length, 1);
 });
 

@@ -248,6 +248,12 @@ function responseWithholdsRouteCertainty(value) {
     .test(cleanString(value, 1200));
 }
 
+function questionContrastsStillnessAndMovement(value) {
+  const text = cleanString(value, 1200);
+  return /\b(?:hold|pause|remain|stay|still|stop|wait)\w*\b/i.test(text) &&
+    /\b(?:advance|continue|move|proceed|travel|walk)\w*\b/i.test(text);
+}
+
 function historicalSheetLiteralContents(privateMemory, currentSequence) {
   return (privateMemory?.receivedSheets || [])
     .filter(sheet => Number(sheet?.sequence) !== Number(currentSequence))
@@ -694,7 +700,7 @@ function copiesSheetRoute(...descriptions) {
     .split(/[.!?;]+/)
     .map(value => value.trim())
     .filter(Boolean);
-  const cue = '(?:arrow|cue|depicted|direction|drawings?|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheets?|motif|new sheets?|newest sheets?|path|prompts?|route|sheets?|sketch(?:es)?|visual|vector)';
+  const cue = '(?:arrows?|cues?|depicted|direction|drawings?|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheets?|motifs?|new sheets?|newest sheets?|path|prompts?|route|sheets?|sketch(?:es)?|visuals?|vector)';
   const copyAction = '(?:align(?:s|ed|ing)? with|continue|follow|in line with|mirror|move|preserve|proceed|pursue|reproduce)';
   const crossClausePrompt = /\b(?:drawing|sheet)\b[^.!?]{0,180}\b(?:cue|prompt)\b[^.!?]{0,140}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
     .test(positiveText);
@@ -714,6 +720,8 @@ function copiesSheetRoute(...descriptions) {
       /\b(?:align|correspond|fit|match)\w*\s+with\b[^.!;]{0,100}\b(?:drawing|fork|motif|sheet|symbol|visual)\b/i
         .test(statement) ||
       /\b(?:drawing|sheet)s?\b[^.!;]{0,100}\b(?:cue|frame|motif|path|route)s?\b[^.!;]{0,100}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
+        .test(statement) ||
+      /\b(?:arrows?|cues?|drawings?|sheets?|motifs?|visuals?)\b[^.!;]{0,160}\b(?:favor|indicate|reinforce|signal|suggest|support)\w*\b[^.!;]{0,100}\b(?:advanc|continu|head|move|press|proceed)\w*\b/i
         .test(statement) ||
       /\b(?:move|continue|proceed|advance|head)\w*\b[^.!;]{0,80}\b(?:along|with|toward)\b[^.!;]{0,80}\b(?:indicated|implied|depicted|arrow|cue|vector)\b/i
         .test(statement);
@@ -799,7 +807,7 @@ function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
   // evade the limit by alternating authors. Generic action scenes are
   // challenged after the first recurrence.
   return matchingRecentMessages + matchingReceivedObservations >=
-    (contributionKind === 'own_action' ? 1 : 2);
+    (['local_observation'].includes(contributionKind) ? 2 : 1);
 }
 
 function fallbackDecision(options, visitedPanos, cause) {
@@ -2036,6 +2044,21 @@ Return only JSON:
         accepted: false,
         assessment: `Blind recipient saw route guidance in a response that explicitly withholds route certainty: ${blindRead.likelyMessage}`,
         revisionPrompt: 'Remove arrows, paths, vanishing-point movement, and directional commands. Make the non-confirmation, mismatch, interruption, or unresolved relationship itself visually primary, choosing your own wordless composition rather than issuing a route cue.',
+        blindRead
+      };
+    }
+    if (
+      contributionKind === 'question' &&
+      questionContrastsStillnessAndMovement(contributionSummary) &&
+      (
+        blindRead.movementCues.length === 0 ||
+        blindRead.stillnessCues.length === 0
+      )
+    ) {
+      return {
+        accepted: false,
+        assessment: `Blind recipient could not see both sides of the stated stillness-versus-movement question: ${blindRead.likelyMessage}`,
+        revisionPrompt: 'Make both alternatives visibly concrete: one unmistakably stationary, anchored, stopped, or waiting state and one unmistakably moving or continuing state. Choose your own wordless composition, but do not substitute a left-versus-right route choice for the stated stop-versus-continue contrast.',
         blindRead
       };
     }
