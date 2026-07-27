@@ -31,6 +31,8 @@ test('raster sheet changes and transfers only after a durable image commit', () 
     drawingPrompt: 'Draw two arches and a yellow circle.',
     groundedFeatures: ['two stone arches', 'a round lamp between them'],
     referenceViewIndices: [0],
+    availableReferenceViewIndices: [0],
+    availableReferenceFeatures: ['two stone arches', 'a round lamp between them'],
     sourcePanoId: 'ada-branch',
     snapshot: {
       turn: 4,
@@ -63,6 +65,11 @@ test('raster sheet changes and transfers only after a durable image commit', () 
   assert.equal(queued.owner, 'ada');
   assert.equal(queued.currentMessage, null);
   assert.equal(queued.pendingMessage.status, 'generating');
+  assert.deepEqual(queued.pendingMessage.availableReferenceViewIndices, [0]);
+  assert.deepEqual(
+    queued.pendingMessage.availableReferenceFeatures,
+    ['two stone arches', 'a round lamp between them']
+  );
 
   const committed = commitRasterScratchpadMessage(queued, {
     pendingId: 'message-one',

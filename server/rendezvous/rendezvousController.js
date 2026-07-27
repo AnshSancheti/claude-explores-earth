@@ -1408,11 +1408,24 @@ export class RendezvousController {
           }
           if (decision.drawingPrompt) {
             const pendingId = randomUUID();
-            const referenceViewIndices = await this.#persistPendingReferences(
+            const requestedReferenceViewIndex =
+              decision.referenceViewIndices?.[0] ??
+              decision.observedFeatureViewIndices?.[0];
+            const availableReferenceViewIndices = await this.#persistPendingReferences(
               pendingId,
               screenshots,
-              decision.referenceViewIndices
+              Number.isInteger(requestedReferenceViewIndex)
+                ? [requestedReferenceViewIndex]
+                : []
             );
+            const referenceViewIndices = availableReferenceViewIndices.filter(index =>
+              decision.referenceViewIndices?.includes(index)
+            );
+            const availableReferenceFeatures = decision.observedFeatures
+              .filter((feature, index) =>
+                decision.observedFeatureViewIndices?.[index] ===
+                  availableReferenceViewIndices[0]
+              );
             this.state.scratchpad = queueRasterScratchpadMessage(scratchpad, {
               id: pendingId,
               agentId,
@@ -1427,6 +1440,8 @@ export class RendezvousController {
               messageAction: decision.messageAction,
               groundedFeatures: decision.drawingGroundedFeatures,
               referenceViewIndices,
+              availableReferenceViewIndices,
+              availableReferenceFeatures,
               sourcePanoId: current.panoId,
               snapshot: this.#captureSheetSnapshot(agentId, {
                 reasoning: decision.reasoning,
@@ -1599,7 +1614,7 @@ export class RendezvousController {
       scratchpad.currentMessage?.imageFile,
       ...scratchpad.messageAudit.map(message => message.imageFile),
       ...scratchpad.messageAudit.map(message => message.sourceImageFile),
-      ...(scratchpad.pendingMessage?.referenceViewIndices || []).map(index =>
+      ...(scratchpad.pendingMessage?.availableReferenceViewIndices || []).map(index =>
         `${scratchpad.pendingMessage.id}-reference-${index}.jpg`
       )
     ].filter(Boolean));
@@ -1994,9 +2009,17 @@ export class RendezvousController {
             MAX_DRAWING_REPLANS,
             Math.max(0, Number(liveScratchpad.pendingMessage.replanCount) || 0) + 1
           );
+          const activatesAvailableReference =
+            replanned?.contributionKind === 'local_observation' &&
+            replanned.groundedFeatures?.some(feature =>
+              liveScratchpad.pendingMessage.availableReferenceFeatures.includes(feature)
+            );
           liveScratchpad.pendingMessage = {
             ...liveScratchpad.pendingMessage,
             ...(replanned || {}),
+            referenceViewIndices: activatesAvailableReference
+              ? liveScratchpad.pendingMessage.availableReferenceViewIndices
+              : [],
             attempts: replanned ? 0 : liveScratchpad.pendingMessage.attempts,
             replanCount: nextReplanCount,
             replanFailureCount: 0,

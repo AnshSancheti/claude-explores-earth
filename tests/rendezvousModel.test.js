@@ -1517,6 +1517,34 @@ test('a described latest drawing cannot imply forward motion', async () => {
   assert.doesNotMatch(decision.reasoning, /drawings imply|Ada route/i);
 });
 
+test('a matching corridor cannot turn a sheet report into the partner route', async () => {
+  const copiedReasoning = 'The newest sheet emphasizes a left-side line of vans and a brick wall on the right with a strong diagonal perspective toward an alley. My immediate surroundings match a narrow urban street with parked vans on the left and a brick facade on the right, suggesting a potential corridor toward a vanishing point. Moving along heading 123 southeast follows the visible street alignment and keeps me in a corridor that could lead toward my partner’s likely route or stopping points, without retracing into known dead ends.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'recipient',
+        sheetInterpretation: 'A row of vans beside a brick wall recedes into an alley.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /could lead toward my partner/i);
+});
+
 test('a depicted sheet axis cannot align with movement in the next clause', async () => {
   const copiedReasoning = 'The newest sheet depicts a crowded city crosswalk and a broad public axis; moving east along the main street aligns with continuing along the visible public corridor without copying a drawn route as a fixed destination. The local surroundings show a busy crosswalk and urban street activity, supporting progression along the established axis toward a distant focal point rather than detouring into a drawn path.';
   const service = new RendezvousModelService({

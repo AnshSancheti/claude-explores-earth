@@ -888,6 +888,7 @@ test('a persisted pending drawing resumes after controller restart', async () =>
 test('the sender reviews a generated drawing and one rejection produces a revised render', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-review-test-'));
   const reviews = [];
+  const imageModel = new FakeImageModel();
   const agentModel = {
     async reviewDrawing(input) {
       reviews.push(input);
@@ -904,7 +905,6 @@ test('the sender reviews a generated drawing and one rejection produces a revise
           };
     }
   };
-  const imageModel = new FakeImageModel();
   try {
     const controller = new RendezvousController({
       dataDir: tempDir,
@@ -1575,6 +1575,7 @@ test('a repeated own action cannot waive sender framing at the terminal retry', 
 test('a repeatedly unrenderable action is replanned without changing the run or route', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-replan-test-'));
   const replans = [];
+  const imageModel = new FakeImageModel();
   const agentModel = {
     async replanUnrenderableDrawing(input) {
       replans.push(input);
@@ -1610,7 +1611,7 @@ test('a repeatedly unrenderable action is replanned without changing the run or 
       dataDir: tempDir,
       streetView: new FakeStreetView(),
       agentModel,
-      imageModel: new FakeImageModel(),
+      imageModel,
       logger: { warn() {}, error() {} }
     });
     await controller.createRun();
@@ -1627,8 +1628,20 @@ test('a repeatedly unrenderable action is replanned without changing the run or 
       informationDelta: 'My current chosen action: move south.',
       messageAction: 'movement',
       drawingPrompt: 'Draw my movement south.',
-      groundedFeatures: ['I chose to move south.', 'a stone arcade']
+      groundedFeatures: ['I chose to move south.', 'a stone arcade'],
+      availableReferenceViewIndices: [0],
+      availableReferenceFeatures: ['a stone arcade']
     });
+    const drawingDirectory = path.join(
+      tempDir,
+      'rendezvous-drawings',
+      controller.state.runId
+    );
+    await fsp.mkdir(drawingDirectory, { recursive: true });
+    await fsp.writeFile(
+      path.join(drawingDirectory, 'replanned-message-reference-0.jpg'),
+      'replan-source-view'
+    );
     controller.state.scratchpad.pendingMessage.attempts = 3;
 
     await Promise.all(Array.from({ length: 4 }, () => controller.resumePendingDrawing()));
@@ -1641,6 +1654,15 @@ test('a repeatedly unrenderable action is replanned without changing the run or 
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).contributionKind, 'local_observation');
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).totalAttempts, 4);
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).replanCount, 1);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).renderMode, 'source_grounded');
+    assert.equal(imageModel.calls[0].referenceImage.content, 'replan-source-view');
+    assert.equal(
+      await fsp.readFile(
+        path.join(drawingDirectory, 'replanned-message-source.jpg'),
+        'utf8'
+      ),
+      'replan-source-view'
+    );
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }

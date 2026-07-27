@@ -139,6 +139,12 @@ function normalizePendingRasterMessage(raw) {
   const totalAttempts = hasUsablePersistedTotal
     ? Math.max(0, Math.floor(persistedTotalAttempts))
     : attempts + (replanCount * RASTER_SCRATCHPAD_ATTEMPTS_PER_PLAN);
+  const referenceViewIndices = Array.isArray(raw.referenceViewIndices)
+    ? [...new Set(raw.referenceViewIndices.map(Number).filter(Number.isInteger))].slice(0, 4)
+    : [];
+  const persistedAvailableReferenceViewIndices = Array.isArray(raw.availableReferenceViewIndices)
+    ? [...new Set(raw.availableReferenceViewIndices.map(Number).filter(Number.isInteger))].slice(0, 1)
+    : [];
   return {
     id,
     from,
@@ -155,9 +161,12 @@ function normalizePendingRasterMessage(raw) {
       ? raw.messageAction
       : 'unclear',
     groundedFeatures: cleanStringList(raw.groundedFeatures),
-    referenceViewIndices: Array.isArray(raw.referenceViewIndices)
-      ? [...new Set(raw.referenceViewIndices.map(Number).filter(Number.isInteger))].slice(0, 4)
-      : [],
+    referenceViewIndices,
+    availableReferenceViewIndices:
+      persistedAvailableReferenceViewIndices.length > 0
+        ? persistedAvailableReferenceViewIndices
+        : referenceViewIndices.slice(0, 1),
+    availableReferenceFeatures: cleanStringList(raw.availableReferenceFeatures),
     sourcePanoId: cleanString(raw.sourcePanoId, 240) || null,
     snapshot: normalizeRasterSnapshot(raw.snapshot),
     status: cleanString(raw.status, 40) || 'generating',
@@ -169,6 +178,15 @@ function normalizePendingRasterMessage(raw) {
     nextAttemptAt: raw.nextAttemptAt || null,
     createdAt: raw.createdAt || new Date().toISOString()
   };
+}
+
+function auditablePendingRasterMessage(pending) {
+  const {
+    availableReferenceViewIndices: _availableReferenceViewIndices,
+    availableReferenceFeatures: _availableReferenceFeatures,
+    ...auditable
+  } = pending;
+  return auditable;
 }
 
 function normalizeRasterReceipt(raw) {
@@ -309,6 +327,8 @@ export function queueRasterScratchpadMessage(scratchpad, {
   messageAction = 'unclear',
   groundedFeatures = [],
   referenceViewIndices = [],
+  availableReferenceViewIndices = [],
+  availableReferenceFeatures = [],
   sourcePanoId = null,
   snapshot = null,
   id = randomUUID()
@@ -330,6 +350,8 @@ export function queueRasterScratchpadMessage(scratchpad, {
     messageAction,
     groundedFeatures,
     referenceViewIndices,
+    availableReferenceViewIndices,
+    availableReferenceFeatures,
     sourcePanoId,
     snapshot,
     attempts: 0,
@@ -374,7 +396,7 @@ export function commitRasterScratchpadMessage(scratchpad, {
   normalized.owner = pending.to;
   normalized.heldSinceTurn = pending.turn;
   normalized.messageAudit = [...normalized.messageAudit, {
-    ...pending,
+    ...auditablePendingRasterMessage(pending),
     sequence,
     imageFile,
     imageMimeType,
@@ -433,7 +455,7 @@ export function failRasterScratchpadMessage(scratchpad, { pendingId, error }) {
   const pending = normalized.pendingMessage;
   if (!pending || pending.id !== pendingId) return normalized;
   normalized.messageAudit = [...normalized.messageAudit, {
-    ...pending,
+    ...auditablePendingRasterMessage(pending),
     sequence: normalized.sequence,
     status: 'failed',
     error: cleanString(error, 500),
