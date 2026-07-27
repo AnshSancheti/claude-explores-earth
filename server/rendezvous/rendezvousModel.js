@@ -888,7 +888,7 @@ function copiesSheetRoute(...descriptions) {
     .split(/[.!?;]+/)
     .map(value => value.trim())
     .filter(Boolean);
-  const cue = '(?:arrows?|cues?|depicted|direction|drawings?|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheets?|motifs?|new sheets?|newest sheets?|(?:latest|newest|new) evidence|path|prompts?|route|sheets?|sketch(?:es)?|visuals?|vector)';
+  const cue = '(?:arrows?|cues?|depicted|direction|drawings?|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheets?|motifs?|new sheets?|newest sheets?|(?:latest|newest|new) evidence|path|prompts?|route|scenes?|sheets?|sketch(?:es)?|visuals?|vector)';
   const copyAction = '(?:align(?:s|ed|ing)? with|continue|follow|in line with|mirror|move|preserve|proceed|pursue|reproduce)';
   const crossClausePrompt = /\b(?:drawing|sheet)\b[^.!?]{0,180}\b(?:cue|prompt)\b[^.!?]{0,140}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
     .test(positiveText);
@@ -901,7 +901,7 @@ function copiesSheetRoute(...descriptions) {
   return crossClausePrompt || crossClauseCoordination || attributedSharedPush || statements.some(statement => {
     if (/\b(?:intercept|opposite|counter|cross(?:ing)? path)\b/i.test(statement)) return false;
     return new RegExp(`\\b${copyAction}\\b[^.!;]{0,120}\\b${cue}\\b`, 'i').test(statement) ||
-      new RegExp(`\\b${cue}\\b[^.!;]{0,120}\\b(?:reinforce|suggest|tell|direct|ask|imply)\\w*\\b[^.!;]{0,100}\\b(?:continue|follow|move|proceed|advance|head)\\w*\\b`, 'i')
+      new RegExp(`\\b${cue}\\b[^.!;]{0,120}\\b(?:reinforce|suggest|tell|direct|ask|imply)\\w*\\b[^.!;]{0,100}\\b(?:continu|follow|mov|proceed|advanc|head)\\w*\\b`, 'i')
         .test(statement) ||
       /\b(?:latest|newest|new)\s+sheets?\b[^.!;]{0,160}\b(?:align|favor|hint|point|reinforce|support|suggest)\w*\b[^.!;]{0,100}\b(?:advanc|continu|head|move|proceed)\w*\b/i
         .test(statement) ||
