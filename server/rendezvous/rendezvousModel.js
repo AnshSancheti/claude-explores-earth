@@ -265,6 +265,14 @@ function responseExplicitlyDirectsRecipient(value) {
       .test(evidence);
 }
 
+function namedCompassDirections(...values) {
+  const text = values.map(value => cleanString(value, 2400)).join(' ').toLowerCase();
+  return [...new Set(
+    ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest']
+      .filter(direction => new RegExp(`\\b${direction}\\b`).test(text))
+  )];
+}
+
 function historicalSheetLiteralContents(privateMemory, currentSequence) {
   return (privateMemory?.receivedSheets || [])
     .filter(sheet => Number(sheet?.sequence) !== Number(currentSequence))
@@ -1587,6 +1595,21 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
             'Rendezvous response drawing contradicted its stated route uncertainty with directional imagery'
           );
         }
+        if (candidateDrawingPlan.contributionKind === 'own_action') {
+          const citedDirections = namedCompassDirections(citedEvidence?.description);
+          const authoredDirections = namedCompassDirections(
+            candidateDrawingPlan.drawingIntent,
+            candidateDrawingPlan.drawingPrompt
+          );
+          if (
+            citedDirections.length > 0 &&
+            authoredDirections.some(direction => !citedDirections.includes(direction))
+          ) {
+            throw new Error(
+              'Rendezvous own-action drawing contradicted the cited compass direction'
+            );
+          }
+        }
         if (
           candidateDrawingPlan.contributionKind === 'local_observation' &&
           unsupportedRouteCues.length > 0
@@ -1634,6 +1657,8 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           ? 'Start from a blank page and use one coherent composition centered on the cited contribution. You may retain one small recurring symbol, but do not use panels, a triptych, or the received sheet layout.'
           : (/response drawing contradicted/i.test(error.message)
             ? 'Your cited response explicitly withholds route certainty. Remove arrows, paths, vanishing-point movement, and directional commands. Communicate the uncertainty, non-confirmation, or unresolved relationship itself without turning it into a route.'
+          : (/own-action drawing contradicted the cited compass direction/i.test(error.message)
+            ? 'Keep the cited own action authoritative. Remove every named compass direction that conflicts with it, then depict that same action from a sender-framed or retrospective point of view without changing its direction.'
           : (/route-command imagery unrelated/i.test(error.message)
             ? 'The cited local observation is static evidence. Remove uncited routes, footprints, arrows, runners, progression, and directional cues. If movement is the actual contribution you want to send, cite an exact action evidence ID instead.'
           : (/labeled its contribution/i.test(error.message)
@@ -1644,7 +1669,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
               ? 'The current sheet visibly asks you something and your reconciliation contains grounded response evidence. Choose what you actually want to say back: cite response evidence to answer, question evidence to clarify, contradiction evidence to correct, received evidence to acknowledge that you cannot answer, or deliberately repeat unresolved evidence. Do not substitute an unrelated local postcard.'
               : (/(?:uncited motif|unsupported partner hypothesis)/i.test(error.message)
               ? 'Keep the cited contribution primary. Do not describe any inherited symbol, route, target, waypoint, district, or place as a known shared destination or otherwise promote an unsupported partner hypothesis into a movement goal. If you retain one, make it subordinate and explicitly uncertain, questioned, tested, transformed, or deliberately repeated.'
-              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.'))))));
+              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.')))))));
         tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
       }
     }

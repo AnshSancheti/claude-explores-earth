@@ -1559,6 +1559,58 @@ test('own-action evidence uses the executed option bearing without leaking its r
   assert.doesNotMatch(catalogText, /north route/);
 });
 
+test('own-action drawing cannot reverse the cited compass direction', async () => {
+  let drawingAttempts = 0;
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      route: routeResponse({
+        selectedIndex: 0,
+        intendedHeading: 225
+      }),
+      drawing(request) {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'own_action',
+            contributionEvidenceId: 'action:0',
+            drawingIntent: 'Report my movement southeast along the public route.',
+            messageAction: 'movement',
+            drawingPrompt: 'Draw me moving southeast toward the lower-right.',
+            groundedFeatureEvidenceIds: ['action:0']
+          });
+        }
+        assert.match(
+          request.messages[1].content[0].text,
+          /AUTHORITATIVE PLANNING CORRECTION.*cited own action authoritative/s
+        );
+        return drawingResponse({
+          contributionKind: 'own_action',
+          contributionEvidenceId: 'action:0',
+          drawingIntent: 'Report my southwest movement as my own completed action.',
+          messageAction: 'movement',
+          drawingPrompt: 'Draw me moving southwest with a completed trail behind me.',
+          groundedFeatureEvidenceIds: ['action:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    options: [
+      { panoId: 'southwest', heading: 225, label: 'local street' },
+      { panoId: 'north', heading: 0, label: 'other street' }
+    ]
+  }));
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.contributionSummary, /move southwest/);
+  assert.match(decision.drawingIntent, /southwest/);
+  assert.doesNotMatch(decision.drawingIntent, /southeast/);
+});
+
 test('a generic walking-away composition cannot present a recent movement proposition as fresh', async () => {
   let drawingAttempts = 0;
   const requests = [];
