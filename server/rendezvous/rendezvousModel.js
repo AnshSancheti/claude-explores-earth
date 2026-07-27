@@ -110,7 +110,7 @@ function validateCorroborationProvenance(
 }
 
 const LOW_INFORMATION_URBAN_WORDS = new Set([
-  'a', 'active', 'an', 'and', 'are', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
+  'a', 'active', 'activity', 'an', 'and', 'are', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
   'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'central', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
   'am', 'corridor', 'corridors', 'empty', 'expansive', 'extend', 'extending', 'extends', 'flanked', 'i', 'including', 'intersections', 'into', 'lane', 'lanes', 'lengthy', 'like', 'lined', 'local', 'long',
@@ -937,6 +937,9 @@ function copiesSheetRoute(...descriptions) {
   const crossClauseQualifiedReading =
     /\b(?:latest|newest|new)(?:\s+(?:environmental|private|visual))?\s+(?:evidence|reading)\b[^.!;]{0,180}\b(?:avenue|axis|continuation|corridor|direction|forward|motion|movement|path|route|vanishing point|way)\b[^.!]{0,80}[.;][^.!]{0,220}\b(?:advanc|align|continu|follow|head|mov|proceed|progress)\w*\b[^.!;]{0,120}\b(?:avenue|axis|continuation|corridor|direction|path|route|street|way)\b/i
       .test(positiveText);
+  const crossClauseSheetRouteContinuation =
+    /\b(?:latest|newest|new)\s+sheets?\b[^.!;]{0,180}\b(?:avenue|axis|continuation|corridor|direction|forward|motion|movement|path|route|vanishing point|way)\b(?:[^.!]*[.!;]){1,2}[^.!;]{0,220}\b(?:advanc|align|continu|follow|head|mov|proceed|progress)\w*\b[^.!;]{0,120}\b(?:avenue|axis|continuation|corridor|direction|path|route|street|way)\b/i
+      .test(positiveText);
   const attributedSharedPush =
     /\b(?:arrows?|cues?|drawings?|sheets?|signals?|sketch(?:es)?|visuals?)\b[^.!;]{0,180}\bshared\s+(?:cue|invitation|push|signal)\b[^.!;]{0,60}\b(?:advanc|continu|head|move|press|proceed)\w*\b/i
       .test(positiveText);
@@ -944,6 +947,7 @@ function copiesSheetRoute(...descriptions) {
     crossClauseCoordination ||
     crossClauseRouteAlignment ||
     crossClauseQualifiedReading ||
+    crossClauseSheetRouteContinuation ||
     attributedSharedPush ||
     statements.some(statement => {
     if (/\b(?:intercept|opposite|counter|cross(?:ing)? path)\b/i.test(statement)) return false;

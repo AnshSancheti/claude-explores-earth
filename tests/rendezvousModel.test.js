@@ -1522,6 +1522,34 @@ test('a newest private reading cannot carry a route across sentences', async () 
   assert.doesNotMatch(decision.reasoning, /newest private reading|broad axis/i);
 });
 
+test('latest sheets cannot carry a shared axis across two sentences', async () => {
+  const copiedReasoning = 'Ada’s latest sheets express a shared forward axis toward a distant city core, but without locking to a fixed endpoint. My current local evidence shows a broad northeast urban axis with crosswalks and storefront landmarks. Proceeding along this axis keeps forward motion, uses visible coordination cues, and avoids committing to a specific destination.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'shared',
+        sheetInterpretation: 'A broad street recedes toward a distant core.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /latest sheets|shared forward axis/i);
+});
+
 test('a route cannot align a chosen axis with newest evidence in reverse word order', async () => {
   const copiedReasoning = 'Theo’s latest sheet proposes moving along a public axis toward a distant goal, not copying a literal drawn path. My on-ground evidence shows a straight, busy urban corridor with crosswalks and a clear forward axis. Following the public axis with a northeast heading aligns with the newest evidence and keeps us moving toward potential shared space without duplicating Theo’s drawn route.';
   const service = new RendezvousModelService({
@@ -3389,6 +3417,10 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
   );
   assert.equal(
     isConcreteLocalEvidence('New local observation: empty urban promenade receding into the distance'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('New local observation: pedestrian activity'),
     false
   );
   assert.equal(
