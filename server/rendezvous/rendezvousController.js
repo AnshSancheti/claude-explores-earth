@@ -1720,9 +1720,11 @@ export class RendezvousController {
       this.state.scratchpad = normalizedScratchpad;
       pendingChanged = true;
     }
-    if (pendingChanged) await this.saveState();
     const nextAttemptAt = Date.parse(pending.nextAttemptAt || '');
-    if (Number.isFinite(nextAttemptAt) && nextAttemptAt > Date.now()) return null;
+    if (Number.isFinite(nextAttemptAt) && nextAttemptAt > Date.now()) {
+      if (pendingChanged) await this.saveState();
+      return null;
+    }
     const senderMemory = normalizeAgentMemory(
       this.state.agents[pending.from]?.privateMemory
     );

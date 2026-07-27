@@ -839,6 +839,7 @@ export function reconcileRendezvousContributionAction(
   ...descriptions
 ) {
   const evidence = cleanString(contributionSummary, 500);
+  if (contributionKind === 'acknowledgement') return 'unclear';
   if (contributionKind === 'own_action') {
     if (/\bchose to wait\b/i.test(evidence)) return 'stillness';
     if (/\bchose to (?:move|retrace)\b/i.test(evidence)) return 'movement';

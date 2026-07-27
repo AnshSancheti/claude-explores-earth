@@ -592,6 +592,19 @@ test('an acknowledgement cannot enlarge received evidence into a route proposal'
   assert.equal(acknowledgementInventsRouteProposal(decision), false);
 });
 
+test('an acknowledgement does not force a scene action over its communicative function', () => {
+  assert.equal(
+    reconcileRendezvousContributionAction(
+      'acknowledgement',
+      'Acknowledging received visual evidence without claiming it as my own: long pedestrian plaza',
+      'movement',
+      'Recognize the received plaza.',
+      'Draw a figure moving through the plaza.'
+    ),
+    'unclear'
+  );
+});
+
 test('a local observation records only its cited evidence as the intended message', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {

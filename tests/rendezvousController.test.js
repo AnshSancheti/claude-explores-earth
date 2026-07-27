@@ -1693,6 +1693,62 @@ test('a persisted acknowledgement route proposal is replanned before rendering',
   }
 });
 
+test('a persisted acknowledgement drops forced movement before rendering', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-ack-action-test-'));
+  const imageModel = new FakeImageModel();
+  const reviews = [];
+  const agentModel = {
+    async reviewDrawing(input) {
+      reviews.push(input);
+      return {
+        accepted: true,
+        assessment: 'The drawing visibly acknowledges the received scene.',
+        blindRead: {
+          dominantAction: 'movement',
+          frameOfReference: 'shared',
+          communicationFunction: 'acknowledgement',
+          readableText: false,
+          likelyMessage: 'The sender recognizes the received moving scene.'
+        }
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel,
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'acknowledgement-forced-movement',
+      agentId: 'ada',
+      turn: 4,
+      contributionKind: 'acknowledgement',
+      contributionEvidenceId: 'received:0',
+      contributionSummary:
+        'Acknowledging received visual evidence without claiming it as my own: long pedestrian plaza',
+      drawingIntent: 'Recognize the received plaza without treating it as my own.',
+      informationDelta:
+        'Acknowledging received visual evidence without claiming it as my own: long pedestrian plaza',
+      continuityReason: 'I repeat the plaza only to show recognition.',
+      messageAction: 'movement',
+      drawingPrompt: 'Show reception and reflection around the received plaza.',
+      groundedFeatures: ['long pedestrian plaza']
+    });
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(reviews.length, 1);
+    assert.equal(reviews[0].messageAction, 'unclear');
+    assert.equal(controller.state.scratchpad.currentMessage.id, 'acknowledgement-forced-movement');
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a second failed replan can accept a recipient-legible local report', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-terminal-report-test-'));
   let reviews = 0;
