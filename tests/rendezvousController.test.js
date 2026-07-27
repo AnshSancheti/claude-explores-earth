@@ -5,6 +5,7 @@ import os from 'os';
 import path from 'path';
 import {
   areAgentsStreetViewAdjacent,
+  composeDrawingRevisionPrompt,
   isAgentPositionPathConsistent,
   RendezvousController,
   isShortPanoLoop
@@ -218,6 +219,33 @@ class FakeImageModel {
     };
   }
 }
+
+test('a text-only drawing correction preserves the intended composition', () => {
+  const prompt = composeDrawingRevisionPrompt(
+    'A long straight avenue narrowing toward a luminous distant skyline.',
+    'Remove every readable word, letter, number, caption, street label, logo, signature, and watermark. Communicate only through visible objects, spatial relationships, symbols, and tone.',
+    'unclear',
+    'New local observation: nearly straight axis toward a distant core',
+    'local_observation'
+  );
+
+  assert.match(prompt, /Recreate the same intended composition/);
+  assert.match(prompt, /long straight avenue narrowing toward a luminous distant skyline/);
+  assert.doesNotMatch(prompt, /Do not reuse the rejected composition/);
+});
+
+test('a semantic drawing correction still requires a new composition', () => {
+  const prompt = composeDrawingRevisionPrompt(
+    'A runner on a road with a river in the background.',
+    'Remove the runner and make the river the primary subject.',
+    'unclear',
+    'New local observation: river visible to the right',
+    'local_observation'
+  );
+
+  assert.match(prompt, /Do not reuse the rejected composition/);
+  assert.doesNotMatch(prompt, /Recreate the same intended composition/);
+});
 
 test('legacy raster history is approximated from durable paths and serves older images', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-history-test-'));

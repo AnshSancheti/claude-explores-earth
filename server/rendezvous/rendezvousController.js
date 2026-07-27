@@ -53,7 +53,7 @@ const MAX_DRAWING_REPLAN_FAILURES = 2;
 const MAX_DRAWING_TOTAL_ATTEMPTS =
   MAX_DRAWING_ATTEMPTS_PER_PLAN * (MAX_DRAWING_REPLANS + 1);
 
-function composeDrawingRevisionPrompt(
+export function composeDrawingRevisionPrompt(
   drawingPrompt,
   revisionPrompt,
   messageAction = 'unclear',
@@ -69,6 +69,7 @@ function composeDrawingRevisionPrompt(
         : 'Make the intended information delta visually dominant and unambiguous.';
   const correction = String(revisionPrompt || '').trim()
     || 'Correct the rejected image so a context-free recipient can read the intended information delta.';
+  const textOnlyCorrection = correction.startsWith('Remove every readable word');
   const citedContribution = String(contributionSummary || '').trim();
   const contributionConstraint = citedContribution
     ? `The exact cited contribution to communicate is: ${citedContribution}`
@@ -77,7 +78,10 @@ function composeDrawingRevisionPrompt(
     ? UNRESOLVED_QUESTION_CONSTRAINT
     : '';
 
-  return `${RENDER_REVISION_MARKER} ${correction} ${contributionConstraint} ${communicationConstraint} ${actionConstraint} Rebuild the image from these instructions and the compatible visual anchors supplied separately. Do not reuse the rejected composition or any earlier instruction that conflicts with this correction.`;
+  const renderingInstruction = textOnlyCorrection
+    ? `Recreate the same intended composition from this original instruction: ${String(drawingPrompt || '').trim()} Preserve its subjects, spatial relationships, symbols, and tone while removing all text-like marks.`
+    : 'Rebuild the image from these instructions and the compatible visual anchors supplied separately. Do not reuse the rejected composition or any earlier instruction that conflicts with this correction.';
+  return `${RENDER_REVISION_MARKER} ${correction} ${contributionConstraint} ${communicationConstraint} ${actionConstraint} ${renderingInstruction}`;
 }
 
 function upgradePersistedQuestionRevisionPrompt(drawingPrompt, contributionKind) {
