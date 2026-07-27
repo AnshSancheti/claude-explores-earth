@@ -2299,6 +2299,88 @@ test('literal-versus-symbolic route wording is one repeated question', () => {
   }), true);
 });
 
+test('the drawing planner can cite any proposition considered by recent-repeat detection', async () => {
+  const oldQuestion = {
+    sequence: 11,
+    contributionKind: 'question',
+    contributionSummary: 'Question I am sending: whether the stone arch is a place or only a symbol',
+    informationDelta: 'Question I am sending: whether the stone arch is a place or only a symbol',
+    intent: 'Ask whether the stone arch is a physical place or only a symbol.'
+  };
+  const interveningMessages = Array.from({ length: 5 }, (_, index) => ({
+    sequence: 12 + index,
+    contributionKind: 'own_action',
+    contributionSummary: `My current chosen action: movement report ${index}`,
+    informationDelta: `My current chosen action: movement report ${index}`,
+    intent: `Show movement report ${index}.`
+  }));
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing: drawingResponse({
+        contributionKind: 'deliberate_repetition',
+        contributionEvidenceId: 'prior_sent:0',
+        drawingIntent: 'Repeat the unresolved stone-arch question.',
+        continuityReason: 'The same ambiguity remains useful to surface.',
+        messageAction: 'unclear',
+        drawingPrompt: 'Draw one uncertain stone arch poised between a real place and a symbolic shape.',
+        groundedFeatureEvidenceIds: ['prior_sent:0']
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      sentMessages: [oldQuestion, ...interveningMessages]
+    }
+  }));
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'deliberate_repetition');
+  assert.match(decision.contributionSummary, /stone arch is a place or only a symbol/);
+});
+
+test('a stubborn fresh label becomes honest deliberate repetition after bounded corrections', async () => {
+  let drawingAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing() {
+        drawingAttempts += 1;
+        return drawingResponse({
+          contributionKind: 'question',
+          contributionEvidenceId: 'question:0',
+          drawingIntent: 'Ask whether the circle is a lamp or a destination.',
+          messageAction: 'unclear',
+          drawingPrompt: 'Draw one uncertain circle poised between a lamp and a distant destination.',
+          groundedFeatureEvidenceIds: ['question:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+  const priorQuestion = {
+    sequence: 16,
+    contributionKind: 'question',
+    contributionSummary: 'Question I am sending: whether the circle represents a lamp or destination',
+    informationDelta: 'Question I am sending: whether the circle represents a lamp or destination',
+    intent: 'Ask whether the circle represents a lamp or destination.'
+  };
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      sentMessages: [priorQuestion]
+    }
+  }));
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'deliberate_repetition');
+  assert.match(decision.contributionSummary, /circle represents a lamp or destination/);
+  assert.ok(decision.continuityReason);
+});
+
 test('an intentional repeated proposition remains available through deliberate repetition', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {

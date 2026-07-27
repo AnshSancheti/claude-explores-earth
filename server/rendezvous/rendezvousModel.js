@@ -477,7 +477,7 @@ function buildContributionEvidence({ routeDecision, perception, privateMemory, o
   add('response', perception.evidenceDelta.informationWorthSending);
   add('question', perception.evidenceDelta.unresolvedQuestions);
   add('contradiction', perception.evidenceDelta.contradictions);
-  add('prior_sent', (privateMemory?.sentMessages || []).slice(-2).map(message =>
+  add('prior_sent', (privateMemory?.sentMessages || []).slice(-6).map(message =>
     message.informationDelta || message.intent
   ));
   return catalog;
@@ -820,13 +820,13 @@ function locallyGroundRouteLanguage(routeDecision, partnerName) {
   };
 }
 
-export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
+function matchingRecentSentPropositions(candidateDrawingPlan, privateMemory) {
   const contributionKind = candidateDrawingPlan?.contributionKind;
   if (
     !['local_observation', 'own_action', 'response', 'question', 'correction']
       .includes(contributionKind)
   ) {
-    return false;
+    return [];
   }
   const currentEvidence = contributionEvidenceText(
     candidateDrawingPlan?.informationDelta || candidateDrawingPlan?.contributionSummary
@@ -835,9 +835,9 @@ export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMe
     `${candidateDrawingPlan?.drawingIntent || ''} ${candidateDrawingPlan?.drawingPrompt || ''}`,
     3000
   );
-  if (!currentEvidence && !currentVisual) return false;
+  if (!currentEvidence && !currentVisual) return [];
   const recentSentMessages = (privateMemory?.sentMessages || []).slice(-6);
-  const matchingRecentMessages = recentSentMessages
+  return recentSentMessages
     .filter(message => message?.contributionKind === contributionKind)
     .filter(message => {
       const previousEvidence = contributionEvidenceText(
@@ -858,7 +858,25 @@ export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMe
           routeMeaningQuestion(previousEvidence)
         ) ||
         (genericMovementProposition(currentVisual) && genericMovementProposition(previousVisual));
-    }).length;
+    });
+}
+
+export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
+  const contributionKind = candidateDrawingPlan?.contributionKind;
+  if (
+    !['local_observation', 'own_action', 'response', 'question', 'correction']
+      .includes(contributionKind)
+  ) {
+    return false;
+  }
+  const currentEvidence = contributionEvidenceText(
+    candidateDrawingPlan?.informationDelta || candidateDrawingPlan?.contributionSummary
+  );
+  const recentSentMessages = (privateMemory?.sentMessages || []).slice(-6);
+  const matchingRecentMessages = matchingRecentSentPropositions(
+    candidateDrawingPlan,
+    privateMemory
+  ).length;
   const recentReceivedObservations = contributionKind === 'local_observation'
     ? (privateMemory?.receivedSheets || []).slice(-6)
       .filter(sheet => ['report', 'shared_proposal', 'unclear'].includes(sheet?.communicationFunction))
@@ -1596,9 +1614,63 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           throw new Error('Rendezvous repeated contribution omitted why repeating it is useful now');
         }
         if (repeatsRecentOutboundProposition(candidateDrawingPlan, actionMemory)) {
-          throw new Error(
-            'Rendezvous drawing planner presented a repeated outbound proposition as a fresh contribution'
+          const priorFailuresWereOnlyRepetition =
+            drawingPlanFailureKinds.size > 0 &&
+            [...drawingPlanFailureKinds].every(error =>
+              /repeated outbound proposition/i.test(error)
+            );
+          const correctionBudgetExhausted =
+            attempt === drawingPlanAttemptLimit &&
+            (
+              drawingPlanAttemptLimit > this.maxAttempts ||
+              drawingPlanFailureKinds.size === 0 ||
+              priorFailuresWereOnlyRepetition
+            );
+          const repeatedSentMessage = matchingRecentSentPropositions(
+            candidateDrawingPlan,
+            actionMemory
+          ).at(-1);
+          const repeatedEvidenceText = contributionEvidenceText(
+            repeatedSentMessage?.informationDelta || repeatedSentMessage?.contributionSummary
           );
+          const repeatedEvidence = repeatedSentMessage
+            ? contributionEvidence
+              .filter(item => item.id.startsWith('prior_sent:'))
+              .findLast(item => {
+                const evidenceText = contributionEvidenceText(item.description);
+                return (
+                  visualDescriptionSimilarity(evidenceText, repeatedEvidenceText) >= 0.72 ||
+                  (
+                    routeMeaningQuestion(evidenceText) &&
+                    routeMeaningQuestion(repeatedEvidenceText)
+                  )
+                );
+              })
+            : null;
+          if (correctionBudgetExhausted && repeatedEvidence) {
+            candidateDrawingPlan.contributionKind = 'deliberate_repetition';
+            candidateDrawingPlan.contributionEvidenceId = repeatedEvidence.id;
+            candidateDrawingPlan.contributionSummary = authoritativeContributionSummary(
+              'deliberate_repetition',
+              repeatedEvidence.description
+            );
+            candidateDrawingPlan.informationDelta = candidateDrawingPlan.contributionSummary;
+            candidateDrawingPlan.continuityReason ||= (
+              'I chose to send this proposition again after recognizing that it already appeared; ' +
+              'the recurrence is part of the message rather than new evidence.'
+            );
+            candidateDrawingPlan.groundedFeatures = [
+              repeatedEvidence.description,
+              ...candidateDrawingPlan.groundedFeatures
+            ].filter((value, index, values) => values.indexOf(value) === index).slice(0, 6);
+            this.logger.warn?.(
+              'Rendezvous classified a repeatedly chosen drawing proposition as deliberate repetition after exhausting correction attempts'
+            );
+          } else {
+            throw new Error(
+              'Rendezvous drawing planner presented a repeated outbound proposition as a fresh contribution'
+            );
+          }
         }
         const currentSheetNeedsAnswer =
           perception.communicationFunction === 'question' &&
