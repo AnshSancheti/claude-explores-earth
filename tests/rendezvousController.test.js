@@ -1777,7 +1777,7 @@ test('a persisted acknowledgement drops forced movement before rendering', async
   }
 });
 
-test('a second failed replan can accept a recipient-legible local report', async () => {
+test('a recipient-legible local sketch can override an unclear sender review', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-terminal-report-test-'));
   let reviews = 0;
   const agentModel = {
@@ -1790,7 +1790,7 @@ test('a second failed replan can accept a recipient-legible local report', async
         blindRead: {
           dominantAction: 'stillness',
           frameOfReference: 'sender',
-          communicationFunction: 'report',
+          communicationFunction: 'unclear',
           readableText: false,
           likelyMessage: 'The sender sees a broad avenue with a central median tree.'
         }
@@ -1819,10 +1819,6 @@ test('a second failed replan can accept a recipient-legible local report', async
       drawingPrompt: 'Draw a broad avenue with a central median tree.',
       groundedFeatures: ['broad avenue with a central median tree']
     });
-    controller.state.scratchpad.pendingMessage.attempts = 6;
-    controller.state.scratchpad.pendingMessage.totalAttempts = 6;
-    controller.state.scratchpad.pendingMessage.replanCount = 2;
-
     await controller.resumePendingDrawing();
 
     assert.equal(reviews, 2);
@@ -1830,7 +1826,7 @@ test('a second failed replan can accept a recipient-legible local report', async
     assert.equal(controller.state.scratchpad.currentMessage.id, 'recipient-legible-terminal-report');
     assert.match(
       controller.state.scratchpad.messageAudit.at(-1).reviewAssessment,
-      /Accepted after 7 durable attempts/
+      /Accepted after 1 durable attempts/
     );
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });

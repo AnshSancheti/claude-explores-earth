@@ -146,7 +146,7 @@ function canAcceptRecipientLegibleRetry(review, pending, attemptNumber) {
   }
   if (
     pending?.contributionKind === 'local_observation' &&
-    blindRead?.communicationFunction === 'report' &&
+    ['report', 'unclear'].includes(blindRead?.communicationFunction) &&
     blindRead?.readableText !== true &&
     localObservationMatchesBlindRead(pending.contributionSummary, blindRead)
   ) {
