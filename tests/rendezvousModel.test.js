@@ -3324,6 +3324,14 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
   assert.equal(isConcreteLocalEvidence('New local observation: ongoing vehicle'), false);
   assert.equal(isConcreteLocalEvidence('several moving taxis and pedestrians'), false);
   assert.equal(
+    isConcreteLocalEvidence('Pedestrians and vehicles are present, suggesting a busy street'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('Several vehicles and pedestrians are present on sidewalks and roadway'),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('row of storefronts with striped awnings'),
     true
   );
@@ -4504,6 +4512,103 @@ test('local-observation review rejects a chase scene that relegates the landmark
   assert.match(review.assessment, /foreground runner.*primary/);
   assert.match(review.revisionPrompt, /foreground runner urgently chasing another person/);
   assert.match(review.revisionPrompt, /observation itself.*largest/);
+});
+
+test('local-observation review rejects an invented clock dominating generic street evidence', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: [
+          'an ornate clock on a pedestal surrounded by pedestrians, cars, and a crosswalk'
+        ],
+        primarySubject:
+          'The ornate clock pedestal in the middle of a busy urban street, with people and traffic framing it.',
+        likelyMessage:
+          'A public clock may be a meeting point or signal a moment of synchronization.',
+        dominantAction: 'stillness',
+        frameOfReference: 'recipient',
+        frameBasis: 'The clock is the largest and most detailed subject.',
+        communicationFunction: 'report',
+        movementCues: [],
+        stillnessCues: ['central stationary clock'],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    contributionKind: 'local_observation',
+    contributionSummary:
+      'New local observation: Pedestrians and vehicles are present, suggesting a busy street',
+    drawingIntent: 'Show pedestrians and vehicles on a busy street.',
+    informationDelta:
+      'New local observation: Pedestrians and vehicles are present, suggesting a busy street',
+    messageAction: 'stillness',
+    drawingPrompt:
+      'Draw a busy street with pedestrians, vehicles, and a central decorative clock.',
+    groundedFeatures: [
+      'Pedestrians and vehicles are present, suggesting a busy street'
+    ],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /uncited distinctive subject.*ornate clock pedestal/i);
+  assert.match(review.revisionPrompt, /invented or unsupported focal subject/i);
+  assert.match(review.revisionPrompt, /abandon this contribution/i);
+});
+
+test('local-observation review accepts a clock when the clock is cited local evidence', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: [
+          'an ornate clock on a pedestal surrounded by pedestrians, cars, and a crosswalk'
+        ],
+        primarySubject:
+          'The ornate clock pedestal in the middle of a busy urban street, with people and traffic framing it.',
+        likelyMessage: 'The sender sees a distinctive public clock at a busy crossing.',
+        dominantAction: 'stillness',
+        frameOfReference: 'sender',
+        frameBasis: 'The observed clock is the largest and most detailed subject.',
+        communicationFunction: 'report',
+        movementCues: [],
+        stillnessCues: ['central stationary clock'],
+        readableText: false
+      },
+      review: {
+        accepted: true,
+        contributionPrimary: true,
+        materialContributionConflict: false,
+        visualNovelty: 'distinct',
+        assessment: 'The cited clock is visually primary.',
+        revisionPrompt: ''
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    contributionKind: 'local_observation',
+    contributionSummary:
+      'New local observation: ornate sidewalk clock on a pedestal at a busy crossing',
+    drawingIntent: 'Show the ornate clock on its pedestal.',
+    informationDelta:
+      'New local observation: ornate sidewalk clock on a pedestal at a busy crossing',
+    messageAction: 'stillness',
+    drawingPrompt: 'Draw the observed ornate sidewalk clock on its pedestal.',
+    groundedFeatures: [
+      'ornate sidewalk clock on a pedestal at a busy crossing'
+    ],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, true);
 });
 
 test('local-observation review recognizes a midtown-scale urban canyon', async () => {

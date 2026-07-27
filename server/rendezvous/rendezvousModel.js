@@ -110,15 +110,15 @@ function validateCorroborationProvenance(
 }
 
 const LOW_INFORMATION_URBAN_WORDS = new Set([
-  'a', 'active', 'an', 'and', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
+  'a', 'active', 'an', 'and', 'are', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
   'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'central', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
-  'expansive', 'flanked', 'including', 'intersections', 'lane', 'lanes', 'lengthy', 'like', 'lined', 'local', 'long',
+  'expansive', 'extend', 'extending', 'extends', 'flanked', 'including', 'intersections', 'lane', 'lanes', 'lengthy', 'like', 'lined', 'local', 'long',
   'manhattan', 'marked', 'marking', 'markings', 'multiple', 'narrow', 'narrowed', 'narrowing', 'new',
-  'observation', 'of', 'on', 'pedestrian', 'pedestrians', 'point', 'recede', 'recedes', 'receding',
-  'road', 'roads', 'row', 'rows', 'scene', 'side', 'sides', 'sidewalk', 'sidewalks', 'storefront',
+  'observation', 'of', 'on', 'pedestrian', 'pedestrians', 'point', 'present', 'recede', 'recedes', 'receding',
+  'road', 'roads', 'roadway', 'row', 'rows', 'scene', 'several', 'side', 'sides', 'sidewalk', 'sidewalks', 'storefront',
   'storefronts', 'straight', 'street', 'traffic', 'streets', 'stripe', 'striped', 'stripes',
-  'surrounded', 'tall', 'taxi', 'taxis', 'the', 'urban', 'vehicle',
+  'suggest', 'suggesting', 'suggests', 'surrounded', 'tall', 'taxi', 'taxis', 'the', 'urban', 'vehicle',
   'vehicles', 'vanishing', 'visible', 'white', 'wide', 'widened', 'widening', 'widthy', 'with',
   'toward', 'towards'
 ]);
@@ -212,6 +212,29 @@ function visualDescriptionSimilarity(first, second) {
     if (b.has(token)) shared += 1;
   }
   return shared / Math.min(a.size, b.size);
+}
+
+const NON_EVIDENTIARY_VISUAL_WORDS = new Set([
+  'center', 'centered', 'central', 'composition', 'dominant', 'focus', 'focused',
+  'frame', 'framed', 'framing', 'image', 'middle', 'people', 'present', 'scene',
+  'sketch', 'subject', 'view'
+]);
+
+const NORMALIZED_LOW_INFORMATION_URBAN_WORDS = new Set(
+  [...LOW_INFORMATION_URBAN_WORDS].map(normalizeVisualToken)
+);
+
+function distinctiveVisualTokens(value) {
+  return new Set([...visualDescriptionTokens(value)].filter(token =>
+    !NORMALIZED_LOW_INFORMATION_URBAN_WORDS.has(token) &&
+    !NON_EVIDENTIARY_VISUAL_WORDS.has(token)
+  ));
+}
+
+function hasUncitedDistinctivePrimarySubject(citedEvidence, blindPrimarySubject) {
+  const citedTokens = distinctiveVisualTokens(citedEvidence);
+  const primaryTokens = distinctiveVisualTokens(blindPrimarySubject);
+  return citedTokens.size === 0 && primaryTokens.size > 0;
 }
 
 function localObservationReviewDescription(value) {
@@ -2381,6 +2404,24 @@ Return only JSON:
         accepted: false,
         assessment: `Blind recipient read the drawing as ${blindRead.dominantAction}, but the intended message is ${normalizedMessageAction}: ${blindRead.likelyMessage}`,
         revisionPrompt,
+        blindRead
+      };
+    }
+    if (
+      contributionKind === 'local_observation' &&
+      hasUncitedDistinctivePrimarySubject(
+        contributionEvidenceText(contributionSummary),
+        blindRead.primarySubject || blindRead.likelyMessage
+      )
+    ) {
+      const competingSubject = cleanString(
+        blindRead.primarySubject || blindRead.likelyMessage,
+        300
+      );
+      return {
+        accepted: false,
+        assessment: `Blind recipient saw an uncited distinctive subject "${competingSubject}" as primary, while the cited local observation contains only generic street context: ${contributionSummary}`,
+        revisionPrompt: `Remove this invented or unsupported focal subject: ${competingSubject}. Start from a blank composition and depict only the cited observation. If the cited evidence cannot make an informative sheet without inventing a landmark, abandon this contribution and choose different grounded evidence.`,
         blindRead
       };
     }
