@@ -1918,9 +1918,35 @@ Return only JSON:
         blindRead
       };
     }
+    const blindActionDescription = cleanString(
+      [
+        blindRead.primarySubject,
+        blindRead.likelyMessage,
+        blindRead.frameBasis,
+        ...blindRead.literalContents,
+        ...blindRead.movementCues
+      ].filter(Boolean).join(' '),
+      3000
+    );
+    const hasRetrospectiveActionFrame =
+      /\b(?:figure|person|pedestrian|walker|someone|subject)\b/i.test(blindActionDescription) &&
+      /\b(?:behind|completed|departure|departing|fading|footprints?|leaving|past|trail)\b/i
+        .test(blindActionDescription);
+    const explicitlyRecipientDirected =
+      ['directive', 'request'].includes(blindRead.communicationFunction) ||
+      /\b(?:recipient|viewer)\b[^.!;]{0,50}\b(?:follow|go|head|move|proceed|should|travel|walk)\b/i
+        .test(blindActionDescription) ||
+      /\b(?:command|instruction|invitation|invite|cue)\b[^.!;]{0,40}\b(?:follow|go|head|move|proceed|travel|walk)\b/i
+        .test(blindActionDescription);
     if (
       contributionKind === 'own_action' &&
-      blindRead.frameOfReference !== 'sender'
+      (
+        blindRead.frameOfReference === 'shared' ||
+        (
+          blindRead.frameOfReference === 'recipient' &&
+          (explicitlyRecipientDirected || !hasRetrospectiveActionFrame)
+        )
+      )
     ) {
       return {
         accepted: false,

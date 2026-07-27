@@ -2803,6 +2803,7 @@ test('own-action drawing review rejects a recipient-framed command', async () =>
         dominantAction: 'movement',
         frameOfReference: 'recipient',
         frameBasis: 'The arrow is aimed outward from the viewer with no acting subject.',
+        communicationFunction: 'directive',
         movementCues: ['large outward arrow'],
         stillnessCues: [],
         readableText: false
@@ -2828,6 +2829,50 @@ test('own-action drawing review rejects a recipient-framed command', async () =>
   assert.match(review.revisionPrompt, /Avoid any standalone arrow/);
   assert.match(review.revisionPrompt, /completed motion behind/);
   assert.equal(requests.length, 1);
+});
+
+test('own-action drawing review permits an intrinsically ambiguous retrospective report', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      blindRead: {
+        literalContents: ['a person walks away with footprints trailing behind'],
+        primarySubject: 'a walking person with a completed trail of footprints',
+        likelyMessage: 'Someone has departed and is continuing through the street.',
+        dominantAction: 'movement',
+        frameOfReference: 'recipient',
+        frameBasis: 'The person is seen from behind, so the exact role remains ambiguous.',
+        communicationFunction: 'unclear',
+        movementCues: ['footprints behind the walking person'],
+        stillnessCues: [],
+        readableText: false
+      },
+      review: {
+        accepted: true,
+        contributionPrimary: true,
+        materialContributionConflict: false,
+        visualNovelty: 'distinct',
+        assessment: 'The completed trail makes the sender movement report primary.',
+        revisionPrompt: ''
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'own_action',
+    contributionSummary: 'My current chosen action: I chose to move northeast.',
+    drawingIntent: 'Report my completed movement.',
+    informationDelta: 'My current chosen action: I chose to move northeast.',
+    messageAction: 'movement',
+    drawingPrompt: 'Draw a person moving with a fading trail behind them.',
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, true);
+  assert.equal(requests.length, 2);
 });
 
 test('acknowledgement drawing review rejects a replay that reads as a movement report', async () => {
