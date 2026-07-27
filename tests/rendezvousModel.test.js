@@ -2089,16 +2089,16 @@ test('a drawing replan offers composite streetscapes as separate visual facts', 
   assert.doesNotMatch(requestText, /tree-lined sidewalk; row of parked vans/);
 });
 
-test('a drawing replan atomizes long relational streetscape descriptions', async () => {
+test('a drawing replan atomizes long streetscapes and drops generic fragments', async () => {
   const requests = [];
   const service = new RendezvousModelService({
     client: stagedClient(requests, {
       replan: {
-        contributionEvidenceId: 'local:1',
-        drawingIntent: 'Show the parked vehicles as a local visual fact.',
+        contributionEvidenceId: 'local:0',
+        drawingIntent: 'Show the tree-lined sidewalk as a local visual fact.',
         messageAction: 'stillness',
-        drawingPrompt: 'Draw one row of parked vehicles as the sole dominant subject.',
-        groundedFeatureEvidenceIds: ['local:1']
+        drawingPrompt: 'Draw the tree canopy lining one sidewalk as the sole dominant subject.',
+        groundedFeatureEvidenceIds: ['local:0']
       }
     }),
     logger: { warn() {} }
@@ -2116,10 +2116,13 @@ test('a drawing replan atomizes long relational streetscape descriptions', async
     }
   });
 
-  assert.equal(replan.contributionSummary, 'New local observation: parked vehicles along the left');
+  assert.equal(
+    replan.contributionSummary,
+    'New local observation: Standing at a tree-lined urban sidewalk'
+  );
   const requestText = requests[0].messages.at(-1).content;
   assert.match(requestText, /"description": "Standing at a tree-lined urban sidewalk"/);
-  assert.match(requestText, /"description": "parked vehicles along the left"/);
+  assert.doesNotMatch(requestText, /"description": "parked vehicles along the left"/);
   assert.doesNotMatch(requestText, /"description": "storefronts to the right"/);
 });
 
@@ -3646,6 +3649,10 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence('New local observation: crosswalk lines across the street'),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('New local observation: paved sidewalk and curb with a clear path ahead'),
     false
   );
@@ -3681,6 +3688,10 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     isConcreteLocalEvidence(
       'New local observation: narrow urban street with a pronounced vanishing point ahead'
     ),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('New local observation: row of parked cars along the curb on both sides'),
     false
   );
   assert.equal(
@@ -3754,6 +3765,20 @@ test('a blind recipient can validate a concrete local report despite sender-revi
     {
       primarySubject: 'a runner moving down a road toward the horizon',
       likelyMessage: 'continue forward along the route'
+    }
+  ), false);
+  assert.equal(localObservationMatchesBlindRead(
+    'New local observation: construction activity with cones ahead on the right',
+    {
+      primarySubject: 'a scaffold structure surrounded by safety cones',
+      likelyMessage: 'the sender sees an active construction zone'
+    }
+  ), true);
+  assert.equal(localObservationMatchesBlindRead(
+    'New local observation: construction activity with cones ahead on the right',
+    {
+      primarySubject: 'a group of workers under an otherwise empty scaffold',
+      likelyMessage: 'people are working beside a building'
     }
   ), false);
 });
@@ -5457,7 +5482,7 @@ test('local-observation focal-landmark review still requires the perspective axi
   assert.match(review.assessment, /circular opening.*not the cited local observation/);
 });
 
-test('local-observation review recognizes crosswalk wording as the cited subject', async () => {
+test('local-observation review rejects a generic crosswalk despite matching wording', async () => {
   const requests = [];
   const service = new RendezvousModelService({
     client: stagedClient(requests, {
@@ -5497,8 +5522,9 @@ test('local-observation review recognizes crosswalk wording as the cited subject
     imageBuffer: Buffer.from('generated-image')
   });
 
-  assert.equal(review.accepted, true);
-  assert.equal(requests.length, 2);
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /not the cited local observation/);
+  assert.equal(requests.length, 1);
 });
 
 test('local-question review rejects a generic route choice that displaces its city-axis subject', async () => {

@@ -924,7 +924,14 @@ test('the sender reviews a generated drawing and one rejection produces a revise
     });
 
     await controller.resumePendingDrawing();
+    assert.equal(imageModel.calls.length, 1);
+    assert.equal(reviews.length, 1);
+    assert.equal(controller.state.scratchpad.currentMessage, null);
+    assert.equal(controller.state.scratchpad.pendingMessage.status, 'retrying');
+    assert.match(controller.state.scratchpad.pendingMessage.drawingPrompt, /Separate the landmarks/);
 
+    controller.state.scratchpad.pendingMessage.nextAttemptAt = null;
+    await controller.resumePendingDrawing();
     assert.equal(imageModel.calls.length, 2);
     assert.match(imageModel.calls[1].drawingPrompt, /Separate the landmarks/);
     assert.match(imageModel.calls[1].drawingPrompt, /Show two related landmarks and my intended movement/);
@@ -986,7 +993,11 @@ test('a rejected local observation revision drops incidental scene anchors', asy
     });
 
     await controller.resumePendingDrawing();
+    assert.equal(imageModel.calls.length, 1);
+    assert.equal(controller.state.scratchpad.pendingMessage.status, 'retrying');
 
+    controller.state.scratchpad.pendingMessage.nextAttemptAt = null;
+    await controller.resumePendingDrawing();
     assert.equal(imageModel.calls.length, 2);
     assert.deepEqual(imageModel.calls[1].groundedFeatures, ['yellow school bus on the left']);
     assert.equal(controller.state.scratchpad.currentMessage.id, 'local-observation-revision');
@@ -1037,7 +1048,11 @@ test('a rejected question revision cannot resolve its own alternatives', async (
     });
 
     await controller.resumePendingDrawing();
+    assert.equal(imageModel.calls.length, 1);
+    assert.equal(controller.state.scratchpad.pendingMessage.status, 'retrying');
 
+    controller.state.scratchpad.pendingMessage.nextAttemptAt = null;
+    await controller.resumePendingDrawing();
     assert.equal(imageModel.calls.length, 2);
     assert.match(imageModel.calls[1].drawingPrompt, /remain an unresolved question/i);
     assert.match(imageModel.calls[1].drawingPrompt, /alternatives equal visual weight/i);
@@ -1498,10 +1513,14 @@ test('a durable retry cannot waive an own-action sender-frame failure', async ()
     controller.state.scratchpad.pendingMessage.attempts = 3;
 
     await controller.resumePendingDrawing();
+    assert.equal(imageModel.calls.length, 1);
+    assert.equal(controller.state.scratchpad.pendingMessage.attempts, 4);
 
+    controller.state.scratchpad.pendingMessage.nextAttemptAt = null;
+    await controller.resumePendingDrawing();
     assert.equal(controller.state.scratchpad.currentMessage, null);
     assert.equal(controller.state.scratchpad.pendingMessage.id, 'sender-frame-message');
-    assert.equal(controller.state.scratchpad.pendingMessage.attempts, 4);
+    assert.equal(controller.state.scratchpad.pendingMessage.attempts, 5);
     assert.match(controller.state.scratchpad.pendingMessage.lastError, /command to the recipient/);
     assert.deepEqual(imageModel.calls[1].groundedFeatures, ['a steel bridge visible to the left']);
   } finally {
@@ -1566,7 +1585,7 @@ test('a repeated own action cannot waive sender framing at the terminal retry', 
     assert.equal(controller.state.scratchpad.pendingMessage, null);
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
     assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /command to the recipient/);
-    assert.deepEqual(imageModel.calls[1].groundedFeatures, ['a steel bridge visible to the left']);
+    assert.equal(imageModel.calls.length, 1);
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
@@ -1915,7 +1934,7 @@ test('a recipient-legible local sketch can override an unclear sender review', a
     });
     await controller.resumePendingDrawing();
 
-    assert.equal(reviews, 2);
+    assert.equal(reviews, 1);
     assert.equal(controller.state.scratchpad.pendingMessage, null);
     assert.equal(controller.state.scratchpad.currentMessage.id, 'recipient-legible-terminal-report');
     assert.match(
@@ -1975,7 +1994,7 @@ test('a bounded retry accepts a legible unresolved visual question', async () =>
 
     await controller.resumePendingDrawing();
 
-    assert.equal(reviews, 2);
+    assert.equal(reviews, 1);
     assert.equal(controller.state.scratchpad.pendingMessage, null);
     assert.equal(controller.state.scratchpad.currentMessage.id, 'recipient-legible-terminal-question');
     assert.match(
@@ -2463,7 +2482,7 @@ test('semantic recovery exhaustion abandons only the unsent draft', async () => 
 
     await controller.resumePendingDrawing();
 
-    assert.equal(reviews, 2);
+    assert.equal(reviews, 1);
     assert.equal(controller.state.scratchpad.pendingMessage, null);
     assert.equal(controller.state.scratchpad.sequence, 1);
     assert.equal(controller.state.scratchpad.owner, 'theo');

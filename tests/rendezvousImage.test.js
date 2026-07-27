@@ -106,3 +106,34 @@ test('image service grounds an authored sketch through one private source image'
     else process.env.OPENAI_API_KEY = previousKey;
   }
 });
+
+test('image service leaves retryable failures to the durable controller', async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'test-key';
+  let requests = 0;
+  try {
+    const service = new RendezvousImageService({
+      fetchImpl: async () => {
+        requests += 1;
+        return {
+          ok: false,
+          status: 503,
+          headers: { get: () => null },
+          async json() {
+            return { error: { message: 'temporarily unavailable' } };
+          }
+        };
+      },
+      logger: { warn() {} }
+    });
+
+    await assert.rejects(
+      service.generate({ drawingPrompt: 'Draw one observed stone arch.' }),
+      error => error.message === 'temporarily unavailable' && error.retryable === true
+    );
+    assert.equal(requests, 1);
+  } finally {
+    if (previousKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+  }
+});

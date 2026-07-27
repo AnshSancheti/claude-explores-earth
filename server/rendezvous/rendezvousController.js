@@ -2147,7 +2147,7 @@ export class RendezvousController {
           ? await this.#readVisualHistory(pending.from, this.state.scratchpad, 2)
           : [];
         const referenceImage = await this.#readPendingReference(pending, runId);
-        let generated = await this.imageModel.generate({
+        const generated = await this.imageModel.generate({
           drawingPrompt: pending.drawingPrompt,
           groundedFeatures: compatibleRevisionFeatures(
             pending.drawingPrompt,
@@ -2176,47 +2176,8 @@ export class RendezvousController {
               imageMimeType: generated.mimeType
             })
           : { accepted: true, assessment: 'Drawing review is not available in this model adapter.', revisionPrompt: '' };
-        let renderAttempts = 1;
-        if (!review.accepted) {
-          const revisionPrompt = composeDrawingRevisionPrompt(
-            pending.drawingPrompt,
-            review.revisionPrompt,
-            pending.messageAction,
-            pending.contributionSummary || pending.informationDelta || pending.drawingIntent,
-            pending.contributionKind
-          );
-          generated = await this.imageModel.generate({
-            drawingPrompt: revisionPrompt,
-            groundedFeatures: compatibleRevisionFeatures(
-              revisionPrompt,
-              pending.groundedFeatures,
-              pending.messageAction,
-              pending.contributionKind,
-              pending.contributionSummary
-            ),
-            referenceImage
-          });
-          renderAttempts += 1;
-          review = typeof this.agentModel.reviewDrawing === 'function'
-            ? await this.agentModel.reviewDrawing({
-                agentName: this.state.agents[pending.from]?.name || pending.from,
-                partnerName: this.state.agents[pending.to]?.name || pending.to,
-                contributionKind: pending.contributionKind,
-                contributionEvidenceId: pending.contributionEvidenceId,
-                contributionSummary: pending.contributionSummary,
-                drawingIntent: pending.drawingIntent,
-                informationDelta: pending.informationDelta,
-                continuityReason: pending.continuityReason,
-                messageAction: pending.messageAction,
-                drawingPrompt: revisionPrompt,
-                groundedFeatures: pending.groundedFeatures,
-                visualHistory: reviewVisualHistory,
-                imageBuffer: generated.buffer,
-                imageMimeType: generated.mimeType
-              })
-            : { accepted: true, assessment: 'Drawing review is not available in this model adapter.', revisionPrompt: '' };
-        }
         const attemptNumber = Math.max(1, Number(pending.totalAttempts || 0) + 1);
+        const renderAttempts = attemptNumber;
         if (!review.accepted && canAcceptRecipientLegibleRetry(review, pending, attemptNumber)) {
           review = {
             ...review,

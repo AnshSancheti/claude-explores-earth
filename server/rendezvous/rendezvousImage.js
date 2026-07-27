@@ -55,7 +55,6 @@ export class RendezvousImageService {
     this.size = process.env.RENDEZVOUS_IMAGE_SIZE || '1152x768';
     this.outputFormat = process.env.RENDEZVOUS_IMAGE_FORMAT || 'webp';
     this.timeoutMs = parseIntOr(process.env.RENDEZVOUS_IMAGE_TIMEOUT_MS, 150000);
-    this.maxAttempts = Math.max(1, parseIntOr(process.env.RENDEZVOUS_IMAGE_ATTEMPTS, 2));
   }
 
   async generate({ drawingPrompt, groundedFeatures = [], referenceImage = null }) {
@@ -67,17 +66,7 @@ export class RendezvousImageService {
     const prompt = scaffoldDrawingPrompt(drawingPrompt, groundedFeatures, {
       hasReferenceImage: Boolean(usableReference)
     });
-    let lastError = null;
-    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
-      try {
-        return await this.#request({ prompt, referenceImage: usableReference });
-      } catch (error) {
-        lastError = error;
-        this.logger.warn?.(`Rendezvous image attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
-        if (!error.retryable || attempt >= this.maxAttempts) break;
-      }
-    }
-    throw lastError || new Error('Rendezvous image generation failed');
+    return this.#request({ prompt, referenceImage: usableReference });
   }
 
   async #request({ prompt, referenceImage = null }) {
