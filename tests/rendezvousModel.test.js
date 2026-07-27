@@ -5,6 +5,7 @@ import {
   RendezvousModelService,
   reconcileRendezvousContributionAction,
   reconcileRendezvousMessageAction,
+  repeatsRecentOutboundProposition,
   responseDrawingContradictsRouteUncertainty,
   responseInventsRouteCoordination,
   sanitizeRendezvousDecision
@@ -2279,6 +2280,23 @@ test('a repeatedly unanswered question cannot keep masquerading as a new message
   assert.equal(decision.fallbackCause, null);
   assert.equal(decision.contributionKind, 'deliberate_repetition');
   assert.match(decision.continuityReason, /still cannot distinguish/);
+});
+
+test('literal-versus-symbolic route wording is one repeated question', () => {
+  assert.equal(repeatsRecentOutboundProposition({
+    contributionKind: 'question',
+    contributionSummary: 'Question I am sending: Is Ada signaling a literal forward path or a symbolic urge to move along a broad axis without a fixed destination?',
+    informationDelta: 'Question I am sending: Is Ada signaling a literal forward path or a symbolic urge to move along a broad axis without a fixed destination?',
+    drawingIntent: 'Depict a literal fork and symbolic uncertainty.'
+  }, {
+    sentMessages: [{
+      sequence: 16,
+      contributionKind: 'question',
+      contributionSummary: 'Question I am sending: Should I treat the crosswalk cue as a literal path or a symbolic hint for future direction?',
+      informationDelta: 'Question I am sending: Should I treat the crosswalk cue as a literal path or a symbolic hint for future direction?',
+      intent: 'Ask whether the crosswalk cue is a literal path or a symbolic hint.'
+    }]
+  }), true);
 });
 
 test('an intentional repeated proposition remains available through deliberate repetition', async () => {

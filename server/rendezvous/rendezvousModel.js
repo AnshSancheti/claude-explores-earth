@@ -324,6 +324,13 @@ function genericMovementProposition(value) {
     /\b(?:arrow|away|corridor|direction|distance|footprints?|forward|path|route|sidewalk|street|trail)\b/.test(text);
 }
 
+function routeMeaningQuestion(value) {
+  const text = contributionEvidenceText(value);
+  return /\bliteral\w*\b/i.test(text) &&
+    /\bsymbolic\w*\b/i.test(text) &&
+    /\b(?:axis|cue|direction|hint|move|movement|path|route|signal)\w*\b/i.test(text);
+}
+
 function dominantSheetDescription(perception) {
   return cleanString(
     perception?.primarySubject ||
@@ -845,6 +852,11 @@ export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMe
       const repeatsVisual = currentVisual && previousVisual &&
         visualDescriptionSimilarity(currentVisual, previousVisual) >= 0.6;
       return repeatsEvidence || repeatsVisual ||
+        (
+          contributionKind === 'question' &&
+          routeMeaningQuestion(currentEvidence) &&
+          routeMeaningQuestion(previousEvidence)
+        ) ||
         (genericMovementProposition(currentVisual) && genericMovementProposition(previousVisual));
     }).length;
   const recentReceivedObservations = contributionKind === 'local_observation'

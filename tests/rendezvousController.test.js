@@ -1606,6 +1606,57 @@ test('a persisted response cannot invent route coordination from a received repo
   }
 });
 
+test('a persisted reworded route-meaning question is not fresh', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-question-repeat-test-'));
+  let generatedImages = 0;
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: {},
+      imageModel: {
+        async generate() {
+          generatedImages += 1;
+          throw new Error('A repeated route-meaning question should not reach image generation');
+        }
+      },
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.agents.ada.privateMemory.sentMessages = [{
+      sequence: 16,
+      contributionKind: 'question',
+      contributionSummary: 'Question I am sending: Should I treat the crosswalk cue as a literal path or a symbolic hint for future direction?',
+      informationDelta: 'Question I am sending: Should I treat the crosswalk cue as a literal path or a symbolic hint for future direction?',
+      intent: 'Ask whether the crosswalk cue is a literal path or a symbolic hint.'
+    }];
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'persisted-reworded-question',
+      agentId: 'ada',
+      turn: 27,
+      contributionKind: 'question',
+      contributionEvidenceId: 'question:0',
+      contributionSummary: 'Question I am sending: Is Theo signaling a literal forward path or a symbolic urge to move along a broad axis without a fixed destination?',
+      drawingIntent: 'Depict a literal fork and symbolic uncertainty.',
+      informationDelta: 'Question I am sending: Is Theo signaling a literal forward path or a symbolic urge to move along a broad axis without a fixed destination?',
+      messageAction: 'unclear',
+      drawingPrompt: 'Sketch a fork asking whether the route is literal or symbolic.',
+      groundedFeatures: ['literal forward path or symbolic urge']
+    });
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+    controller.state.scratchpad.pendingMessage.replanFailureCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(generatedImages, 0);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /shared-channel proposition/);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('semantic recovery exhaustion abandons only the unsent draft', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-abandoned-draft-test-'));
   let reviews = 0;
