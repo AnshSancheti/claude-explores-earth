@@ -169,12 +169,17 @@ function atomizeLocalEvidenceDescription(description) {
 
 const VISUAL_SIMILARITY_STOPWORDS = new Set([
   'about', 'ahead', 'along', 'also', 'and', 'around', 'away', 'background',
-  'been', 'being', 'both', 'city', 'could', 'distance', 'distant', 'down',
-  'foreground', 'from', 'into', 'large', 'layout', 'left', 'might', 'one',
-  'other', 'person', 'public', 'right', 'scene', 'shows', 'side', 'street',
-  'suggesting', 'the', 'their', 'there', 'these', 'they', 'this', 'through',
-  'toward', 'towards', 'urban', 'viewer', 'visible', 'with', 'would',
-  'continuous'
+  'been', 'being', 'both', 'city', 'cited', 'coherent', 'complete',
+  'context', 'continuous', 'contribution', 'could', 'create', 'distance',
+  'distant', 'down', 'drawing', 'features', 'foreground', 'from', 'grounded',
+  'handmade', 'include', 'into', 'labels', 'large', 'layout', 'left',
+  'letters', 'local', 'logos', 'make', 'message', 'might', 'numbers',
+  'observation', 'one', 'only', 'other', 'person', 'primary', 'public',
+  'readable', 'rendering', 'represent', 'right', 'scene', 'show', 'shows',
+  'side', 'street', 'suggesting', 'text', 'the', 'their', 'there', 'these',
+  'they', 'this', 'through', 'toward', 'towards', 'unmistakably', 'urban',
+  'use', 'viewer', 'visible', 'visually', 'watermarks', 'with', 'without',
+  'wordless', 'words', 'would'
 ]);
 
 function normalizeVisualToken(token) {

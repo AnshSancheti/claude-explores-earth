@@ -2219,6 +2219,44 @@ test('a third copy of the same local observation must adapt or repeat deliberate
   assert.match(decision.drawingPrompt, /uncertain/);
 });
 
+test('renderer scaffolding cannot make a statue repeat an unrelated taxi report', () => {
+  const candidate = {
+    contributionKind: 'local_observation',
+    contributionSummary:
+      'New local observation: statue on a pedestal at a plaza-leaning corner',
+    informationDelta:
+      'New local observation: statue on a pedestal at a plaza-leaning corner',
+    drawingIntent:
+      'Show the cited local observation as the complete message: New local observation: statue on a pedestal at a plaza-leaning corner.',
+    drawingPrompt:
+      'Create one coherent handmade, wordless drawing that makes this contribution unmistakably primary: New local observation: statue on a pedestal at a plaza-leaning corner.'
+  };
+  const memory = {
+    sentMessages: [{
+      contributionKind: 'local_observation',
+      contributionSummary:
+        'New local observation: Active traffic including taxis and pedestrians',
+      informationDelta:
+        'New local observation: Active traffic including taxis and pedestrians',
+      intent:
+        'Show the cited local observation as the complete message: New local observation: Active traffic including taxis and pedestrians.'
+    }]
+  };
+
+  assert.equal(repeatsRecentOutboundProposition(candidate, memory), false);
+  const priorStatue = {
+    contributionKind: 'local_observation',
+    contributionSummary:
+      'New local observation: statue on a pedestal at a plaza-leaning corner',
+    informationDelta:
+      'New local observation: statue on a pedestal at a plaza-leaning corner',
+    intent:
+      'Show the cited local observation as the complete message: New local observation: statue on a pedestal at a plaza-leaning corner.'
+  };
+  memory.sentMessages = [priorStatue, { ...priorStatue }];
+  assert.equal(repeatsRecentOutboundProposition(candidate, memory), true);
+});
+
 test('an echoed partner observation counts toward shared channel repetition', async () => {
   let drawingAttempts = 0;
   const service = new RendezvousModelService({
