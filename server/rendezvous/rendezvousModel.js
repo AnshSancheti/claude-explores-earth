@@ -121,13 +121,14 @@ const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
 
 const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'an', 'and', 'asphalt', 'at', 'ahead', 'building', 'buildings', 'car',
-  'both', 'broad', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
+  'bordered', 'both', 'broad', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'environment', 'foreground', 'in', 'intersection',
-  'flanked', 'intersections', 'lane', 'lanes', 'local', 'marked', 'marking', 'markings',
-  'multiple', 'new', 'observation', 'of', 'on', 'pedestrian', 'pedestrians',
+  'expansive', 'flanked', 'intersections', 'lane', 'lanes', 'lengthy', 'lined', 'local', 'long',
+  'marked', 'marking', 'markings', 'multiple', 'narrow', 'narrowed', 'narrowing', 'new',
+  'observation', 'of', 'on', 'pedestrian', 'pedestrians',
   'road', 'roads', 'scene', 'side', 'sides', 'sidewalk', 'sidewalks', 'straight', 'street',
-  'streets', 'tall', 'the', 'urban', 'vehicle', 'vehicles', 'visible', 'wide',
-  'with'
+  'streets', 'surrounded', 'tall', 'the', 'urban', 'vehicle', 'vehicles', 'visible', 'wide',
+  'widened', 'widening', 'widthy', 'with'
 ]);
 
 function isLowInformationUrbanObservation(description) {
@@ -140,7 +141,7 @@ function isLowInformationUrbanObservation(description) {
   return hasGenericStreetAnchor && words.every(word => LOW_INFORMATION_URBAN_WORDS.has(word));
 }
 
-function isConcreteLocalEvidence(description) {
+export function isConcreteLocalEvidence(description) {
   const value = cleanString(description, 220);
   if (!value || value.toLowerCase() === 'context') return false;
   if (/\bstreet\s+(?:label|name)\b/i.test(value) || containsNamedStreetReference(value)) {
@@ -681,8 +682,9 @@ export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = 
     if (selectedDelta > 12 && matches.length === 1) selectedIndex = matches[0].index;
   }
   const numericSheetConfidence = Number(raw?.sheetConfidence);
-  const observedFeatures = cleanStringList(raw?.observedFeatures)
-    .filter(isConcreteLocalEvidence);
+  const observedFeatures = cleanStringList(raw?.observedFeatures, { limit: 20 })
+    .filter(isConcreteLocalEvidence)
+    .slice(0, 5);
   const rawObservation = cleanString(raw?.observation, 700);
   const observation = isConcreteLocalEvidence(rawObservation)
     ? rawObservation

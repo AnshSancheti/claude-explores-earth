@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'crypto';
 import { StreetViewHeadless } from '../services/streetViewHeadless.js';
 import { calculateBearing } from '../utils/geoUtils.js';
 import {
+  isConcreteLocalEvidence,
   RendezvousModelService,
   reconcileRendezvousContributionAction,
   repeatsRecentOutboundProposition
@@ -1595,8 +1596,13 @@ export class RendezvousController {
     const senderMemory = normalizeAgentMemory(
       this.state.agents[pending.from]?.privateMemory
     );
-    if (repeatsRecentOutboundProposition(pending, senderMemory)) {
-      const error = 'Pending drawing repeats a recent shared-channel proposition without declaring deliberate repetition';
+    const repeatsChannel = repeatsRecentOutboundProposition(pending, senderMemory);
+    const lowInformationObservation = pending.contributionKind === 'local_observation' &&
+      !isConcreteLocalEvidence(pending.contributionSummary || pending.informationDelta);
+    if (repeatsChannel || lowInformationObservation) {
+      const error = repeatsChannel
+        ? 'Pending drawing repeats a recent shared-channel proposition without declaring deliberate repetition'
+        : 'Pending drawing contains only low-information urban street substrate';
       if (
         pending.replanCount < MAX_DRAWING_REPLANS &&
         typeof this.agentModel.replanUnrenderableDrawing === 'function'

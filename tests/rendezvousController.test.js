@@ -1282,12 +1282,12 @@ test('a second failed replan can accept a recipient-legible local report', async
       turn: 9,
       contributionKind: 'local_observation',
       contributionEvidenceId: 'local:0',
-      contributionSummary: 'New local observation: broad urban street with multiple lanes',
-      drawingIntent: 'Show the broad avenue.',
-      informationDelta: 'New local observation: broad urban street with multiple lanes',
+      contributionSummary: 'New local observation: broad avenue with a central median tree',
+      drawingIntent: 'Show the broad avenue and central median tree.',
+      informationDelta: 'New local observation: broad avenue with a central median tree',
       messageAction: 'unclear',
-      drawingPrompt: 'Draw a broad avenue with multiple lanes.',
-      groundedFeatures: ['broad urban street with multiple lanes']
+      drawingPrompt: 'Draw a broad avenue with a central median tree.',
+      groundedFeatures: ['broad avenue with a central median tree']
     });
     controller.state.scratchpad.pendingMessage.attempts = 6;
     controller.state.scratchpad.pendingMessage.totalAttempts = 6;
@@ -1381,6 +1381,50 @@ test('a persisted alternating echo is abandoned after semantic replans are exhau
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).id, 'persisted-alternating-echo');
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
     assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /shared-channel proposition/);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a persisted low-information street report is abandoned after semantic replans are exhausted', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-low-info-revalidation-test-'));
+  let generatedImages = 0;
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: {},
+      imageModel: {
+        async generate() {
+          generatedImages += 1;
+          throw new Error('A low-information draft should not reach image generation');
+        }
+      },
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'persisted-low-information-report',
+      agentId: 'ada',
+      turn: 22,
+      contributionKind: 'local_observation',
+      contributionEvidenceId: 'local:0',
+      contributionSummary: 'New local observation: widthy urban street flanked by buildings',
+      drawingIntent: 'Show the widthy street and buildings.',
+      informationDelta: 'New local observation: widthy urban street flanked by buildings',
+      messageAction: 'stillness',
+      drawingPrompt: 'Sketch a widthy urban street flanked by buildings.',
+      groundedFeatures: ['widthy urban street flanked by buildings']
+    });
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+    controller.state.scratchpad.pendingMessage.replanFailureCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(generatedImages, 0);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /low-information urban street/);
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
@@ -1492,12 +1536,12 @@ test('failed replanning is retried separately before bounded recipient-legible d
       turn: 9,
       contributionKind: 'local_observation',
       contributionEvidenceId: 'local:0',
-      contributionSummary: 'New local observation: broad urban street with multiple lanes',
-      drawingIntent: 'Show the broad avenue.',
-      informationDelta: 'New local observation: broad urban street with multiple lanes',
+      contributionSummary: 'New local observation: broad avenue with a central median tree',
+      drawingIntent: 'Show the broad avenue and central median tree.',
+      informationDelta: 'New local observation: broad avenue with a central median tree',
       messageAction: 'unclear',
-      drawingPrompt: 'Draw a broad avenue with multiple lanes.',
-      groundedFeatures: ['broad urban street with multiple lanes']
+      drawingPrompt: 'Draw a broad avenue with a central median tree.',
+      groundedFeatures: ['broad avenue with a central median tree']
     });
     controller.state.scratchpad.pendingMessage.attempts = 6;
     controller.state.scratchpad.pendingMessage.totalAttempts = 6;
