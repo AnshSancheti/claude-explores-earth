@@ -1646,6 +1646,29 @@ export class RendezvousController {
     });
   }
 
+  #releaseSheetHolderAfterAbandonment(pending) {
+    const scratchpad = Number(this.state.scratchpad?.version) === 5
+      ? normalizeRasterScratchpad(this.state.scratchpad)
+      : null;
+    if (
+      !pending?.from ||
+      scratchpad?.pendingMessage ||
+      scratchpad?.owner !== pending.from
+    ) {
+      return;
+    }
+    const sender = this.state.agents[pending.from];
+    if (!sender) return;
+    sender.sheetBlockedPanoId = null;
+    if (sender.status === 'waiting') sender.status = 'searching';
+  }
+
+  #scheduleAfterDrawingAbandonment() {
+    if (this.running && this.state.status === 'running') {
+      this.#scheduleNextTick();
+    }
+  }
+
   async resumePendingDrawing() {
     if (this.drawingInFlight) return this.drawingInFlight;
     const runId = this.state.runId;
@@ -1754,8 +1777,10 @@ export class RendezvousController {
           totalAttempts: pending.totalAttempts,
           replanCount: pending.replanCount
         });
+        this.#releaseSheetHolderAfterAbandonment(pending);
         await this.saveState();
         this.broadcastState();
+        this.#scheduleAfterDrawingAbandonment();
         this.logger.warn?.(`Rendezvous drawing ${pending.id} was abandoned after persisted message revalidation`);
         return null;
       }
@@ -2035,8 +2060,10 @@ export class RendezvousController {
               totalAttempts,
               replanCount: currentPending.replanCount
             });
+            this.#releaseSheetHolderAfterAbandonment(currentPending);
             await this.saveState();
             this.broadcastState();
+            this.#scheduleAfterDrawingAbandonment();
             this.logger.warn?.(
               `Rendezvous drawing ${pending.id} was abandoned after exhausting semantic recovery: ${error.message}`
             );

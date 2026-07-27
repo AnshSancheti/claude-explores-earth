@@ -1850,6 +1850,10 @@ test('a persisted low-information street report is abandoned after semantic repl
     });
     controller.state.scratchpad.pendingMessage.replanCount = 2;
     controller.state.scratchpad.pendingMessage.replanFailureCount = 2;
+    controller.state.agents.ada.status = 'waiting';
+    controller.state.agents.ada.sheetBlockedPanoId = controller.state.agents.ada.panoId;
+    controller.state.status = 'running';
+    controller.running = true;
 
     await controller.resumePendingDrawing();
 
@@ -1857,6 +1861,10 @@ test('a persisted low-information street report is abandoned after semantic repl
     assert.equal(controller.state.scratchpad.pendingMessage, null);
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
     assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /low-information urban street/);
+    assert.equal(controller.state.agents.ada.status, 'searching');
+    assert.equal(controller.state.agents.ada.sheetBlockedPanoId, null);
+    assert.notEqual(controller.timer, null);
+    await controller.stop();
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
