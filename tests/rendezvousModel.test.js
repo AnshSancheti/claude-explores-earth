@@ -339,6 +339,45 @@ test('same-sheet failed propositions are omitted from the outbound evidence cata
   assert.match(catalogText, /"id": "local:0"/);
 });
 
+test('a failed same-sheet acknowledgement is not offered again', async () => {
+  const requests = [];
+  const baseInput = input();
+  const literal = 'a bright circle between two repeated arch forms';
+  const service = new RendezvousModelService({
+    client: stagedClient(requests),
+    logger: { warn() {} }
+  });
+
+  await service.decide(input({
+    privateMemory: {
+      ...baseInput.privateMemory,
+      receivedSheets: [{
+        sequence: 7,
+        interpretation: 'A circle appears between arches.'
+      }],
+      failedMessages: [{
+        draftId: 'failed-circle-acknowledgement',
+        sheetSequence: 7,
+        contributionKind: 'acknowledgement',
+        contributionSummary:
+          `Acknowledging received visual evidence without claiming it as my own: ${literal}`,
+        informationDelta:
+          `Acknowledging received visual evidence without claiming it as my own: ${literal}`,
+        intent: 'Acknowledge the circle between arches.'
+      }]
+    }
+  }));
+
+  const drawingRequest = requests.find(request =>
+    /currently hold the one physical sheet/.test(request.messages[0].content)
+  );
+  const drawingText = drawingRequest.messages[1].content
+    .find(item => item.type === 'text')?.text || '';
+  const catalogText = drawingText.split('Available outbound evidence catalog:\n')[1] || '';
+  assert.doesNotMatch(catalogText, /"id": "received:0"/);
+  assert.match(catalogText, /"id": "local:0"/);
+});
+
 test('an agent can turn concrete local evidence into its own visual question', async () => {
   const requests = [];
   const service = new RendezvousModelService({

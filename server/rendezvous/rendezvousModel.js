@@ -1007,7 +1007,7 @@ function locallyGroundRouteLanguage(routeDecision, partnerName) {
 function matchingRecentSentPropositions(candidateDrawingPlan, privateMemory) {
   const contributionKind = candidateDrawingPlan?.contributionKind;
   if (
-    !['local_observation', 'own_action', 'response', 'question', 'correction']
+    !['local_observation', 'own_action', 'response', 'question', 'correction', 'acknowledgement']
       .includes(contributionKind)
   ) {
     return [];
@@ -1071,7 +1071,7 @@ function matchingCurrentFailedPropositions(candidateDrawingPlan, privateMemory) 
 export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
   const contributionKind = candidateDrawingPlan?.contributionKind;
   if (
-    !['local_observation', 'own_action', 'response', 'question', 'correction']
+    !['local_observation', 'own_action', 'response', 'question', 'correction', 'acknowledgement']
       .includes(contributionKind)
   ) {
     return false;
