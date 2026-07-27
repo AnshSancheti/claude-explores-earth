@@ -51,9 +51,18 @@ const RENDER_REVISION_MARKER = 'Authoritative rendering correction:';
 const UNRESOLVED_QUESTION_CONSTRAINT = 'The drawing must remain an unresolved question. Give the alternatives equal visual weight and make uncertainty primary. Do not answer the question, favor one route, or use check marks, X marks, green/red approval, or any other correct-versus-incorrect cue.';
 const MAX_DRAWING_ATTEMPTS_PER_PLAN = RASTER_SCRATCHPAD_ATTEMPTS_PER_PLAN;
 const MAX_DRAWING_REPLANS = 2;
+const MAX_QUESTION_DRAWING_REPLANS = 1;
 const MAX_DRAWING_REPLAN_FAILURES = 2;
-const MAX_DRAWING_TOTAL_ATTEMPTS =
-  MAX_DRAWING_ATTEMPTS_PER_PLAN * (MAX_DRAWING_REPLANS + 1);
+
+function drawingReplanLimit(pending) {
+  return pending?.contributionKind === 'question'
+    ? MAX_QUESTION_DRAWING_REPLANS
+    : MAX_DRAWING_REPLANS;
+}
+
+function drawingTotalAttemptLimit(pending) {
+  return MAX_DRAWING_ATTEMPTS_PER_PLAN * (drawingReplanLimit(pending) + 1);
+}
 
 export function composeDrawingRevisionPrompt(
   drawingPrompt,
@@ -155,8 +164,8 @@ function canAcceptRecipientLegibleRetry(review, pending, attemptNumber) {
     return true;
   }
   if (
-    Number(pending?.replanCount) >= MAX_DRAWING_REPLANS &&
-    attemptNumber >= 6 &&
+    Number(pending?.replanCount) >= drawingReplanLimit(pending) &&
+    attemptNumber >= drawingTotalAttemptLimit(pending) &&
     blindRead?.readableText !== true &&
     Boolean(blindRead?.likelyMessage)
   ) {
@@ -1991,7 +2000,7 @@ export class RendezvousController {
         ? 'Pending question plan does not include both authored visual alternatives'
         : 'Pending local question displaced its cited subject with the received cue';
       if (
-        pending.replanCount < MAX_DRAWING_REPLANS &&
+        pending.replanCount < drawingReplanLimit(pending) &&
         typeof this.agentModel.replanUnrenderableDrawing === 'function'
       ) {
         pending.attempts = Math.max(pending.attempts, MAX_DRAWING_ATTEMPTS_PER_PLAN);
@@ -2023,7 +2032,7 @@ export class RendezvousController {
     }
     if (
       pending.attempts >= MAX_DRAWING_ATTEMPTS_PER_PLAN &&
-      pending.replanCount < MAX_DRAWING_REPLANS &&
+      pending.replanCount < drawingReplanLimit(pending) &&
       typeof this.agentModel.replanUnrenderableDrawing === 'function'
     ) {
       const replanWork = (async () => {
@@ -2038,7 +2047,7 @@ export class RendezvousController {
           const liveScratchpad = normalizeRasterScratchpad(this.state.scratchpad);
           if (liveScratchpad.pendingMessage?.id !== pending.id || this.state.runId !== runId) return;
           const nextReplanCount = Math.min(
-            MAX_DRAWING_REPLANS,
+            drawingReplanLimit(replanned || liveScratchpad.pendingMessage),
             Math.max(0, Number(liveScratchpad.pendingMessage.replanCount) || 0) + 1
           );
           const activatesAvailableReference =
@@ -2277,8 +2286,8 @@ export class RendezvousController {
           const attempts = Math.max(1, currentPending.attempts);
           const totalAttempts = Math.max(attempts, currentPending.totalAttempts);
           const reviewExhausted = error.drawingRejected === true &&
-            currentPending.replanCount >= MAX_DRAWING_REPLANS &&
-            totalAttempts >= MAX_DRAWING_TOTAL_ATTEMPTS;
+            currentPending.replanCount >= drawingReplanLimit(currentPending) &&
+            totalAttempts >= drawingTotalAttemptLimit(currentPending);
           if (reviewExhausted) {
             this.#rememberFailedDrawing(currentPending, error.message);
             this.state.scratchpad = failRasterScratchpadMessage(this.state.scratchpad, {

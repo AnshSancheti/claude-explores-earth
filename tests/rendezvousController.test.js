@@ -2006,6 +2006,64 @@ test('a bounded retry accepts a legible unresolved visual question', async () =>
   }
 });
 
+test('an illegible unresolved question stops after one semantic replan', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-question-budget-test-'));
+  let reviews = 0;
+  const agentModel = {
+    async reviewDrawing() {
+      reviews += 1;
+      return {
+        accepted: false,
+        assessment: 'Only one side of the unresolved choice is visible.',
+        revisionPrompt: 'Show both alternatives with equal visual weight.',
+        blindRead: {
+          dominantAction: 'stillness',
+          frameOfReference: 'shared',
+          communicationFunction: 'question',
+          readableText: false,
+          likelyMessage: 'The sender is uncertain about one visible path.'
+        }
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'bounded-question',
+      agentId: 'ada',
+      turn: 9,
+      contributionKind: 'question',
+      contributionEvidenceId: 'question:0',
+      contributionSummary: 'Question I am sending: is this a direct shared path or a general spatial mood?',
+      drawingIntent: 'Ask whether the image means a direct path or a general spatial mood.',
+      informationDelta: 'Question I am sending: is this a direct shared path or a general spatial mood?',
+      messageAction: 'unclear',
+      drawingPrompt: 'Draw a direct path and an atmospheric city impression with equal visual weight.',
+      groundedFeatures: ['direct path', 'general spatial mood']
+    });
+    controller.state.scratchpad.pendingMessage.attempts = 1;
+    controller.state.scratchpad.pendingMessage.totalAttempts = 3;
+    controller.state.scratchpad.pendingMessage.replanCount = 1;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(reviews, 1);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).totalAttempts, 4);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).replanCount, 1);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a bounded question retry cannot waive a preferred route directive', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-terminal-question-directive-test-'));
   const agentModel = {
