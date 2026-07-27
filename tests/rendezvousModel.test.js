@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  deliberateRepetitionHasPurpose,
   isCueDependentSearchPlan,
   questionAlternativesVisible,
   RendezvousModelService,
@@ -2508,6 +2509,17 @@ test('an intentional repeated proposition remains available through deliberate r
   assert.equal(decision.fallbackCause, null);
   assert.equal(decision.contributionKind, 'deliberate_repetition');
   assert.match(decision.continuityReason, /unchanged movement report/);
+});
+
+test('deliberate repetition needs a communicative reason beyond omitted motifs', () => {
+  assert.equal(deliberateRepetitionHasPurpose({
+    contributionKind: 'deliberate_repetition',
+    continuityReason: 'The recurring "forward" motif is omitted because its physical meaning remains unsupported.'
+  }), false);
+  assert.equal(deliberateRepetitionHasPurpose({
+    contributionKind: 'deliberate_repetition',
+    continuityReason: 'The unchanged question remains unresolved, so I am deliberately asking it again. The recurring "forward" motif is omitted because its physical meaning remains unsupported.'
+  }), true);
 });
 
 test('planner-authored fields cannot reintroduce private place names for an own-action reply', async () => {

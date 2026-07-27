@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'crypto';
 import { StreetViewHeadless } from '../services/streetViewHeadless.js';
 import { calculateBearing } from '../utils/geoUtils.js';
 import {
+  deliberateRepetitionHasPurpose,
   isConcreteLocalEvidence,
   questionAlternativesVisible,
   RendezvousModelService,
@@ -1652,11 +1653,13 @@ export class RendezvousController {
       !isConcreteLocalEvidence(pending.contributionSummary || pending.informationDelta);
     const contradictoryResponse = responseDrawingContradictsRouteUncertainty(pending);
     const inventedRouteCoordination = responseInventsRouteCoordination(pending);
+    const unmotivatedRepetition = !deliberateRepetitionHasPurpose(pending);
     if (
       repeatsChannel ||
       lowInformationObservation ||
       contradictoryResponse ||
-      inventedRouteCoordination
+      inventedRouteCoordination ||
+      unmotivatedRepetition
     ) {
       const error = repeatsChannel
         ? 'Pending drawing repeats a recent shared-channel proposition without declaring deliberate repetition'
@@ -1664,7 +1667,9 @@ export class RendezvousController {
         ? 'Pending drawing contains only low-information urban street substrate'
         : contradictoryResponse
         ? 'Pending response contradicts its stated route uncertainty with directional imagery'
-        : 'Pending response promoted an inferred sheet meaning into route coordination';
+        : inventedRouteCoordination
+        ? 'Pending response promoted an inferred sheet meaning into route coordination'
+        : 'Pending deliberate repetition does not explain what repeating it communicates now';
       if (
         pending.replanCount < MAX_DRAWING_REPLANS &&
         typeof this.agentModel.replanUnrenderableDrawing === 'function'

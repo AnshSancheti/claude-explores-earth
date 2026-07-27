@@ -288,6 +288,23 @@ export function responseInventsRouteCoordination(message) {
   return affirmativeCoordination.test(positiveText) || coordinatedRoute.test(positiveText);
 }
 
+export function deliberateRepetitionHasPurpose(message) {
+  if (message?.contributionKind !== 'deliberate_repetition') return true;
+  const reason = cleanString(message?.continuityReason, 700)
+    .replace(
+      /\bthe recurring\b[^.!;]{0,180}\bomitted\b[^.!;]{0,180}\bunsupported\b[^.!;]*[.!;]?/gi,
+      ' '
+    )
+    .replace(
+      /\b(?:the )?recurrence is part of the message rather than new evidence\b[.!;]?/gi,
+      ' '
+    )
+    .trim();
+  return reason.length >= 20 &&
+    /\b(?:again|answer|ask|clarif|connect|correct|deliberat|emphas|intend|link|remain|repeat|signal|still|surface|test|unchang|unresolved|useful)\w*\b/i
+      .test(reason);
+}
+
 function questionContrastsStillnessAndMovement(value) {
   const text = cleanString(value, 1200);
   return /\b(?:hold|pause|remain|stay|still|stop|wait)\w*\b/i.test(text) &&
@@ -1660,6 +1677,9 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         ) {
           throw new Error('Rendezvous repeated contribution omitted why repeating it is useful now');
         }
+        if (!deliberateRepetitionHasPurpose(candidateDrawingPlan)) {
+          throw new Error('Rendezvous deliberate repetition did not explain what repeating it communicates now');
+        }
         if (repeatsRecentOutboundProposition(candidateDrawingPlan, actionMemory)) {
           const priorFailuresWereOnlyRepetition =
             drawingPlanFailureKinds.size > 0 &&
@@ -1703,8 +1723,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
             );
             candidateDrawingPlan.informationDelta = candidateDrawingPlan.contributionSummary;
             candidateDrawingPlan.continuityReason ||= (
-              'I chose to send this proposition again after recognizing that it already appeared; ' +
-              'the recurrence is part of the message rather than new evidence.'
+              'The question remains unresolved, so I am deliberately asking it again.'
             );
             candidateDrawingPlan.groundedFeatures = [
               repeatedEvidence.description,
@@ -1760,8 +1779,12 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
               : candidateDrawingPlan.contributionSummary;
             candidateDrawingPlan.drawingIntent =
               `Send the cited contribution as primary evidence while leaving the inherited "${unsupportedGoalTerm}" motif unresolved rather than depicting it as a destination.`;
-            candidateDrawingPlan.continuityReason =
+            const omittedMotifReason =
               `The recurring "${unsupportedGoalTerm}" motif is omitted because its physical meaning remains unsupported.`;
+            candidateDrawingPlan.continuityReason =
+              candidateDrawingPlan.contributionKind === 'deliberate_repetition'
+                ? `${candidateDrawingPlan.continuityReason} ${omittedMotifReason}`.trim()
+                : omittedMotifReason;
             candidateDrawingPlan.drawingPrompt =
               `Create one coherent handmade, wordless drawing that makes this contribution unmistakably primary: ${candidateDrawingPlan.contributionSummary}. Represent it visually without rendering words. Use only these grounded features as context: ${visibleFeatures}. Do not depict the inherited "${unsupportedGoalTerm}" motif as a destination, waypoint, target, or goal. Include no readable text, letters, numbers, labels, logos, or watermarks.`;
             if (candidateDrawingPlan.contributionKind === 'local_observation') {
