@@ -282,7 +282,7 @@ export function responseInventsRouteCoordination(message) {
     ' '
   );
   const affirmativeCoordination =
-    /\b(?:align|coordinat|favor|recommend|support|synchroniz)\w*\b[^.!;]{0,120}\b(?:advanc|continu|cross|follow|head|momentum|motion|mov|proceed|travel|walk)\w*\b/i;
+    /\b(?:align|coordinat|favor|keep|maintain|preserv|recommend|support|sustain|synchroniz)\w*\b[^.!;]{0,120}\b(?:advanc|continu|cross|follow|head|momentum|motion|mov|proceed|progress|travel|walk)\w*\b/i;
   const coordinatedRoute =
     /\b(?:coordinat|synchroniz)\w*\b[^.!;]{0,100}\b(?:axis|corridor|crossing|direction|path|route)\b/i;
   return affirmativeCoordination.test(positiveText) || coordinatedRoute.test(positiveText);
@@ -484,7 +484,12 @@ function buildContributionEvidence({ routeDecision, perception, privateMemory, o
   });
   add('action', [describeChosenAction(routeDecision, options)], { kind: 'own_action' });
   add('received', perception.literalContents, { kind: 'acknowledgement' });
-  add('response', perception.evidenceDelta.informationWorthSending, { kind: 'response' });
+  add('response', perception.evidenceDelta.informationWorthSending.filter(description =>
+    !responseInventsRouteCoordination({
+      contributionKind: 'response',
+      contributionSummary: authoritativeContributionSummary('response', description)
+    })
+  ), { kind: 'response' });
   add('question', perception.evidenceDelta.unresolvedQuestions, { kind: 'question' });
   add('contradiction', perception.evidenceDelta.contradictions, { kind: 'correction' });
   add('prior_sent', (privateMemory?.sentMessages || []).slice(-6).map(message =>
@@ -1921,6 +1926,10 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
       { limit: 3, maxLength: 220 }
     )
       .map(description => sanitizeOutboundPlaceNames(description, [], 220))
+      .filter(description => !responseInventsRouteCoordination({
+        contributionKind: 'response',
+        contributionSummary: authoritativeContributionSummary('response', description)
+      }))
       .filter(Boolean);
     const priorContribution = contributionEvidenceText(
       pending?.informationDelta || pending?.contributionSummary

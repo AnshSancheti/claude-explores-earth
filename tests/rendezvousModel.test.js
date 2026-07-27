@@ -907,6 +907,14 @@ test('a response cannot turn an inferred crossing meaning into route coordinatio
     contributionKind: 'response',
     contributionSummary: 'My response to the received drawing: continue along a broad urban axis aligns with ongoing forward motion.'
   }), true);
+  assert.equal(responseInventsRouteCoordination({
+    contributionKind: 'response',
+    contributionSummary: 'My response to the received drawing: continue along a broad urban axis maintains forward progress without locking to a specific route.'
+  }), true);
+  assert.equal(responseInventsRouteCoordination({
+    contributionKind: 'response',
+    contributionSummary: 'My response to the received drawing: the broad axis remains ambiguous and does not indicate a route.'
+  }), false);
 });
 
 test('a local observation cannot become route guidance through an inferred proposal', async () => {
