@@ -681,23 +681,43 @@ function locallyGroundRouteLanguage(routeDecision, partnerName) {
 }
 
 function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
-  if (candidateDrawingPlan?.contributionKind !== 'own_action') return false;
-  const current = cleanString(
+  const contributionKind = candidateDrawingPlan?.contributionKind;
+  if (
+    !['local_observation', 'own_action', 'question', 'correction']
+      .includes(contributionKind)
+  ) {
+    return false;
+  }
+  const currentEvidence = contributionEvidenceText(
+    candidateDrawingPlan?.informationDelta || candidateDrawingPlan?.contributionSummary
+  );
+  const currentVisual = cleanString(
     `${candidateDrawingPlan?.drawingIntent || ''} ${candidateDrawingPlan?.drawingPrompt || ''}`,
     3000
   );
-  if (!current) return false;
-  return (privateMemory?.sentMessages || []).slice(-4)
-    .filter(message => message?.contributionKind === 'own_action')
-    .some(message => {
-      const previous = cleanString(
+  if (!currentEvidence && !currentVisual) return false;
+  const matchingRecentMessages = (privateMemory?.sentMessages || []).slice(-6)
+    .filter(message => message?.contributionKind === contributionKind)
+    .filter(message => {
+      const previousEvidence = contributionEvidenceText(
+        message?.informationDelta || message?.contributionSummary
+      );
+      const previousVisual = cleanString(
         `${message?.intent || ''} ${message?.contributionSummary || ''}`,
         1800
       );
-      if (!previous) return false;
-      return visualDescriptionSimilarity(current, previous) >= 0.55 ||
-        (genericMovementProposition(current) && genericMovementProposition(previous));
-    });
+      const repeatsEvidence = currentEvidence && previousEvidence &&
+        visualDescriptionSimilarity(currentEvidence, previousEvidence) >= 0.72;
+      const repeatsVisual = currentVisual && previousVisual &&
+        visualDescriptionSimilarity(currentVisual, previousVisual) >= 0.6;
+      return repeatsEvidence || repeatsVisual ||
+        (genericMovementProposition(currentVisual) && genericMovementProposition(previousVisual));
+    }).length;
+
+  // A recurring observation, question, or correction may be useful once. After
+  // that, the sender must either add information or label the repetition
+  // honestly. Generic action scenes are challenged after the first recurrence.
+  return matchingRecentMessages >= (contributionKind === 'own_action' ? 1 : 2);
 }
 
 function fallbackDecision(options, visitedPanos, cause) {
@@ -1389,7 +1409,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         }
         if (repeatsRecentOutboundProposition(candidateDrawingPlan, actionMemory)) {
           throw new Error(
-            'Rendezvous drawing planner presented a repeated visual proposition as a fresh contribution'
+            'Rendezvous drawing planner presented a repeated outbound proposition as a fresh contribution'
           );
         }
         if (
@@ -1472,8 +1492,8 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
             ? 'The cited local observation is static evidence. Remove uncited routes, footprints, arrows, runners, progression, and directional cues. If movement is the actual contribution you want to send, cite an exact action evidence ID instead.'
           : (/labeled its contribution/i.test(error.message)
               ? 'Preserve the communicative act you actually intend. Cite an exact evidence ID whose prefix matches that contribution kind: local for local_observation, action for own_action, question for question, contradiction for correction, received for acknowledgement, or prior_sent for deliberate_repetition. Do not change the message kind merely to fit a mismatched ID.'
-              : (/repeated visual proposition/i.test(error.message)
-              ? 'The proposed composition repeats a recent visual proposition. Choose a genuinely different grounded contribution or composition. If repetition itself is what you intend to communicate, cite an exact prior_sent evidence ID as deliberate_repetition and explain why repeating it is useful now.'
+              : (/repeated outbound proposition/i.test(error.message)
+              ? 'The proposed message repeats a recent outbound proposition that has already recurred. Choose a genuinely different grounded contribution or composition. If repetition itself is what you intend to communicate, cite an exact prior_sent evidence ID as deliberate_repetition and explain what the repetition is meant to communicate or test now.'
               : (/(?:uncited motif|unsupported partner hypothesis)/i.test(error.message)
               ? 'Keep the cited contribution primary. Do not describe any inherited symbol, route, target, waypoint, district, or place as a known shared destination or otherwise promote an unsupported partner hypothesis into a movement goal. If you retain one, make it subordinate and explicitly uncertain, questioned, tested, transformed, or deliberately repeated.'
               : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.'))));

@@ -1203,7 +1203,7 @@ test('a generic walking-away composition cannot present a recent movement propos
         }
         assert.match(
           request.messages[1].content[0].text,
-          /AUTHORITATIVE PLANNING CORRECTION.*repeats a recent visual proposition/
+          /AUTHORITATIVE PLANNING CORRECTION.*repeats a recent outbound proposition/
         );
         return drawingResponse({
           contributionKind: 'question',
@@ -1235,6 +1235,155 @@ test('a generic walking-away composition cannot present a recent movement propos
   assert.equal(decision.contributionKind, 'question');
   assert.equal(decision.contributionEvidenceId, 'question:0');
   assert.match(decision.drawingPrompt, /uncertain circle/);
+});
+
+test('one repeated local observation remains available as fresh corroboration', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route: routeResponse({
+        observation: 'A tree-lined urban street.',
+        observedFeatures: ['tree-lined urban street']
+      }),
+      drawing: drawingResponse({
+        contributionKind: 'local_observation',
+        contributionEvidenceId: 'local:0',
+        drawingIntent: 'Show the same tree canopy appearing again at this new choice.',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw one dense tree canopy above the locally observed sidewalk.',
+        groundedFeatureEvidenceIds: ['local:0']
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      sentMessages: [{
+        sequence: 5,
+        contributionKind: 'local_observation',
+        contributionSummary: 'New local observation: tree-lined urban street',
+        informationDelta: 'New local observation: tree-lined urban street',
+        intent: 'Show the tree-lined urban street.'
+      }]
+    }
+  }));
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'local_observation');
+  assert.match(decision.drawingPrompt, /tree canopy/);
+});
+
+test('a third copy of the same local observation must adapt or repeat deliberately', async () => {
+  let drawingAttempts = 0;
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      route: routeResponse({
+        observation: 'A tree-lined urban street.',
+        observedFeatures: ['tree-lined urban street']
+      }),
+      drawing(request) {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'local_observation',
+            contributionEvidenceId: 'local:0',
+            drawingIntent: 'Show the same tree-lined urban street again.',
+            messageAction: 'stillness',
+            drawingPrompt: 'Draw the same dense tree canopy above an urban sidewalk.',
+            groundedFeatureEvidenceIds: ['local:0']
+          });
+        }
+        assert.match(
+          request.messages[1].content[0].text,
+          /already recurred.*different grounded contribution.*deliberate_repetition/s
+        );
+        return drawingResponse({
+          contributionKind: 'question',
+          contributionEvidenceId: 'question:0',
+          drawingIntent: 'Ask whether the repeated fork means a choice or uncertainty.',
+          messageAction: 'unclear',
+          drawingPrompt: 'Draw one fork balanced between two uncertain, unchosen branches.',
+          groundedFeatureEvidenceIds: ['question:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+  const repeatedObservation = {
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: tree-lined urban street',
+    informationDelta: 'New local observation: tree-lined urban street',
+    intent: 'Show the tree-lined urban street.'
+  };
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      sentMessages: [
+        { sequence: 5, ...repeatedObservation },
+        { sequence: 7, ...repeatedObservation }
+      ]
+    }
+  }));
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'question');
+  assert.match(decision.drawingPrompt, /uncertain/);
+});
+
+test('a repeatedly unanswered question cannot keep masquerading as a new message', async () => {
+  let drawingAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing() {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'question',
+            contributionEvidenceId: 'question:0',
+            drawingIntent: 'Ask again whether the circle marks a lamp or destination.',
+            messageAction: 'unclear',
+            drawingPrompt: 'Draw the same uncertain circle balanced between a lamp and a distant target.',
+            groundedFeatureEvidenceIds: ['question:0']
+          });
+        }
+        return drawingResponse({
+          contributionKind: 'deliberate_repetition',
+          contributionEvidenceId: 'prior_sent:0',
+          drawingIntent: 'Repeat the unresolved circle question so Theo can recognize that it remains unanswered.',
+          continuityReason: 'The unchanged question is the signal: I still cannot distinguish the two meanings.',
+          messageAction: 'unclear',
+          drawingPrompt: 'Redraw the unresolved circle between two visibly uncertain interpretations.',
+          groundedFeatureEvidenceIds: ['prior_sent:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+  const repeatedQuestion = {
+    contributionKind: 'question',
+    contributionSummary: 'Question I am sending: whether the circle represents a lamp or destination',
+    informationDelta: 'Question I am sending: whether the circle represents a lamp or destination',
+    intent: 'Ask whether the circle represents a lamp or destination.'
+  };
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      sentMessages: [
+        { sequence: 5, ...repeatedQuestion },
+        { sequence: 7, ...repeatedQuestion }
+      ]
+    }
+  }));
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'deliberate_repetition');
+  assert.match(decision.continuityReason, /still cannot distinguish/);
 });
 
 test('an intentional repeated proposition remains available through deliberate repetition', async () => {
