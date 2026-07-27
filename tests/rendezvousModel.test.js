@@ -609,6 +609,29 @@ test('repeated sheet imagery cannot become new evidence or leak into local obser
   assert.deepEqual(decision.observedFeatures, ['storefronts beside mature sidewalk trees']);
 });
 
+test('a local observation drawing cannot use received-sheet imagery as local context', async () => {
+  const receivedLiteral = 'rectangular tiled pavement converging to a vanishing point';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        literalContents: [receivedLiteral]
+      },
+      drawing: drawingResponse({
+        contributionKind: 'local_observation',
+        contributionEvidenceId: 'local:0',
+        groundedFeatureEvidenceIds: ['local:0', 'received:0']
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.deepEqual(decision.drawingGroundedFeatures, ['three repeated stone arches']);
+  assert.doesNotMatch(decision.drawingPrompt, /tiled pavement|vanishing point/i);
+});
+
 test('incidental scenery cannot make a repeated movement proposition support the route', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {
@@ -3433,6 +3456,18 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence('New local observation: pedestrian and vehicle activity along the avenue'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('rectangular tiled pavement converging to a vanishing point'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('subtle shading suggesting depth and distance'),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('New local observation: taxis and other vehicles on the street'),
     false
   );
@@ -3457,6 +3492,23 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     isConcreteLocalEvidence('orange construction barriers beneath dense scaffolding'),
     true
   );
+});
+
+test('generic local context remains private while outbound features require distinctive evidence', () => {
+  const decision = sanitizeRendezvousDecision({
+    ...routeResponse(),
+    observation: 'broad urban street canyon between tall buildings; pedestrian and vehicle activity along the avenue',
+    observedFeatures: [
+      'broad urban street canyon between tall buildings',
+      'pedestrian and vehicle activity along the avenue'
+    ]
+  }, input().options);
+
+  assert.equal(
+    decision.observation,
+    'broad urban street canyon between tall buildings; pedestrian and vehicle activity along the avenue'
+  );
+  assert.deepEqual(decision.observedFeatures, []);
 });
 
 test('a local question must ask about its cited feature, not use it as scenery', () => {

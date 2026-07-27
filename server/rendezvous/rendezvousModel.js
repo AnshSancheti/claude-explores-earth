@@ -110,16 +110,16 @@ function validateCorroborationProvenance(
 }
 
 const LOW_INFORMATION_URBAN_WORDS = new Set([
-  'a', 'active', 'activity', 'an', 'and', 'are', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
+  'a', 'active', 'activity', 'along', 'an', 'and', 'are', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
   'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'canyon', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'central', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
-  'am', 'corridor', 'corridors', 'empty', 'expansive', 'extend', 'extending', 'extends', 'flanked', 'i', 'including', 'intersections', 'into', 'lane', 'lanes', 'lengthy', 'like', 'lined', 'local', 'long',
+  'am', 'between', 'converging', 'corridor', 'corridors', 'depth', 'empty', 'expansive', 'extend', 'extending', 'extends', 'flanked', 'i', 'including', 'intersections', 'into', 'lane', 'lanes', 'lengthy', 'like', 'lined', 'local', 'long',
   'manhattan', 'marked', 'marking', 'markings', 'multiple', 'narrow', 'narrowed', 'narrowing', 'new',
-  'observation', 'of', 'on', 'other', 'pathway', 'pathways', 'pedestrian', 'pedestrians', 'plaza', 'plazas', 'point', 'present', 'promenade', 'promenades', 'public', 'recede', 'recedes', 'receding',
+  'observation', 'of', 'on', 'other', 'pathway', 'pathways', 'pavement', 'pedestrian', 'pedestrians', 'plaza', 'plazas', 'point', 'present', 'promenade', 'promenades', 'public', 'recede', 'recedes', 'receding', 'rectangular',
   'road', 'roads', 'roadway', 'row', 'rows', 'scene', 'several', 'side', 'sides', 'sidewalk', 'sidewalks', 'storefront',
-  'storefronts', 'straight', 'street', 'traffic', 'streets', 'stripe', 'striped', 'stripes',
+  'shading', 'storefronts', 'straight', 'street', 'subtle', 'traffic', 'streets', 'stripe', 'striped', 'stripes',
   'suggest', 'suggesting', 'suggests', 'surrounded', 'tall', 'taxi', 'taxis', 'the', 'urban', 'vehicle',
-  'vehicles', 'vanishing', 'visible', 'walkway', 'walkways', 'white', 'wide', 'widened', 'widening', 'widthy', 'with',
+  'vehicles', 'vanishing', 'visible', 'walkway', 'walkways', 'white', 'wide', 'widened', 'widening', 'widthy', 'with', 'tiled', 'to',
   'toward', 'towards'
 ]);
 
@@ -138,7 +138,7 @@ function isLowInformationUrbanObservation(description) {
   const hasGenericStreetAnchor = words.some(word =>
     [
       'axis', 'building', 'buildings', 'canyon', 'city', 'corridor', 'crossing', 'crosswalk', 'curb', 'intersection',
-      'lane', 'pathway', 'pedestrian', 'pedestrians', 'plaza', 'promenade', 'road', 'sidewalk', 'storefront', 'storefronts',
+      'lane', 'pathway', 'pavement', 'pedestrian', 'pedestrians', 'plaza', 'promenade', 'road', 'shading', 'sidewalk', 'storefront', 'storefronts',
       'street', 'traffic', 'vehicle', 'vehicles'
     ]
       .includes(word)
@@ -891,7 +891,10 @@ export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = 
     .filter(isConcreteLocalEvidence)
     .slice(0, 5);
   const rawObservation = cleanString(raw?.observation, 700);
-  const observation = isConcreteLocalEvidence(rawObservation)
+  const observation = (
+    isConcreteLocalEvidence(rawObservation) ||
+    isLowInformationUrbanObservation(rawObservation)
+  )
     ? rawObservation
     : observedFeatures.join('; ');
   return {
@@ -1789,9 +1792,13 @@ ${JSON.stringify(availableEvidence, null, 2)}`
           limit: 6,
           maxLength: 80
         });
+        const allowedGroundedFeatureEvidenceIds =
+          contributionKind === 'local_observation'
+            ? groundedFeatureEvidenceIds.filter(id => id.startsWith('local:'))
+            : groundedFeatureEvidenceIds;
         const groundedFeatures = [
           citedEvidence?.description,
-          ...groundedFeatureEvidenceIds.map(id =>
+          ...allowedGroundedFeatureEvidenceIds.map(id =>
             availableContributionEvidence.find(item => item.id === id)?.description
           )
         ].filter(Boolean);
