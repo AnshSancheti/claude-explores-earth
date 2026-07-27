@@ -3224,6 +3224,47 @@ test('own-action drawing review permits an intrinsically ambiguous retrospective
   assert.equal(requests.length, 2);
 });
 
+test('response review rejects route guidance that contradicts explicit uncertainty', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      blindRead: {
+        literalContents: ['a large arrow rises from a sheet toward the upper-left'],
+        primarySubject: 'a dominant up-left arrow',
+        likelyMessage: 'The viewer should move or look toward the upper-left.',
+        dominantAction: 'transition',
+        frameOfReference: 'recipient',
+        frameBasis: 'A standalone arrow projects outward as the viewer action.',
+        communicationFunction: 'directive',
+        movementCues: ['large directional arrow'],
+        stillnessCues: [],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    contributionKind: 'response',
+    contributionSummary:
+      'My response to the received drawing: New urban-movement cue from sheet; does not establish a concrete local route to copy.',
+    drawingIntent: 'Acknowledge the cue while preserving uncertainty about its meaning.',
+    informationDelta:
+      'New urban-movement cue from sheet; does not establish a concrete local route to copy.',
+    messageAction: 'unclear',
+    drawingPrompt: 'Draw a sheet with a dominant arrow pointing upper-left.',
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /route guidance.*explicitly withholds route certainty/);
+  assert.match(review.revisionPrompt, /Remove arrows, paths/);
+  assert.match(review.revisionPrompt, /unresolved relationship itself visually primary/);
+  assert.equal(requests.length, 1);
+});
+
 test('acknowledgement drawing review rejects a replay that reads as a movement report', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {

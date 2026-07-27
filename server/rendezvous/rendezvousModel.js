@@ -243,6 +243,11 @@ function routeCommandCues(value) {
   );
 }
 
+function responseWithholdsRouteCertainty(value) {
+  return /\b(?:does not|doesn't|cannot|can't|no)\b[^.!;]{0,100}\b(?:cue|direction|path|route)\b/i
+    .test(cleanString(value, 1200));
+}
+
 function historicalSheetLiteralContents(privateMemory, currentSequence) {
   return (privateMemory?.receivedSheets || [])
     .filter(sheet => Number(sheet?.sequence) !== Number(currentSequence))
@@ -1557,8 +1562,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         ).filter(cue => !routeCommandCues(citedEvidence?.description).includes(cue));
         const responseWithholdsRoute =
           candidateDrawingPlan.contributionKind === 'response' &&
-          /\b(?:does not|doesn't|cannot|can't|no)\b[^.!;]{0,100}\b(?:cue|direction|path|route)\b/i
-            .test(candidateDrawingPlan.contributionSummary);
+          responseWithholdsRouteCertainty(candidateDrawingPlan.contributionSummary);
         if (responseWithholdsRoute && unsupportedRouteCues.length > 0) {
           throw new Error(
             'Rendezvous response drawing contradicted its stated route uncertainty with directional imagery'
@@ -2019,6 +2023,22 @@ Return only JSON:
         .test(blindActionDescription) ||
       /\b(?:command|instruction|invitation|invite|cue)\b[^.!;]{0,40}\b(?:follow|go|head|move|proceed|travel|walk)\b/i
         .test(blindActionDescription);
+    if (
+      contributionKind === 'response' &&
+      responseWithholdsRouteCertainty(contributionSummary) &&
+      (
+        ['movement', 'transition'].includes(blindRead.dominantAction) ||
+        ['directive', 'request'].includes(blindRead.communicationFunction) ||
+        routeCommandCues(blindActionDescription).length > 0
+      )
+    ) {
+      return {
+        accepted: false,
+        assessment: `Blind recipient saw route guidance in a response that explicitly withholds route certainty: ${blindRead.likelyMessage}`,
+        revisionPrompt: 'Remove arrows, paths, vanishing-point movement, and directional commands. Make the non-confirmation, mismatch, interruption, or unresolved relationship itself visually primary, choosing your own wordless composition rather than issuing a route cue.',
+        blindRead
+      };
+    }
     if (
       contributionKind === 'own_action' &&
       (
