@@ -1058,6 +1058,9 @@ function copiesSheetRoute(...descriptions) {
   const crossClauseMatchedPartnerRoute =
     /\b(?:latest|newest|new)\s+sheets?\b[^.!;]{0,220}\b(?:alley|axis|corridor|lane|passage|perspective|route|street|vanishing point)\b[^.!]*[.!;][^.!;]{0,260}\b(?:environment|surroundings|street|route)\b[^.!;]{0,100}\b(?:correspond|fit|match|resembl)\w*\b[^.!]*[.!;][^.!;]{0,260}\b(?:advanc|continu|head|mov|proceed|progress)\w*\b[^.!;]{0,180}\b(?:could|may|might)\b[^.!;]{0,100}\b(?:friend|partner)(?:'s|’s)?\b[^.!;]{0,100}\b(?:path|route|stopping point|trail)\b/i
       .test(positiveText);
+  const crossClauseRemoteObstacle =
+    /\b(?:latest|newest|new)(?:\s+(?:environmental|private|visual))?\s+(?:drawing|evidence|reading|sheet)\b[^.!;]{0,220}\b(?:barrier|block(?:age|ed)?|closure|cones?|obstacle|restricted)\b[^.!]*[.!;][^.!;]{0,300}\b(?:avoid|detour|redirect|rerout|turn away|work around)\w*\b/i
+      .test(positiveText);
   const attributedSharedPush =
     /\b(?:arrows?|cues?|drawings?|sheets?|signals?|sketch(?:es)?|visuals?)\b[^.!;]{0,180}\bshared\s+(?:cue|invitation|push|signal)\b[^.!;]{0,60}\b(?:advanc|continu|head|move|press|proceed)\w*\b/i
       .test(positiveText);
@@ -1067,6 +1070,7 @@ function copiesSheetRoute(...descriptions) {
     crossClauseQualifiedReading ||
     crossClauseSheetRouteContinuation ||
     crossClauseMatchedPartnerRoute ||
+    crossClauseRemoteObstacle ||
     attributedSharedPush ||
     statements.some(statement => {
     if (/\b(?:intercept|opposite|counter|cross(?:ing)? path)\b/i.test(statement)) return false;
@@ -1229,19 +1233,17 @@ export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMe
     ? (privateMemory?.receivedSheets || []).slice(-6)
       .filter(sheet => ['report', 'shared_proposal', 'unclear'].includes(sheet?.communicationFunction))
     : [];
-  const receivedVisualDescription = sheet => cleanString(
-    [
-      sheet?.primarySubject,
-      ...(Array.isArray(sheet?.literalContents) ? sheet.literalContents : []),
-      sheet?.interpretation
-    ].filter(Boolean).join(' '),
-    3000
-  );
+  const receivedVisualDescriptions = sheet => cleanStringList([
+    sheet?.primarySubject,
+    ...(Array.isArray(sheet?.literalContents) ? sheet.literalContents : []),
+    sheet?.interpretation
+  ], { limit: 8, maxLength: 700 });
   const matchingReceivedObservations = recentReceivedObservations
     .filter(sheet => {
-      const receivedVisual = receivedVisualDescription(sheet);
-      return currentEvidence && receivedVisual &&
-        visualDescriptionSimilarity(currentEvidence, receivedVisual) >= 0.72;
+      return currentEvidence && receivedVisualDescriptions(sheet)
+        .some(description =>
+          visualDescriptionSimilarity(currentEvidence, description) >= 0.72
+        );
     });
   const latestMatchingReceived = matchingReceivedObservations.at(-1);
   const latestRelatedSent = latestMatchingReceived

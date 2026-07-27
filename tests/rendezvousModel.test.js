@@ -1545,6 +1545,36 @@ test('a matching corridor cannot turn a sheet report into the partner route', as
   assert.doesNotMatch(decision.reasoning, /could lead toward my partner/i);
 });
 
+test('a remote sheet obstacle cannot become a local detour', async () => {
+  const copiedReasoning = 'The newest evidence shows traffic cones across a crosswalk, indicating a temporary barrier. To stay in a promising public route while avoiding reproducing the depicted blocked path, I’ll reroute around the barrier by heading northeast toward a plausible open corridor.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        literalContents: ['five orange traffic cones across a pedestrian crosswalk'],
+        primarySubject: 'five orange traffic cones blocking a crosswalk',
+        communicationFunction: 'shared_proposal',
+        frameOfReference: 'shared',
+        sheetInterpretation: 'A temporary barrier blocks the sender’s street.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /reroute around the barrier|newest evidence shows/i);
+});
+
 test('a depicted sheet axis cannot align with movement in the next clause', async () => {
   const copiedReasoning = 'The newest sheet depicts a crowded city crosswalk and a broad public axis; moving east along the main street aligns with continuing along the visible public corridor without copying a drawn route as a fixed destination. The local surroundings show a busy crosswalk and urban street activity, supporting progression along the established axis toward a distant focal point rather than detouring into a drawn path.';
   const service = new RendezvousModelService({
@@ -2651,6 +2681,71 @@ test('an echoed partner observation counts toward shared channel repetition', as
         primarySubject: 'Three repeated stone arches',
         literalContents: ['three masonry arches in a row'],
         interpretation: 'A recognizable stone arcade'
+      }]
+    }
+  }));
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.contributionKind, 'question');
+});
+
+test('a matching received subject is not diluted by unrelated sheet details', async () => {
+  let drawingAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route: routeResponse({
+        observation: 'Five orange traffic cones across a street near a pedestrian crosswalk.',
+        observedFeatures: ['five orange traffic cones across a street near a pedestrian crosswalk']
+      }),
+      drawing() {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'local_observation',
+            contributionEvidenceId: 'local:0',
+            drawingIntent: 'Show five orange traffic cones across a street near a crosswalk.',
+            messageAction: 'stillness',
+            drawingPrompt: 'Draw five orange traffic cones blocking a street beside a crosswalk.',
+            groundedFeatureEvidenceIds: ['local:0']
+          });
+        }
+        return drawingResponse({
+          contributionKind: 'question',
+          contributionEvidenceId: 'question:0',
+          drawingIntent: 'Ask whether the recurring circle is a lamp or destination.',
+          messageAction: 'unclear',
+          drawingPrompt: 'Draw one uncertain circle between a lamp and a distant place.',
+          groundedFeatureEvidenceIds: ['question:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+  const coneObservation = {
+    contributionKind: 'local_observation',
+    contributionSummary:
+      'New local observation: five orange traffic cones across a street near a pedestrian crosswalk',
+    informationDelta:
+      'New local observation: five orange traffic cones across a street near a pedestrian crosswalk',
+    intent: 'Show five orange traffic cones across a street near a pedestrian crosswalk.'
+  };
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      sentMessages: [{ sequence: 16, ...coneObservation }],
+      receivedSheets: [{
+        sequence: 15,
+        communicationFunction: 'report',
+        primarySubject: 'five orange traffic cones across a street near a pedestrian crosswalk',
+        literalContents: [
+          'a wide street between rows of buildings',
+          'leafless trees and lamps along both sidewalks',
+          'five orange traffic cones across a street near a pedestrian crosswalk',
+          'a distant vanishing point under a pale sky'
+        ],
+        interpretation:
+          'A temporary street blockage within a calm urban corridor, with several possible reasons for pausing.'
       }]
     }
   }));
