@@ -257,6 +257,38 @@ test('a branch separates interpretation, route choice, and visual communication'
   assert.doesNotMatch(serialized, /partnerPadText|ownPadText|distanceToFriend|-?\d+\.\d{4,}/);
 });
 
+test('an agent can turn concrete local evidence into its own visual question', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      drawing: drawingResponse({
+        contributionKind: 'question',
+        contributionEvidenceId: 'question_local:0',
+        drawingIntent: 'Ask whether Theo recognizes the relationship among these repeated arches.',
+        messageAction: 'unclear',
+        drawingPrompt: 'Draw three stone arches with two equally weighted possible visual relationships and unresolved uncertainty between them.',
+        groundedFeatureEvidenceIds: ['question_local:0']
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.contributionKind, 'question');
+  assert.equal(decision.contributionEvidenceId, 'question_local:0');
+  assert.equal(
+    decision.contributionSummary,
+    'Question I am sending about this local evidence: three repeated stone arches'
+  );
+  assert.match(decision.drawingIntent, /whether Theo recognizes/);
+  const drawingRequest = requests.find(request =>
+    /currently hold the one physical sheet/.test(request.messages[0].content)
+  );
+  assert.match(drawingRequest.messages[1].content[0].text, /"id": "question_local:0"/);
+  assert.match(drawingRequest.messages[1].content[0].text, /"kind": "question"/);
+});
+
 test('drawing planner corrects a kind and evidence mismatch without changing the intended act', async () => {
   const requests = [];
   let drawingAttempts = 0;

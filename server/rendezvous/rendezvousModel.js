@@ -462,24 +462,31 @@ function describeChosenAction(routeDecision, options) {
 function buildContributionEvidence({ routeDecision, perception, privateMemory, options }) {
   const catalog = [];
   const routeLabels = (Array.isArray(options) ? options : []).map(option => option?.label);
-  const add = (prefix, values, { concreteLocalOnly = false } = {}) => {
+  const add = (prefix, values, { concreteLocalOnly = false, kind = '' } = {}) => {
     cleanStringList(values, { limit: 6, maxLength: 220 })
       .map(description => sanitizeOutboundPlaceNames(description, routeLabels, 220))
       .filter(description => !concreteLocalOnly || isConcreteLocalEvidence(description))
       .filter(Boolean)
       .forEach((description, index) => {
-      catalog.push({ id: `${prefix}:${index}`, description });
+      catalog.push({ id: `${prefix}:${index}`, kind, description });
     });
   };
-  add('local', routeDecision.observedFeatures, { concreteLocalOnly: true });
-  add('action', [describeChosenAction(routeDecision, options)]);
-  add('received', perception.literalContents);
-  add('response', perception.evidenceDelta.informationWorthSending);
-  add('question', perception.evidenceDelta.unresolvedQuestions);
-  add('contradiction', perception.evidenceDelta.contradictions);
+  add('local', routeDecision.observedFeatures, {
+    concreteLocalOnly: true,
+    kind: 'local_observation'
+  });
+  add('question_local', routeDecision.observedFeatures, {
+    concreteLocalOnly: true,
+    kind: 'question'
+  });
+  add('action', [describeChosenAction(routeDecision, options)], { kind: 'own_action' });
+  add('received', perception.literalContents, { kind: 'acknowledgement' });
+  add('response', perception.evidenceDelta.informationWorthSending, { kind: 'response' });
+  add('question', perception.evidenceDelta.unresolvedQuestions, { kind: 'question' });
+  add('contradiction', perception.evidenceDelta.contradictions, { kind: 'correction' });
   add('prior_sent', (privateMemory?.sentMessages || []).slice(-6).map(message =>
     message.informationDelta || message.intent
-  ));
+  ), { kind: 'deliberate_repetition' });
   return catalog;
 }
 
@@ -488,7 +495,7 @@ function validContributionEvidencePrefix(kind, evidenceId) {
   if (kind === 'local_observation') return prefix === 'local';
   if (kind === 'own_action') return prefix === 'action';
   if (kind === 'response') return prefix === 'response';
-  if (kind === 'question') return prefix === 'question';
+  if (kind === 'question') return prefix === 'question' || prefix === 'question_local';
   if (kind === 'correction') return prefix === 'contradiction';
   if (kind === 'acknowledgement') return prefix === 'received';
   if (kind === 'deliberate_repetition') return prefix === 'prior_sent' || prefix === 'received';
@@ -500,19 +507,23 @@ function contributionKindForEvidenceId(evidenceId) {
   if (prefix === 'local') return 'local_observation';
   if (prefix === 'action') return 'own_action';
   if (prefix === 'response') return 'response';
-  if (prefix === 'question') return 'question';
+  if (prefix === 'question' || prefix === 'question_local') return 'question';
   if (prefix === 'contradiction') return 'correction';
   if (prefix === 'received') return 'acknowledgement';
   if (prefix === 'prior_sent') return 'deliberate_repetition';
   return null;
 }
 
-function authoritativeContributionSummary(kind, description) {
+function authoritativeContributionSummary(kind, description, evidenceId = '') {
   const evidence = cleanString(description, 300);
   if (kind === 'local_observation') return `New local observation: ${evidence}`;
   if (kind === 'own_action') return `My current chosen action: ${evidence}`;
   if (kind === 'response') return `My response to the received drawing: ${evidence}`;
-  if (kind === 'question') return `Question I am sending: ${evidence}`;
+  if (kind === 'question') {
+    return String(evidenceId).startsWith('question_local:')
+      ? `Question I am sending about this local evidence: ${evidence}`
+      : `Question I am sending: ${evidence}`;
+  }
   if (kind === 'correction') return `Correction I am sending: ${evidence}`;
   if (kind === 'acknowledgement') {
     return `Acknowledging received visual evidence without claiming it as my own: ${evidence}`;
@@ -1432,6 +1443,8 @@ Decide what wordless drawing would be most useful to send now. You may communica
 
 First identify your outbound contribution: what this reply contributes from your own observation, chosen action, response to the received drawing, question, correction, acknowledgement, or deliberate repetition. Cite exactly one evidence ID from the supplied catalog. The cited evidence becomes the authoritative information delta; do not restate or enlarge it as a separate claim. A response evidence item is your own private synthesis of what is worth saying back; it is not an instruction you must follow. When the received drawing is explicitly a question, answer it, clarify it, correct it, visibly acknowledge that you cannot answer it, or deliberately leave it unresolved. Do not evade it with an unrelated observational postcard when response evidence is available. This requirement preserves a real exchange without prescribing what you should believe or how you should search.
 
+The catalog may expose the same concrete local fact once as "local:*" and once as "question_local:*". Choose "question_local:*" only when you want to author an unresolved visual question grounded in that real local evidence. You decide what relationship, uncertainty, or comparison to ask about in the drawing; the evidence ID only grounds its subject.
+
 Ordinary street substrate by itself is not a useful locating clue. Bare crosswalks, lanes, curbs, asphalt, traffic, sidewalks, or generic city buildings are omitted from the evidence catalog unless the observation also contains a distinctive structure, object, spatial relationship, or atmosphere. You may still use those ordinary elements as supporting context, transform a recurring one into a question or symbol, or deliberately repeat it when repetition itself is what you mean.
 
 Compose each handoff from a conceptually blank page. Make the cited contribution the largest, darkest, or otherwise unmistakable primary subject; prior visual language is optional supporting vocabulary, not a layout template. When the contribution is one simple observation or action, prefer one coherent composition. Use multiple panels only when the cited contribution itself needs a temporal, spatial, or comparative relationship; continuity alone does not justify copying a multi-panel itinerary. A received-sheet or prior-sent motif may be retained as context, acknowledgement, or deliberate repetition, but never relabel it as a new local observation. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and the cited evidence is visually dominant over that context. Repetition does not make a belief more certain. If you are asking your friend to clarify something, make the uncertainty, choice, or missing relationship visibly legible instead of drawing a confident route. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
@@ -1552,7 +1565,8 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         const contributionKind = requestedContributionKind || evidenceContributionKind;
         const contributionSummary = authoritativeContributionSummary(
           contributionKind,
-          citedEvidence?.description
+          citedEvidence?.description,
+          contributionEvidenceId
         );
         const groundedFeatureEvidenceIds = cleanStringList(parsed?.groundedFeatureEvidenceIds, {
           limit: 6,
