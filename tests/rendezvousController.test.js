@@ -1680,7 +1680,7 @@ test('drawing cleanup removes only raster files no longer referenced by durable 
   }
 });
 
-test('starting a successor run removes UUID-named drawing directories from archived runs', async () => {
+test('starting a successor run preserves archived drawings and removes only orphaned run directories', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-archive-drawing-cleanup-test-'));
   try {
     const controller = new RendezvousController({
@@ -1695,13 +1695,18 @@ test('starting a successor run removes UUID-named drawing directories from archi
     const archivedDir = path.join(tempDir, 'rendezvous-drawings', archivedRunId);
     await fsp.mkdir(archivedDir, { recursive: true });
     await fsp.writeFile(path.join(archivedDir, 'old.webp'), 'archived raster');
+    const orphanedRunId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const orphanedDir = path.join(tempDir, 'rendezvous-drawings', orphanedRunId);
+    await fsp.mkdir(orphanedDir, { recursive: true });
+    await fsp.writeFile(path.join(orphanedDir, 'orphaned.webp'), 'orphaned raster');
     const nonRunDir = path.join(tempDir, 'rendezvous-drawings', 'operator-assets');
     await fsp.mkdir(nonRunDir, { recursive: true });
     await fsp.writeFile(path.join(nonRunDir, 'keep.webp'), 'operator raster');
 
     await controller.createRun();
 
-    await assert.rejects(fsp.access(archivedDir), { code: 'ENOENT' });
+    assert.equal(await fsp.readFile(path.join(archivedDir, 'old.webp'), 'utf8'), 'archived raster');
+    await assert.rejects(fsp.access(orphanedDir), { code: 'ENOENT' });
     assert.equal(await fsp.readFile(path.join(nonRunDir, 'keep.webp'), 'utf8'), 'operator raster');
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });

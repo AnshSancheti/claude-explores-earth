@@ -1480,18 +1480,29 @@ export class RendezvousController {
     }
 
     const activeRunId = String(this.state.runId || '');
-    const archived = entries.filter(entry =>
+    const inactiveRunDirectories = entries.filter(entry =>
       entry.isDirectory() &&
       entry.name !== activeRunId &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(entry.name)
     );
     let removed = 0;
-    for (const entry of archived) {
+    for (const entry of inactiveRunDirectories) {
       try {
+        const archivePath = path.join(
+          this.dataDir,
+          'rendezvous-runs',
+          `${entry.name}.json`
+        );
+        try {
+          await fsp.access(archivePath);
+          continue;
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
         await fsp.rm(path.join(root, entry.name), { recursive: true, force: true });
         removed += 1;
       } catch (error) {
-        this.logger.warn?.(`Could not remove archived rendezvous drawings ${entry.name}: ${error.message}`);
+        this.logger.warn?.(`Could not inspect or remove inactive rendezvous drawings ${entry.name}: ${error.message}`);
       }
     }
     return removed;
