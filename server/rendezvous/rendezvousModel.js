@@ -326,6 +326,12 @@ export function isCueDependentSearchPlan(...descriptions) {
   const partnerCuePattern = /\b(?:authorization|cue|permission|signal from (?:ada|theo|my friend|the friend|my partner|the partner)|(?:ada|theo|my friend|the friend|my partner|the partner)(?:'s|’s)? (?:authorization|cue|permission|signal)|(?:ada|theo|my friend|the friend|my partner|the partner) (?:to )?(?:authoriz\w*|cu\w*|instruct\w*|signal\w*))\b/i;
   if (!partnerCuePattern.test(positiveText)) return false;
   if (waitLanguage.test(positiveText)) return true;
+  if (
+    /\b(?:ada|theo|my friend|the friend|my partner|the partner)(?:'s|’s)?\s+(?:future|later|next)?\s*(?:cue|signal)\b/i
+      .test(positiveText)
+  ) {
+    return true;
+  }
   return /\b(?:advance|move|proceed|resume)\w*\b[^.!;]{0,120}\b(?:after|once|until|when)\b/i
     .test(positiveText);
 }
@@ -990,7 +996,7 @@ ${recentFieldNotes}`
           throw new Error('Rendezvous model chose waiting after local patience expired');
         }
         const cueDependentSearchPlan = isCueDependentSearchPlan(
-          parsed?.action === 'wait' ? parsed?.reasoning : '',
+          parsed?.reasoning,
           parsed?.memoryUpdate?.currentPlan
         );
         routeDecision = sanitizeRendezvousDecision(parsed, options, { allowWait });

@@ -1558,7 +1558,7 @@ test('repeated partner-cue movement is normalized to the selected local route', 
           selectedIndex: 1,
           reasoning: 'The northern opening has three visible stone arches, so I will move when Ada signals readiness.',
           memoryUpdate: {
-            currentPlan: 'Advance along the northern route when Ada gives the next cue.'
+            currentPlan: 'Use the locally visible stone arches and traffic light, then reassess.'
           }
         });
       }
@@ -1902,6 +1902,12 @@ test('cue-dependency detection ignores explicit rejection of permission seeking'
   ), true);
   assert.equal(isCueDependentSearchPlan(
     'I do not wait for Ada to cue me; I move using my own local evidence.'
+  ), false);
+  assert.equal(isCueDependentSearchPlan(
+    'I move using local evidence while preserving flexibility for Theo’s next cue.'
+  ), true);
+  assert.equal(isCueDependentSearchPlan(
+    'I move using local evidence and treat Theo’s next drawing as evidence, not a cue.'
   ), false);
   assert.equal(isCueDependentSearchPlan(
     'I wait one turn beside the singular clock because it is easy to recognize.'
