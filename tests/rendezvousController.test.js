@@ -1354,6 +1354,69 @@ test('a durable retry cannot waive an own-action sender-frame failure', async ()
   }
 });
 
+test('a repeated own action cannot waive sender framing at the terminal retry', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-repeated-frame-test-'));
+  const agentModel = {
+    async reviewDrawing() {
+      return {
+        accepted: false,
+        assessment: 'The repeated arrow still reads as a command to the recipient.',
+        revisionPrompt: 'Show the sender reporting completed motion.',
+        blindRead: {
+          dominantAction: 'movement',
+          frameOfReference: 'recipient',
+          communicationFunction: 'deliberate_repetition',
+          readableText: false,
+          likelyMessage: 'A forward cue urges the viewer to keep moving.'
+        }
+      };
+    }
+  };
+  const imageModel = new FakeImageModel();
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel,
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'repeated-sender-frame-message',
+      agentId: 'ada',
+      turn: 4,
+      contributionKind: 'deliberate_repetition',
+      contributionSummary:
+        'Deliberately repeating existing visual evidence without treating it as new: My current chosen action: I chose to move northeast along the selected public route.',
+      informationDelta:
+        'Deliberately repeating existing visual evidence without treating it as new: My current chosen action: I chose to move northeast along the selected public route.',
+      continuityReason: 'The unchanged movement report is useful to repeat.',
+      messageAction: 'movement',
+      drawingIntent: 'Repeat my own movement report.',
+      drawingPrompt: 'Draw my movement northeast.',
+      groundedFeatures: [
+        'My current chosen action: I chose to move northeast along the selected public route.',
+        'a broad avenue toward a distant vanishing point',
+        'a steel bridge visible to the left'
+      ]
+    });
+    controller.state.scratchpad.pendingMessage.attempts = 6;
+    controller.state.scratchpad.pendingMessage.totalAttempts = 6;
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(controller.state.scratchpad.currentMessage, null);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /command to the recipient/);
+    assert.deepEqual(imageModel.calls[1].groundedFeatures, ['a steel bridge visible to the left']);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a repeatedly unrenderable action is replanned without changing the run or route', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-replan-test-'));
   const replans = [];

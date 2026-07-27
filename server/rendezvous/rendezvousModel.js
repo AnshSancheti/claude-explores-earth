@@ -303,6 +303,16 @@ export function deliberateRepetitionHasPurpose(message) {
       .test(reason);
 }
 
+export function isOwnActionContribution(message) {
+  return message?.contributionKind === 'own_action' ||
+    (
+      message?.contributionKind === 'deliberate_repetition' &&
+      /\bmy current chosen action\b/i.test(
+        message?.contributionSummary || message?.informationDelta || ''
+      )
+    );
+}
+
 function questionContrastsStillnessAndMovement(value) {
   const text = cleanString(value, 1200);
   return /\b(?:hold|pause|remain|stay|still|stop|wait)\w*\b/i.test(text) &&
@@ -2315,12 +2325,11 @@ Return only JSON:
         .test(blindActionDescription) ||
       /\b(?:command|instruction|invitation|invite|cue)\b[^.!;]{0,40}\b(?:follow|go|head|move|proceed|travel|walk)\b/i
         .test(blindActionDescription);
-    const reportsOwnAction =
-      contributionKind === 'own_action' ||
-      (
-        contributionKind === 'deliberate_repetition' &&
-        /\bmy current chosen action\b/i.test(contributionSummary)
-      );
+    const reportsOwnAction = isOwnActionContribution({
+      contributionKind,
+      contributionSummary,
+      informationDelta
+    });
     if (
       contributionKind === 'response' &&
       responseWithholdsRouteCertainty(contributionSummary) &&

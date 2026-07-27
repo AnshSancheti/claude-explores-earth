@@ -6,6 +6,7 @@ import { calculateBearing } from '../utils/geoUtils.js';
 import {
   deliberateRepetitionHasPurpose,
   isConcreteLocalEvidence,
+  isOwnActionContribution,
   localQuestionPreservesCitedSubject,
   questionAlternativesVisible,
   RendezvousModelService,
@@ -93,7 +94,8 @@ function compatibleRevisionFeatures(
   drawingPrompt,
   groundedFeatures,
   messageAction,
-  contributionKind = ''
+  contributionKind = '',
+  contributionSummary = ''
 ) {
   if (!String(drawingPrompt || '').startsWith(RENDER_REVISION_MARKER)) return groundedFeatures;
   const explicitlyRemoved = ['arrow', 'barrier', 'figure', 'line', 'motion', 'path', 'route', 'star']
@@ -103,7 +105,10 @@ function compatibleRevisionFeatures(
     : messageAction === 'movement'
       ? /\b(?:halt|pause|remain|still|stop|wait)\b/i
       : null;
-  const senderFrameConflict = contributionKind === 'own_action'
+  const senderFrameConflict = isOwnActionContribution({
+    contributionKind,
+    contributionSummary
+  })
     ? /\b(?:ahead|avenue|continuation|fork|path|route|toward|vanishing)\b/i
     : null;
   return (Array.isArray(groundedFeatures) ? groundedFeatures : [])
@@ -118,7 +123,7 @@ function compatibleRevisionFeatures(
 function canAcceptRecipientLegibleRetry(review, pending, attemptNumber) {
   const blindRead = review?.blindRead;
   if (
-    pending?.contributionKind === 'own_action' &&
+    isOwnActionContribution(pending) &&
     blindRead?.frameOfReference !== 'sender'
   ) {
     return false;
@@ -1840,7 +1845,8 @@ export class RendezvousController {
             pending.drawingPrompt,
             pending.groundedFeatures,
             pending.messageAction,
-            pending.contributionKind
+            pending.contributionKind,
+            pending.contributionSummary
           )
         });
         let review = typeof this.agentModel.reviewDrawing === 'function'
@@ -1876,7 +1882,8 @@ export class RendezvousController {
               revisionPrompt,
               pending.groundedFeatures,
               pending.messageAction,
-              pending.contributionKind
+              pending.contributionKind,
+              pending.contributionSummary
             )
           });
           renderAttempts += 1;
