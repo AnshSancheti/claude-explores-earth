@@ -110,13 +110,13 @@ function validateCorroborationProvenance(
 }
 
 const LOW_INFORMATION_URBAN_WORDS = new Set([
-  'a', 'active', 'activity', 'adjacent', 'along', 'an', 'and', 'are', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
+  'a', 'active', 'activity', 'adjacent', 'along', 'an', 'and', 'are', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'boulevard', 'building', 'buildings', 'car',
   'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'canyon', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'central', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
-  'am', 'between', 'converging', 'corridor', 'corridors', 'dense', 'depth', 'distinct', 'empty', 'expansive', 'extend', 'extending', 'extends', 'flanked', 'i', 'including', 'intersections', 'into', 'lane', 'lanes', 'large', 'lengthy', 'like', 'lined', 'local', 'long',
+  'am', 'between', 'converging', 'corridor', 'corridors', 'dense', 'depth', 'distinct', 'empty', 'expansive', 'extend', 'extending', 'extends', 'flanked', 'i', 'including', 'intersections', 'into', 'lane', 'lanes', 'large', 'lengthy', 'like', 'lined', 'local', 'long', 'm',
   'manhattan', 'marked', 'marking', 'markings', 'modern', 'multiple', 'narrow', 'narrowed', 'narrowing', 'near', 'nearby', 'new',
   'observation', 'of', 'on', 'other', 'pathway', 'pathways', 'pavement', 'pedestrian', 'pedestrians', 'plaza', 'plazas', 'point', 'present', 'promenade', 'promenades', 'public', 'recede', 'recedes', 'receding', 'rectangular',
-  'prominent', 'road', 'roads', 'roadway', 'row', 'rows', 'scene', 'several', 'side', 'sides', 'sidewalk', 'sidewalks', 'small', 'storefront',
+  'prominent', 'road', 'roads', 'roadway', 'roadways', 'row', 'rows', 'scene', 'several', 'side', 'sides', 'sidewalk', 'sidewalks', 'small', 'storefront',
   'shading', 'storefronts', 'straight', 'street', 'subtle', 'traffic', 'streets', 'stripe', 'striped', 'stripes',
   'suggest', 'suggesting', 'suggests', 'surrounded', 'tall', 'taxi', 'taxis', 'the', 'urban', 'vehicle',
   'vehicles', 'vanishing', 'visible', 'walkway', 'walkways', 'white', 'wide', 'widened', 'widening', 'widthy', 'with', 'tiled', 'to',
@@ -137,8 +137,8 @@ function isLowInformationUrbanObservation(description) {
   }
   const hasGenericStreetAnchor = words.some(word =>
     [
-      'axis', 'building', 'buildings', 'canyon', 'city', 'corridor', 'crossing', 'crosswalk', 'curb', 'intersection',
-      'lane', 'pathway', 'pavement', 'pedestrian', 'pedestrians', 'plaza', 'promenade', 'road', 'shading', 'sidewalk', 'storefront', 'storefronts',
+      'avenue', 'axis', 'boulevard', 'building', 'buildings', 'canyon', 'city', 'corridor', 'crossing', 'crosswalk', 'curb', 'intersection',
+      'lane', 'pathway', 'pavement', 'pedestrian', 'pedestrians', 'plaza', 'promenade', 'road', 'roadway', 'roadways', 'shading', 'sidewalk', 'storefront', 'storefronts',
       'street', 'traffic', 'vehicle', 'vehicles'
     ]
       .includes(word)

@@ -3589,6 +3589,18 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence('New local observation: I’m on a broad urban avenue'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('New local observation: broad city boulevard and roadway'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('New local observation: river visible beside a broad urban boulevard'),
+    true
+  );
+  assert.equal(
     isConcreteLocalEvidence('New local observation: No visible storefronts blocking the way'),
     false
   );
