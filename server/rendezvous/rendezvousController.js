@@ -1284,13 +1284,6 @@ export class RendezvousController {
                 interpretation: decision.sheetInterpretation,
                 confidence: decision.sheetConfidence,
                 perception: decision.sheetPerception,
-                action: modelFallbackCause ? null : decision.action,
-                reasoning: modelFallbackCause ? '' : decision.reasoning,
-                observation: modelFallbackCause ? '' : decision.observation,
-                currentPlan: modelFallbackCause
-                  ? ''
-                  : decision.memoryUpdate?.currentPlan,
-                planAssessment: decision.reconciliation?.planAssessment,
                 recordedAt: new Date().toISOString()
               }
             );
@@ -1379,6 +1372,39 @@ export class RendezvousController {
             selected = !requested?.visited
               ? requested
               : decisionPool.find(candidate => !candidate.visited) || requested;
+          }
+          if (
+            !modelFallbackCause &&
+            scratchpad.currentMessage?.sequence &&
+            scratchpad.currentMessage.to === agentId &&
+            decision.sheetInterpretation
+          ) {
+            const executedAction = deliberateWait
+              ? 'wait'
+              : mode === 'retrace'
+                ? 'retrace'
+                : selected
+                  ? 'move'
+                  : null;
+            this.state.scratchpad = recordRasterScratchpadReceipt(
+              this.state.scratchpad,
+              {
+                sequence: scratchpad.currentMessage.sequence,
+                recipientId: agentId,
+                turn: this.state.turn,
+                interpretation: decision.sheetInterpretation,
+                confidence: decision.sheetConfidence,
+                action: executedAction,
+                reasoning: decisionReason,
+                observation: decision.observation,
+                currentPlan: decision.memoryUpdate?.currentPlan,
+                planAssessment: decision.reconciliation?.planAssessment,
+                recordedAt: new Date().toISOString()
+              }
+            );
+            scratchpad = normalizeRasterScratchpad(this.state.scratchpad, {
+              turn: this.state.turn
+            });
           }
           if (decision.drawingPrompt) {
             const pendingId = randomUUID();

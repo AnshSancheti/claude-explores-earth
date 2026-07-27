@@ -568,9 +568,17 @@ test('repeated same-branch waiting yields to movement while preserving the autho
       logger: { warn() {}, error() {} }
     });
     await controller.createRun();
+    controller.state.scratchpad.owner = 'theo';
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'incoming-patience-sheet',
+      agentId: 'theo',
+      turn: 0,
+      drawingIntent: 'Show Ada a possible landmark.',
+      drawingPrompt: 'A stone arch with one bright circle beneath it.'
+    });
+    await controller.resumePendingDrawing();
     controller.state.status = 'running';
     controller.running = true;
-    controller.state.scratchpad.owner = 'ada';
     controller.state.agents.ada.consecutiveWaitDecisions = 2;
 
     await controller.tick();
@@ -585,6 +593,10 @@ test('repeated same-branch waiting yields to movement while preserving the autho
     assert.ok(controller.state.scratchpad.pendingMessage);
     assert.match(controller.state.scratchpad.pendingMessage.drawingIntent, /remaining here/);
     assert.ok(controller.state.eventLog.some(event => event.type === 'wait_patience_expired'));
+    const receipt = controller.state.scratchpad.messageAudit[0].receipt;
+    assert.equal(receipt.recipientId, 'ada');
+    assert.equal(receipt.action, 'move');
+    assert.match(receipt.reasoning, /learned nothing new by holding this corner/i);
     await controller.resumePendingDrawing();
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
@@ -702,6 +714,10 @@ test('a drawing fallback preserves completed sheet perception for the retry', as
       event.type === 'sheet_perception_preserved' &&
       event.payload.sheetSequence === 1
     ));
+    const receipt = controller.state.scratchpad.messageAudit[0].receipt;
+    assert.match(receipt.interpretation, /equally uncertain arches/);
+    assert.equal(receipt.action, null);
+    assert.equal(receipt.reasoning, '');
 
     assert.equal(
       controller.state.agents.ada.privateMemory.reconciliations
@@ -756,6 +772,15 @@ test('a holder can deliberately retrace a walked route at a genuine branch', asy
       logger: { warn() {}, error() {} }
     });
     await controller.createRun();
+    controller.state.scratchpad.owner = 'theo';
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'incoming-retrace-sheet',
+      agentId: 'theo',
+      turn: 0,
+      drawingIntent: 'Show Ada a remembered landmark.',
+      drawingPrompt: 'A stone arch beside a path bending back.'
+    });
+    await controller.resumePendingDrawing();
     controller.state.status = 'running';
     controller.running = true;
     controller.state.agents.ada.panoId = 'memory-hub';
@@ -769,6 +794,7 @@ test('a holder can deliberately retrace a walked route at a genuine branch', asy
     assert.equal(model.calls[0].options[2].visited, true);
     assert.equal(controller.state.agents.ada.panoId, 'remembered-south');
     assert.equal(controller.state.agents.ada.lastDecision.mode, 'retrace');
+    assert.equal(controller.state.scratchpad.messageAudit[0].receipt.action, 'retrace');
     await controller.resumePendingDrawing();
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
