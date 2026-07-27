@@ -2120,7 +2120,7 @@ test('a drawing replan atomizes long relational streetscape descriptions', async
   const requestText = requests[0].messages.at(-1).content;
   assert.match(requestText, /"description": "Standing at a tree-lined urban sidewalk"/);
   assert.match(requestText, /"description": "parked vehicles along the left"/);
-  assert.match(requestText, /"description": "storefronts to the right"/);
+  assert.doesNotMatch(requestText, /"description": "storefronts to the right"/);
 });
 
 test('a drawing replan separates sentence-level observations into drawable facts', async () => {
@@ -3646,6 +3646,26 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence('New local observation: paved sidewalk and curb with a clear path ahead'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence(
+      'New local observation: clear roadway with crosswalks and pedestrian elements visible in the distance'
+    ),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('New local observation: brick wall occupying the right side of the image'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence(
+      'New local observation: tall brick building wall on the right with a window and protruding ledge'
+    ),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('rectangular tiled pavement converging to a vanishing point'),
     false
   );
@@ -3702,6 +3722,9 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     isConcreteLocalEvidence('orange construction barriers beneath dense scaffolding'),
     true
   );
+  assert.equal(isConcreteLocalEvidence('a row of iron bollards beneath mature trees'), true);
+  assert.equal(isConcreteLocalEvidence('a mosaic mural covering a brick wall'), true);
+  assert.equal(isConcreteLocalEvidence('a gothic rose window with stone tracery'), true);
 });
 
 test('a blind recipient can validate a concrete local report despite sender-review disagreement', () => {
