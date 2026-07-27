@@ -618,6 +618,37 @@ test('a route cannot copy the latest sheet through a local-evidence disclaimer',
   assert.doesNotMatch(decision.reasoning, /both point to continuing/i);
 });
 
+test('plural newest-sheets language cannot align the recipient route', async () => {
+  let routeAttempts = 0;
+  const copiedReasoning = 'The newest sheets show an urban street corridor with a vanishing point, which aligns with continuing along a straight public street. My current local evidence also supports moving forward.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'A generic urban corridor recedes toward a vanishing point.'
+      },
+      route() {
+        routeAttempts += 1;
+        return routeResponse({
+          reasoning: copiedReasoning,
+          memoryUpdate: { currentPlan: copiedReasoning }
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /newest sheets|aligns with continuing/i);
+});
+
 test('a route cannot treat an unresolved sheet cue as a prompt to keep moving', async () => {
   const copiedReasoning = 'My local options favor the northern opening with stone arches. Ada’s latest sheet remains an unresolved cue; I treat it as a prompt to keep moving along the northern public route.';
   const requests = [];
@@ -1818,6 +1849,65 @@ test('an explicit received question cannot be evaded with an unrelated local pos
   assert.equal(decision.contributionKind, 'response');
   assert.equal(decision.contributionEvidenceId, 'response:0');
   assert.match(decision.informationDelta, /My response to the received drawing/);
+});
+
+test('a response that withholds route certainty cannot add a forward arrow', async () => {
+  let drawingAttempts = 0;
+  const requests = [];
+  const responseEvidence =
+    'New urban-movement cue from sheet; does not establish a concrete local route to copy.';
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        requestedResponse: '',
+        evidenceDelta: {
+          ...perceptionResponse().evidenceDelta,
+          informationWorthSending: [responseEvidence]
+        }
+      },
+      route: routeResponse({
+        sheetReconciliation: {
+          ...routeResponse().sheetReconciliation,
+          informationWorthSending: [responseEvidence]
+        }
+      }),
+      drawing(request) {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'response',
+            contributionEvidenceId: 'response:0',
+            drawingIntent: 'Show a forward-moving urban cue.',
+            messageAction: 'movement',
+            drawingPrompt: 'Draw a large arrow pointing along a street toward a vanishing point.',
+            groundedFeatureEvidenceIds: ['response:0']
+          });
+        }
+        assert.match(
+          request.messages[1].content[0].text,
+          /explicitly withholds route certainty.*Remove arrows/s
+        );
+        return drawingResponse({
+          contributionKind: 'response',
+          contributionEvidenceId: 'response:0',
+          drawingIntent: 'Show that the apparent route remains unresolved.',
+          messageAction: 'unclear',
+          drawingPrompt: 'Draw two incomplete urban fragments that do not visibly connect, held in unresolved tension.',
+          groundedFeatureEvidenceIds: ['response:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'response');
+  assert.doesNotMatch(decision.drawingPrompt, /arrow|vanishing point/i);
 });
 
 test('one partner observation can still be echoed as corroboration', async () => {

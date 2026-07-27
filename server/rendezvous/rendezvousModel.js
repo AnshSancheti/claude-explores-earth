@@ -689,7 +689,7 @@ function copiesSheetRoute(...descriptions) {
     .split(/[.!?;]+/)
     .map(value => value.trim())
     .filter(Boolean);
-  const cue = '(?:arrow|cue|depicted|direction|drawing|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheet|motif|new sheet|newest sheet|path|prompts?|route|sheet|sketch(?:es)?|visual|vector)';
+  const cue = '(?:arrow|cue|depicted|direction|drawings?|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheets?|motif|new sheets?|newest sheets?|path|prompts?|route|sheets?|sketch(?:es)?|visual|vector)';
   const copyAction = '(?:align(?:s|ed|ing)? with|continue|follow|in line with|mirror|move|preserve|proceed|pursue|reproduce)';
   const crossClausePrompt = /\b(?:drawing|sheet)\b[^.!?]{0,180}\b(?:cue|prompt)\b[^.!?]{0,140}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
     .test(positiveText);
@@ -698,13 +698,13 @@ function copiesSheetRoute(...descriptions) {
     return new RegExp(`\\b${copyAction}\\b[^.!;]{0,120}\\b${cue}\\b`, 'i').test(statement) ||
       new RegExp(`\\b${cue}\\b[^.!;]{0,120}\\b(?:reinforce|suggest|tell|direct|ask|imply)\\w*\\b[^.!;]{0,100}\\b(?:continue|follow|move|proceed|advance|head)\\w*\\b`, 'i')
         .test(statement) ||
-      /\b(?:latest|newest|new)\s+sheet\b[^.!;]{0,160}\b(?:align|favor|hint|point|reinforce|support|suggest)\w*\b[^.!;]{0,100}\b(?:advanc|continu|head|move|proceed)\w*\b/i
+      /\b(?:latest|newest|new)\s+sheets?\b[^.!;]{0,160}\b(?:align|favor|hint|point|reinforce|support|suggest)\w*\b[^.!;]{0,100}\b(?:advanc|continu|head|move|proceed)\w*\b/i
         .test(statement) ||
-      /\b(?:latest|newest|new)\s+(?:drawing|sheet)\b[^.!;]{0,160}\b(?:emphasize|frame|indicate|invite|point|present|reinforce|show|suggest)\w*\b[^.!;]{0,120}\b(?:avenue|axis|continuation|corridor|direction|forward|motion|navigation|path|route|vanishing point|way)\b/i
+      /\b(?:latest|newest|new)\s+(?:drawings?|sheets?)\b[^.!;]{0,160}\b(?:emphasize|frame|indicate|invite|point|present|reinforce|show|suggest)\w*\b[^.!;]{0,120}\b(?:avenue|axis|continuation|corridor|direction|forward|motion|navigation|path|route|vanishing point|way)\b/i
         .test(statement) ||
-      /\b(?:latest|newest|new)\s+sheet\b[^.!;]{0,160}\b(?:align|correspond|fit|match)\w*\s+with\b[^.!;]{0,100}\b(?:continuation|corridor|direction|forward|path|route|street|stretch|way)\b/i
+      /\b(?:latest|newest|new)\s+sheets?\b[^.!;]{0,160}\b(?:align|correspond|fit|match)\w*\s+with\b[^.!;]{0,100}\b(?:continuation|corridor|direction|forward|path|route|street|stretch|way)\b/i
         .test(statement) ||
-      /\b(?:follow|following|use|using|based on)\b[^.!;]{0,40}\b(?:latest|newest|new)\s+(?:drawing|evidence|sheet)\b[^.!;]{0,120}\b(?:advanc|continu|head|move|proceed)\w*\b/i
+      /\b(?:follow|following|use|using|based on)\b[^.!;]{0,40}\b(?:latest|newest|new)\s+(?:drawings?|evidence|sheets?)\b[^.!;]{0,120}\b(?:advanc|continu|head|move|proceed)\w*\b/i
         .test(statement) ||
       /\b(?:align|correspond|fit|match)\w*\s+with\b[^.!;]{0,100}\b(?:drawing|fork|motif|sheet|symbol|visual)\b/i
         .test(statement) ||
@@ -1555,6 +1555,15 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         const unsupportedRouteCues = routeCommandCues(
           `${candidateDrawingPlan.drawingIntent} ${candidateDrawingPlan.drawingPrompt}`
         ).filter(cue => !routeCommandCues(citedEvidence?.description).includes(cue));
+        const responseWithholdsRoute =
+          candidateDrawingPlan.contributionKind === 'response' &&
+          /\b(?:does not|doesn't|cannot|can't|no)\b[^.!;]{0,100}\b(?:cue|direction|path|route)\b/i
+            .test(candidateDrawingPlan.contributionSummary);
+        if (responseWithholdsRoute && unsupportedRouteCues.length > 0) {
+          throw new Error(
+            'Rendezvous response drawing contradicted its stated route uncertainty with directional imagery'
+          );
+        }
         if (
           candidateDrawingPlan.contributionKind === 'local_observation' &&
           unsupportedRouteCues.length > 0
@@ -1600,6 +1609,8 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         this.logger.warn?.(`Rendezvous drawing plan attempt ${attempt}/${drawingPlanAttemptLimit} failed: ${error.message}`);
         drawingRetryFeedback = /multi-panel template/i.test(error.message)
           ? 'Start from a blank page and use one coherent composition centered on the cited contribution. You may retain one small recurring symbol, but do not use panels, a triptych, or the received sheet layout.'
+          : (/response drawing contradicted/i.test(error.message)
+            ? 'Your cited response explicitly withholds route certainty. Remove arrows, paths, vanishing-point movement, and directional commands. Communicate the uncertainty, non-confirmation, or unresolved relationship itself without turning it into a route.'
           : (/route-command imagery unrelated/i.test(error.message)
             ? 'The cited local observation is static evidence. Remove uncited routes, footprints, arrows, runners, progression, and directional cues. If movement is the actual contribution you want to send, cite an exact action evidence ID instead.'
           : (/labeled its contribution/i.test(error.message)
@@ -1610,7 +1621,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
               ? 'The current sheet visibly asks you something and your reconciliation contains grounded response evidence. Choose what you actually want to say back: cite response evidence to answer, question evidence to clarify, contradiction evidence to correct, received evidence to acknowledge that you cannot answer, or deliberately repeat unresolved evidence. Do not substitute an unrelated local postcard.'
               : (/(?:uncited motif|unsupported partner hypothesis)/i.test(error.message)
               ? 'Keep the cited contribution primary. Do not describe any inherited symbol, route, target, waypoint, district, or place as a known shared destination or otherwise promote an unsupported partner hypothesis into a movement goal. If you retain one, make it subordinate and explicitly uncertain, questioned, tested, transformed, or deliberately repeated.'
-              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.')))));
+              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.'))))));
         tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
       }
     }
