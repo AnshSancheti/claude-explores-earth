@@ -111,7 +111,7 @@ function validateCorroborationProvenance(
 
 const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'active', 'activity', 'an', 'and', 'are', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
-  'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
+  'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'canyon', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'central', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
   'am', 'corridor', 'corridors', 'empty', 'expansive', 'extend', 'extending', 'extends', 'flanked', 'i', 'including', 'intersections', 'into', 'lane', 'lanes', 'lengthy', 'like', 'lined', 'local', 'long',
   'manhattan', 'marked', 'marking', 'markings', 'multiple', 'narrow', 'narrowed', 'narrowing', 'new',
@@ -137,7 +137,7 @@ function isLowInformationUrbanObservation(description) {
   }
   const hasGenericStreetAnchor = words.some(word =>
     [
-      'axis', 'building', 'buildings', 'city', 'corridor', 'crossing', 'crosswalk', 'curb', 'intersection',
+      'axis', 'building', 'buildings', 'canyon', 'city', 'corridor', 'crossing', 'crosswalk', 'curb', 'intersection',
       'lane', 'pathway', 'pedestrian', 'pedestrians', 'plaza', 'promenade', 'road', 'sidewalk', 'storefront', 'storefronts',
       'street', 'traffic', 'vehicle', 'vehicles'
     ]

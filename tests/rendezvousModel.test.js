@@ -3433,6 +3433,10 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence('New local observation: I am on a broad, busy urban street canyon'),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('New local observation: No visible storefronts blocking the way'),
     false
   );
