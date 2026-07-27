@@ -1190,6 +1190,60 @@ test('a drawing replan separates sentence-level observations into drawable facts
   assert.doesNotMatch(requestText, /vanishing point\. Pedestrians/);
 });
 
+test('a drawing replan removes uncited perspective that competes with a landmark', async () => {
+  let attempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      replan(request) {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            contributionEvidenceId: 'local:0',
+            drawingIntent: 'Show storefronts on both sides around a deep central perspective.',
+            messageAction: 'unclear',
+            drawingPrompt: 'Draw two storefront rows receding toward a distant vanishing point.',
+            groundedFeatureEvidenceIds: ['local:0']
+          };
+        }
+        assert.match(
+          request.messages[1].content,
+          /AUTHORITATIVE REPLAN CORRECTION.*different cited fact and visual proposition/s
+        );
+        return {
+          contributionEvidenceId: 'local:0',
+          drawingIntent: 'Show the facing storefront facades as the entire local fact.',
+          messageAction: 'stillness',
+          drawingPrompt: 'Draw two large facing storefront facades filling the page edges.',
+          groundedFeatureEvidenceIds: ['local:0']
+        };
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const replan = await service.replanUnrenderableDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    pending: {
+      contributionKind: 'local_observation',
+      contributionSummary: 'New local observation: crosswalk markings ahead'
+    },
+    privateMemory: {
+      ownObservations: [{
+        description: 'storefronts on both sides',
+        sourcePanoId: 'theo-current'
+      }]
+    }
+  });
+
+  assert.equal(attempts, 2);
+  assert.equal(replan.contributionSummary, 'New local observation: storefronts on both sides');
+  assert.doesNotMatch(
+    `${replan.drawingIntent} ${replan.drawingPrompt}`,
+    /perspective|receding|vanishing/i
+  );
+});
+
 test('a drawing replan cannot reintroduce an exhausted outbound proposition', async () => {
   const requests = [];
   const service = new RendezvousModelService({

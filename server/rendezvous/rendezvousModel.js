@@ -190,12 +190,16 @@ const ROUTE_COMMAND_CUES = [
   'movement',
   'moving',
   'path',
+  'perspective',
   'progress',
   'progression',
+  'recede',
+  'receding',
   'route',
   'run',
   'runner',
   'running',
+  'vanishing',
   'walk',
   'walking'
 ];
