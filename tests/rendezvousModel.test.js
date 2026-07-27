@@ -903,6 +903,10 @@ test('a response cannot turn an inferred crossing meaning into route coordinatio
     contributionKind: 'deliberate_repetition',
     contributionSummary: 'Deliberately repeating existing visual evidence without treating it as new: My response to the received drawing supports continuing along a public corridor.'
   }), true);
+  assert.equal(responseInventsRouteCoordination({
+    contributionKind: 'response',
+    contributionSummary: 'My response to the received drawing: continue along a broad urban axis aligns with ongoing forward motion.'
+  }), true);
 });
 
 test('a local observation cannot become route guidance through an inferred proposal', async () => {

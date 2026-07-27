@@ -282,7 +282,7 @@ export function responseInventsRouteCoordination(message) {
     ' '
   );
   const affirmativeCoordination =
-    /\b(?:align|coordinat|favor|recommend|support|synchroniz)\w*\b[^.!;]{0,120}\b(?:advanc|continu|cross|follow|head|mov|proceed|travel|walk)\w*\b/i;
+    /\b(?:align|coordinat|favor|recommend|support|synchroniz)\w*\b[^.!;]{0,120}\b(?:advanc|continu|cross|follow|head|momentum|motion|mov|proceed|travel|walk)\w*\b/i;
   const coordinatedRoute =
     /\b(?:coordinat|synchroniz)\w*\b[^.!;]{0,100}\b(?:axis|corridor|crossing|direction|path|route)\b/i;
   return affirmativeCoordination.test(positiveText) || coordinatedRoute.test(positiveText);
