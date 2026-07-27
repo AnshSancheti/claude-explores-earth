@@ -1955,18 +1955,24 @@ ${JSON.stringify(availableEvidence, null, 2)}`
             const visibleFeatures = candidateDrawingPlan.groundedFeatures.length > 0
               ? candidateDrawingPlan.groundedFeatures.join('; ')
               : candidateDrawingPlan.contributionSummary;
-            candidateDrawingPlan.drawingIntent =
-              `Send the cited contribution as primary evidence while leaving the inherited "${unsupportedGoalTerm}" motif unresolved rather than depicting it as a destination.`;
-            const omittedMotifReason =
-              `The recurring "${unsupportedGoalTerm}" motif is omitted because its physical meaning remains unsupported.`;
-            candidateDrawingPlan.continuityReason =
-              candidateDrawingPlan.contributionKind === 'deliberate_repetition'
-                ? `${candidateDrawingPlan.continuityReason} ${omittedMotifReason}`.trim()
-                : omittedMotifReason;
-            candidateDrawingPlan.drawingPrompt =
-              `Create one coherent handmade, wordless drawing that makes this contribution unmistakably primary: ${candidateDrawingPlan.contributionSummary}. Represent it visually without rendering words. Use only these grounded features as context: ${visibleFeatures}. Do not depict the inherited "${unsupportedGoalTerm}" motif as a destination, waypoint, target, or goal. Include no readable text, letters, numbers, labels, logos, or watermarks.`;
             if (candidateDrawingPlan.contributionKind === 'local_observation') {
+              candidateDrawingPlan.drawingIntent =
+                `Show the cited local observation as the complete message: ${candidateDrawingPlan.contributionSummary}.`;
+              candidateDrawingPlan.continuityReason = '';
               candidateDrawingPlan.messageAction = 'unclear';
+              candidateDrawingPlan.drawingPrompt =
+                `Create one coherent handmade, wordless observational sketch centered only on this cited local evidence: ${visibleFeatures}. Make the observed place itself visually primary. Include no readable text, letters, numbers, labels, logos, or watermarks.`;
+            } else {
+              candidateDrawingPlan.drawingIntent =
+                `Send the cited contribution as primary evidence while leaving the inherited "${unsupportedGoalTerm}" motif unresolved rather than depicting it as a destination.`;
+              const omittedMotifReason =
+                `The recurring "${unsupportedGoalTerm}" motif is omitted because its physical meaning remains unsupported.`;
+              candidateDrawingPlan.continuityReason =
+                candidateDrawingPlan.contributionKind === 'deliberate_repetition'
+                  ? `${candidateDrawingPlan.continuityReason} ${omittedMotifReason}`.trim()
+                  : omittedMotifReason;
+              candidateDrawingPlan.drawingPrompt =
+                `Create one coherent handmade, wordless drawing that makes this contribution unmistakably primary: ${candidateDrawingPlan.contributionSummary}. Represent it visually without rendering words. Use only these grounded features as context: ${visibleFeatures}. Do not depict the inherited "${unsupportedGoalTerm}" motif as a destination, waypoint, target, or goal. Include no readable text, letters, numbers, labels, logos, or watermarks.`;
             }
             this.logger.warn?.(
               `Rendezvous normalized unsupported drawing motif "${unsupportedGoalTerm}" after ${attempt} attempts`

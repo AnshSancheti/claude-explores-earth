@@ -3267,9 +3267,13 @@ test('drawing planner neutralizes one stubborn unsupported motif after retries',
   const decision = await service.decide(input({ privateMemory: priorMemory }));
 
   assert.equal(decision.fallbackCause, null);
-  assert.match(decision.drawingIntent, /leaving the inherited "star" motif unresolved/);
-  assert.match(decision.drawingPrompt, /Do not depict the inherited "star" motif as a destination/);
+  assert.match(decision.drawingIntent, /Show the cited local observation as the complete message/);
   assert.match(decision.drawingPrompt, /three repeated stone arches/);
+  assert.doesNotMatch(
+    `${decision.drawingIntent} ${decision.drawingPrompt} ${decision.continuityReason}`,
+    /\bstar\b/i
+  );
+  assert.equal(decision.continuityReason, '');
   assert.equal(decision.messageAction, 'unclear');
 });
 
