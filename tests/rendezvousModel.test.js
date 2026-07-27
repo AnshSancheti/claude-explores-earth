@@ -3429,6 +3429,10 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence('New local observation: taxis and other vehicles on the street'),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('New local observation: No visible storefronts blocking the way'),
     false
   );
