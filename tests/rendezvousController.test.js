@@ -1417,7 +1417,7 @@ test('a bounded retry accepts a legible unresolved visual question', async () =>
         blindRead: {
           dominantAction: 'stillness',
           frameOfReference: 'recipient',
-          communicationFunction: 'request',
+          communicationFunction: 'directive',
           readableText: false,
           likelyMessage: 'There is uncertainty about which of two paths is the shared crossing.'
         }

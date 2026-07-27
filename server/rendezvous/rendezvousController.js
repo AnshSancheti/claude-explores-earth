@@ -138,8 +138,10 @@ function canAcceptRecipientLegibleRetry(review, pending, attemptNumber) {
         .test(likelyMessage);
       const prefersDirection = /\b(?:go|take|follow|proceed|turn|head)\s+(?:left|right|straight|forward)\b/i
         .test(likelyMessage);
+      const addressesRecipient = ['request', 'unclear'].includes(blindRead.communicationFunction) ||
+        ['recipient', 'shared'].includes(blindRead.frameOfReference);
       if (
-        ['request', 'unclear'].includes(blindRead.communicationFunction) &&
+        addressesRecipient &&
         expressesUncertainty &&
         !prefersDirection
       ) {
