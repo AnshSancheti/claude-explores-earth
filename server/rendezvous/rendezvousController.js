@@ -5,7 +5,8 @@ import { StreetViewHeadless } from '../services/streetViewHeadless.js';
 import { calculateBearing } from '../utils/geoUtils.js';
 import {
   RendezvousModelService,
-  reconcileRendezvousContributionAction
+  reconcileRendezvousContributionAction,
+  repeatsRecentOutboundProposition
 } from './rendezvousModel.js';
 import { RendezvousImageService } from './rendezvousImage.js';
 import {
@@ -1591,6 +1592,39 @@ export class RendezvousController {
     }
     const nextAttemptAt = Date.parse(pending.nextAttemptAt || '');
     if (Number.isFinite(nextAttemptAt) && nextAttemptAt > Date.now()) return null;
+    const senderMemory = normalizeAgentMemory(
+      this.state.agents[pending.from]?.privateMemory
+    );
+    if (repeatsRecentOutboundProposition(pending, senderMemory)) {
+      const error = 'Pending drawing repeats a recent shared-channel proposition without declaring deliberate repetition';
+      if (
+        pending.replanCount < MAX_DRAWING_REPLANS &&
+        typeof this.agentModel.replanUnrenderableDrawing === 'function'
+      ) {
+        pending.attempts = Math.max(pending.attempts, MAX_DRAWING_ATTEMPTS_PER_PLAN);
+        pending.lastError = error;
+        normalizedScratchpad.updatedAt = new Date().toISOString();
+        this.state.scratchpad = normalizedScratchpad;
+      } else {
+        this.state.scratchpad = failRasterScratchpadMessage(this.state.scratchpad, {
+          pendingId: pending.id,
+          error
+        });
+        this.#recordEvent('scratchpad_abandoned', {
+          id: pending.id,
+          from: pending.from,
+          to: pending.to,
+          error,
+          attempts: pending.attempts,
+          totalAttempts: pending.totalAttempts,
+          replanCount: pending.replanCount
+        });
+        await this.saveState();
+        this.broadcastState();
+        this.logger.warn?.(`Rendezvous drawing ${pending.id} was abandoned after channel repetition revalidation`);
+        return null;
+      }
+    }
     if (
       pending.attempts >= MAX_DRAWING_ATTEMPTS_PER_PLAN &&
       pending.replanCount < MAX_DRAWING_REPLANS &&

@@ -770,7 +770,7 @@ function locallyGroundRouteLanguage(routeDecision, partnerName) {
   };
 }
 
-function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
+export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
   const contributionKind = candidateDrawingPlan?.contributionKind;
   if (
     !['local_observation', 'own_action', 'response', 'question', 'correction']

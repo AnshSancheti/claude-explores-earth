@@ -1307,6 +1307,85 @@ test('a second failed replan can accept a recipient-legible local report', async
   }
 });
 
+test('a persisted alternating echo is abandoned after semantic replans are exhausted', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-echo-revalidation-test-'));
+  let generatedImages = 0;
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: {
+        async reviewDrawing() {
+          throw new Error('A repeated draft should not reach visual review');
+        }
+      },
+      imageModel: {
+        async generate() {
+          generatedImages += 1;
+          throw new Error('A repeated draft should not reach image generation');
+        }
+      },
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.agents.ada.privateMemory.sentMessages = [{
+      turn: 19,
+      sequence: 19,
+      to: 'theo',
+      intent: 'Show storefronts and yellow taxis.',
+      contributionKind: 'local_observation',
+      contributionEvidenceId: 'local:0',
+      contributionSummary: 'New local observation: Storefronts and yellow taxis visible',
+      informationDelta: 'New local observation: Storefronts and yellow taxis visible',
+      continuityReason: '',
+      groundedFeatures: ['storefronts and yellow taxis'],
+      createdAt: new Date().toISOString()
+    }];
+    controller.state.agents.ada.privateMemory.receivedSheets = [{
+      turn: 20,
+      sequence: 20,
+      from: 'theo',
+      interpretation: 'A quiet commercial strip with repeating awnings.',
+      confidence: 0.6,
+      literalContents: ['storefront buildings with striped and solid awnings'],
+      possiblePlaces: [],
+      possibleIntentions: [],
+      primarySubject: 'the row of storefronts with awnings and ground-floor windows',
+      communicationFunction: 'report',
+      frameOfReference: 'sender',
+      requestedResponse: '',
+      informationNovelty: 'mixed',
+      createdAt: new Date().toISOString()
+    }];
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'persisted-alternating-echo',
+      agentId: 'ada',
+      turn: 21,
+      contributionKind: 'local_observation',
+      contributionEvidenceId: 'local:0',
+      contributionSummary: 'New local observation: row of storefronts with awnings',
+      drawingIntent: 'Align with Theo by showing the same storefront row and awnings.',
+      informationDelta: 'New local observation: row of storefronts with awnings',
+      messageAction: 'stillness',
+      drawingPrompt: 'Sketch a row of storefronts with striped awnings.',
+      groundedFeatures: ['row of storefronts with awnings']
+    });
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+    controller.state.scratchpad.pendingMessage.replanFailureCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(generatedImages, 0);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.sequence, 0);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).id, 'persisted-alternating-echo');
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /shared-channel proposition/);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('semantic recovery exhaustion abandons only the unsent draft', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-abandoned-draft-test-'));
   let reviews = 0;
