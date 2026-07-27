@@ -276,7 +276,14 @@ export function responseInventsRouteCoordination(message) {
     /\b(?:align|coordinat|favor|keep|maintain|preserv|recommend|support|sustain|synchroniz)\w*\b[^.!;]{0,120}\b(?:advanc|continu|cross|follow|head|momentum|motion|mov|proceed|progress|travel|walk)\w*\b/i;
   const coordinatedRoute =
     /\b(?:coordinat|synchroniz)\w*\b[^.!;]{0,100}\b(?:axis|corridor|crossing|direction|path|route)\b/i;
-  return affirmativeCoordination.test(positiveText) || coordinatedRoute.test(positiveText);
+  const endorsedRoute =
+    /\b(?:axis|continuation|corridor|crossing|direction|movement|path|route)\b[^.!;]{0,100}\b(?:best|correct|favor|plausible|prefer|promising|right|support|useful)\w*\b/i;
+  const routeEndorsement =
+    /\b(?:best|correct|favor|plausible|prefer|promising|right|support|useful)\w*\b[^.!;]{0,100}\b(?:axis|continuation|corridor|crossing|direction|movement|path|route)\b/i;
+  return affirmativeCoordination.test(positiveText) ||
+    coordinatedRoute.test(positiveText) ||
+    endorsedRoute.test(positiveText) ||
+    routeEndorsement.test(positiveText);
 }
 
 export function deliberateRepetitionHasPurpose(message) {

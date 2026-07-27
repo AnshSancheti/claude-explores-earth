@@ -964,6 +964,19 @@ test('a response cannot turn an inferred crossing meaning into route coordinatio
   }), false);
 });
 
+test('a response cannot endorse an unshared route frame as plausible coordination', () => {
+  assert.equal(responseInventsRouteCoordination({
+    contributionKind: 'response',
+    contributionSummary:
+      'My response to the received drawing: Continuation along a public axis is plausible; no fixed destination yet.'
+  }), true);
+  assert.equal(responseInventsRouteCoordination({
+    contributionKind: 'response',
+    contributionSummary:
+      'My response to the received drawing: I cannot tell whether the depicted axis is a physical route.'
+  }), false);
+});
+
 test('a binary visual question must show both authored alternatives', () => {
   const question =
     'Question I am sending: Is the implied movement toward a specific cross-street or a continuing axis along local street?';
