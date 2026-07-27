@@ -5,6 +5,7 @@ import {
   RendezvousModelService,
   reconcileRendezvousContributionAction,
   reconcileRendezvousMessageAction,
+  responseDrawingContradictsRouteUncertainty,
   sanitizeRendezvousDecision
 } from '../server/rendezvous/rendezvousModel.js';
 
@@ -976,6 +977,34 @@ test('newest evidence and an ambiguous motif cannot jointly justify movement', a
   assert.match(decision.reasoning, /what I can currently see/i);
   assert.match(decision.reasoning, /not route guidance/i);
   assert.doesNotMatch(decision.reasoning, /following the newest evidence|aligns with/i);
+});
+
+test('newest evidence cannot softly point to following a depicted urban axis', async () => {
+  const copiedReasoning = 'The newest evidence points to following a broad, straight urban axis rather than copying a specific drawn route. My recent heading history aligns with northwest movement toward a distant vanishing point.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'shared',
+        sheetInterpretation: 'A broad street recedes toward a distant vanishing point.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /newest evidence points|vanishing point/i);
 });
 
 test('a sheet cannot frame forward motion as the locally justified path', async () => {
@@ -1988,6 +2017,21 @@ test('a response that withholds route certainty cannot add a forward arrow', asy
   assert.equal(decision.fallbackCause, null);
   assert.equal(decision.contributionKind, 'response');
   assert.doesNotMatch(decision.drawingPrompt, /arrow|vanishing point/i);
+});
+
+test('a response with no concrete destination cannot redraw a vanishing-point route', () => {
+  assert.equal(responseDrawingContradictsRouteUncertainty({
+    contributionKind: 'response',
+    contributionSummary: 'Continuation into a busy public street is plausible; no concrete destination yet.',
+    drawingIntent: 'Offer a fresh open-ended urban axis toward a vanishing point.',
+    drawingPrompt: 'Draw a wide street receding toward a distant vanishing point.'
+  }), true);
+  assert.equal(responseDrawingContradictsRouteUncertainty({
+    contributionKind: 'response',
+    contributionSummary: 'Continuation into a busy public street is plausible; no concrete destination yet.',
+    drawingIntent: 'Show that the apparent destination remains unresolved.',
+    drawingPrompt: 'Draw two incomplete urban fragments held in unresolved tension.'
+  }), false);
 });
 
 test('one partner observation can still be echoed as corroboration', async () => {

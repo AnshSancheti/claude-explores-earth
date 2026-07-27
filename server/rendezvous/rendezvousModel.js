@@ -249,8 +249,23 @@ function routeCommandCues(value) {
 }
 
 function responseWithholdsRouteCertainty(value) {
-  return /\b(?:does not|doesn't|cannot|can't|no)\b[^.!;]{0,100}\b(?:cue|direction|path|route)\b/i
+  return /\b(?:does not|doesn't|cannot|can't|no)\b[^.!;]{0,100}\b(?:cue|destination|direction|endpoint|meeting point|path|rendezvous|route)\b/i
     .test(cleanString(value, 1200));
+}
+
+export function responseDrawingContradictsRouteUncertainty(message) {
+  if (
+    message?.contributionKind !== 'response' ||
+    !responseWithholdsRouteCertainty(message?.contributionSummary || message?.informationDelta)
+  ) {
+    return false;
+  }
+  const citedRouteCues = routeCommandCues(
+    message?.contributionSummary || message?.informationDelta
+  );
+  return routeCommandCues(
+    `${message?.drawingIntent || ''} ${message?.drawingPrompt || ''}`
+  ).some(cue => !citedRouteCues.includes(cue));
 }
 
 function questionContrastsStillnessAndMovement(value) {
@@ -735,6 +750,8 @@ function copiesSheetRoute(...descriptions) {
       new RegExp(`\\b${cue}\\b[^.!;]{0,120}\\b(?:reinforce|suggest|tell|direct|ask|imply)\\w*\\b[^.!;]{0,100}\\b(?:continue|follow|move|proceed|advance|head)\\w*\\b`, 'i')
         .test(statement) ||
       /\b(?:latest|newest|new)\s+sheets?\b[^.!;]{0,160}\b(?:align|favor|hint|point|reinforce|support|suggest)\w*\b[^.!;]{0,100}\b(?:advanc|continu|head|move|proceed)\w*\b/i
+        .test(statement) ||
+      /\b(?:latest|newest|new)\s+evidence\b[^.!;]{0,120}\b(?:favor|indicate|point|reinforce|support|suggest)\w*\b[^.!;]{0,140}\b(?:advanc|continu|follow|head|move|proceed|pursue)\w*\b[^.!;]{0,100}\b(?:axis|corridor|path|route|vanishing point|way)\b/i
         .test(statement) ||
       /\b(?:latest|newest|new)\s+(?:drawings?|sheets?)\b[^.!;]{0,160}\b(?:emphasize|frame|indicate|invite|point|present|reinforce|show|suggest)\w*\b[^.!;]{0,120}\b(?:avenue|axis|continuation|corridor|direction|forward|motion|navigation|path|route|vanishing point|way)\b/i
         .test(statement) ||
@@ -1612,8 +1629,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           `${candidateDrawingPlan.drawingIntent} ${candidateDrawingPlan.drawingPrompt}`
         ).filter(cue => !routeCommandCues(citedEvidence?.description).includes(cue));
         const responseWithholdsRoute =
-          candidateDrawingPlan.contributionKind === 'response' &&
-          responseWithholdsRouteCertainty(candidateDrawingPlan.contributionSummary);
+          responseDrawingContradictsRouteUncertainty(candidateDrawingPlan);
         if (responseWithholdsRoute && unsupportedRouteCues.length > 0) {
           throw new Error(
             'Rendezvous response drawing contradicted its stated route uncertainty with directional imagery'

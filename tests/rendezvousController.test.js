@@ -1430,6 +1430,50 @@ test('a persisted low-information street report is abandoned after semantic repl
   }
 });
 
+test('a persisted response cannot depict a route after withholding destination certainty', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-response-revalidation-test-'));
+  let generatedImages = 0;
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: {},
+      imageModel: {
+        async generate() {
+          generatedImages += 1;
+          throw new Error('A contradictory response should not reach image generation');
+        }
+      },
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'persisted-contradictory-response',
+      agentId: 'ada',
+      turn: 23,
+      contributionKind: 'response',
+      contributionEvidenceId: 'response:0',
+      contributionSummary: 'My response to the received drawing: Continuation is plausible; no concrete destination yet.',
+      drawingIntent: 'Offer an open urban axis toward a vanishing point.',
+      informationDelta: 'My response to the received drawing: Continuation is plausible; no concrete destination yet.',
+      messageAction: 'movement',
+      drawingPrompt: 'Sketch a street receding toward a distant vanishing point.',
+      groundedFeatures: ['Continuation is plausible; no concrete destination yet.']
+    });
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+    controller.state.scratchpad.pendingMessage.replanFailureCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(generatedImages, 0);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /route uncertainty/);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('semantic recovery exhaustion abandons only the unsent draft', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-abandoned-draft-test-'));
   let reviews = 0;

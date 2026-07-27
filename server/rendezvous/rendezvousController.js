@@ -7,7 +7,8 @@ import {
   isConcreteLocalEvidence,
   RendezvousModelService,
   reconcileRendezvousContributionAction,
-  repeatsRecentOutboundProposition
+  repeatsRecentOutboundProposition,
+  responseDrawingContradictsRouteUncertainty
 } from './rendezvousModel.js';
 import { RendezvousImageService } from './rendezvousImage.js';
 import {
@@ -1599,10 +1600,13 @@ export class RendezvousController {
     const repeatsChannel = repeatsRecentOutboundProposition(pending, senderMemory);
     const lowInformationObservation = pending.contributionKind === 'local_observation' &&
       !isConcreteLocalEvidence(pending.contributionSummary || pending.informationDelta);
-    if (repeatsChannel || lowInformationObservation) {
+    const contradictoryResponse = responseDrawingContradictsRouteUncertainty(pending);
+    if (repeatsChannel || lowInformationObservation || contradictoryResponse) {
       const error = repeatsChannel
         ? 'Pending drawing repeats a recent shared-channel proposition without declaring deliberate repetition'
-        : 'Pending drawing contains only low-information urban street substrate';
+        : lowInformationObservation
+        ? 'Pending drawing contains only low-information urban street substrate'
+        : 'Pending response contradicts its stated route uncertainty with directional imagery';
       if (
         pending.replanCount < MAX_DRAWING_REPLANS &&
         typeof this.agentModel.replanUnrenderableDrawing === 'function'
@@ -1627,7 +1631,7 @@ export class RendezvousController {
         });
         await this.saveState();
         this.broadcastState();
-        this.logger.warn?.(`Rendezvous drawing ${pending.id} was abandoned after channel repetition revalidation`);
+        this.logger.warn?.(`Rendezvous drawing ${pending.id} was abandoned after persisted message revalidation`);
         return null;
       }
     }
