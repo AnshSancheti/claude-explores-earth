@@ -111,15 +111,15 @@ function validateCorroborationProvenance(
 
 const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'across', 'active', 'activity', 'adjacent', 'along', 'an', 'and', 'are', 'area', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'boulevard', 'brick', 'building', 'buildings', 'car',
-  'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'canyon', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
+  'appears', 'black', 'bold', 'bordered', 'both', 'broad', 'bus', 'buses', 'busy', 'by', 'canyon', 'cars', 'centered', 'city', 'continue', 'continues', 'continuing', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'central', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
-  'am', 'architectural', 'between', 'beyond', 'clear', 'cloudy', 'converging', 'corridor', 'corridors', 'dense', 'depth', 'detail', 'distinct', 'east', 'eastern', 'elements', 'empty', 'expansive', 'extend', 'extending', 'extends', 'facade', 'facades', 'flanked', 'horizon', 'i', 'image', 'including', 'intersections', 'into', 'is', 'lane', 'lanes', 'large', 'lead', 'leading', 'ledge', 'left', 'lengthy', 'like', 'lined', 'lintel', 'local', 'long', 'm', 'minimal', 'multi',
-  'line', 'linear', 'lines', 'manhattan', 'marked', 'marking', 'markings', 'modern', 'multiple', 'narrow', 'narrowed', 'narrowing', 'near', 'nearby', 'new',
-  'north', 'northeast', 'northern', 'northwest', 'observation', 'occupying', 'of', 'on', 'oriented', 'other', 'pale', 'parked', 'path', 'paths', 'pathway', 'pathways', 'paved', 'pavement', 'pedestrian', 'pedestrians', 'plaza', 'plazas', 'point', 'present', 'promenade', 'promenades', 'protruding', 'public', 'recede', 'recedes', 'receding', 'rectangular',
-  'perspective', 'prominent', 'pronounced', 'right', 'road', 'roads', 'roadway', 'roadways', 'row', 'rows', 'scene', 'several', 'side', 'sides', 'sidewalk', 'sidewalks', 'small', 'stories', 'story', 'storefront', 'strong',
+  'am', 'architectural', 'between', 'beyond', 'clear', 'cloudy', 'converging', 'corridor', 'corridors', 'dense', 'depth', 'detail', 'distinct', 'east', 'eastern', 'elements', 'empty', 'expansive', 'extend', 'extending', 'extends', 'facade', 'facades', 'flanked', 'formed', 'horizon', 'i', 'image', 'including', 'intersections', 'into', 'is', 'lane', 'lanes', 'large', 'lead', 'leading', 'ledge', 'left', 'lengthy', 'like', 'lined', 'lintel', 'local', 'long', 'm', 'minimal', 'multi',
+  'high', 'line', 'linear', 'lines', 'lining', 'manhattan', 'marked', 'marking', 'markings', 'mid', 'modern', 'multiple', 'narrow', 'narrowed', 'narrowing', 'near', 'nearby', 'new',
+  'north', 'northeast', 'northern', 'northwest', 'observation', 'occupying', 'of', 'on', 'opposing', 'or', 'oriented', 'other', 'pale', 'parked', 'path', 'paths', 'pathway', 'pathways', 'paved', 'pavement', 'pedestrian', 'pedestrians', 'plaza', 'plazas', 'point', 'present', 'promenade', 'promenades', 'protruding', 'public', 'recede', 'recedes', 'receding', 'rectangular',
+  'perspective', 'prominent', 'pronounced', 'right', 'rise', 'road', 'roads', 'roadway', 'roadways', 'row', 'rows', 'scene', 'several', 'side', 'sides', 'sidewalk', 'sidewalks', 'small', 'stories', 'story', 'storefront', 'strong',
   'shading', 'south', 'southeast', 'southern', 'southwest', 'storefronts', 'straight', 'street', 'subtle', 'traffic', 'streets', 'stripe', 'striped', 'stripes',
   'sill', 'single', 'sky', 'stone', 'suggest', 'suggesting', 'suggests', 'surrounded', 'surrounding', 'tall', 'taxi', 'taxis', 'that', 'the', 'urban', 'vehicle',
-  'van', 'vanishing', 'vans', 'vehicles', 'visible', 'wall', 'walls', 'walkway', 'walkways', 'was', 'were', 'west', 'western', 'which', 'white', 'wide', 'widened', 'widening', 'widthy', 'window', 'windows', 'with', 'tiled', 'to',
+  'truck', 'trucks', 'van', 'vanishing', 'vans', 'vehicles', 'veneer', 'visible', 'wall', 'walls', 'walkway', 'walkways', 'was', 'were', 'west', 'western', 'which', 'white', 'wide', 'widened', 'widening', 'widthy', 'window', 'windows', 'with', 'tiled', 'to',
   'toward', 'towards'
 ]);
 
@@ -145,9 +145,9 @@ function isLowInformationUrbanObservation(description) {
   }
   const hasGenericStreetAnchor = words.some(word =>
     [
-      'avenue', 'axis', 'boulevard', 'building', 'buildings', 'canyon', 'car', 'cars', 'city', 'corridor', 'crossing', 'crosswalk', 'curb', 'facade', 'intersection',
+      'avenue', 'axis', 'boulevard', 'building', 'buildings', 'bus', 'buses', 'canyon', 'car', 'cars', 'city', 'corridor', 'crossing', 'crosswalk', 'curb', 'facade', 'intersection',
       'lane', 'pathway', 'pavement', 'pedestrian', 'pedestrians', 'perspective', 'plaza', 'promenade', 'road', 'roadway', 'roadways', 'shading', 'sidewalk', 'storefront', 'storefronts',
-      'street', 'taxi', 'taxis', 'traffic', 'van', 'vans', 'vehicle', 'vehicles', 'wall', 'walls', 'window', 'windows'
+      'street', 'taxi', 'taxis', 'traffic', 'truck', 'trucks', 'van', 'vans', 'vehicle', 'vehicles', 'wall', 'walls', 'window', 'windows'
     ]
       .includes(word)
   );
@@ -251,7 +251,7 @@ function hasUncitedDistinctivePrimarySubject(citedEvidence, blindPrimarySubject)
   return citedTokens.size === 0 && primaryTokens.size > 0;
 }
 
-function localObservationReviewDescription(value) {
+function localObservationConcepts(value) {
   const description = cleanString(value, 1200);
   const concepts = [];
   if (
@@ -291,7 +291,20 @@ function localObservationReviewDescription(value) {
   ) {
     concepts.push('construction-zone');
   }
+  return concepts;
+}
+
+function localObservationReviewDescription(value) {
+  const description = cleanString(value, 1200);
+  const concepts = localObservationConcepts(description);
   return `${description} ${concepts.join(' ')}`.trim();
+}
+
+function localObservationDescriptionsMatch(first, second, threshold = 0.72) {
+  const firstConcepts = localObservationConcepts(first);
+  const secondConcepts = new Set(localObservationConcepts(second));
+  return firstConcepts.some(concept => secondConcepts.has(concept)) ||
+    visualDescriptionSimilarity(first, second) >= threshold;
 }
 
 export function localObservationMatchesBlindRead(contributionSummary, blindRead) {
@@ -1148,8 +1161,13 @@ function matchingRecentSentPropositions(candidateDrawingPlan, privateMemory) {
         `${message?.intent || ''} ${message?.contributionSummary || ''}`,
         1800
       );
-      const repeatsEvidence = currentEvidence && previousEvidence &&
-        visualDescriptionSimilarity(currentEvidence, previousEvidence) >= 0.72;
+      const repeatsEvidence = currentEvidence && previousEvidence && (
+        (
+          contributionKind === 'local_observation' &&
+          localObservationDescriptionsMatch(currentEvidence, previousEvidence)
+        ) ||
+        visualDescriptionSimilarity(currentEvidence, previousEvidence) >= 0.72
+      );
       const repeatsVisual = currentVisual && previousVisual &&
         visualDescriptionSimilarity(currentVisual, previousVisual) >= 0.6;
       return repeatsEvidence || repeatsVisual ||
@@ -1242,7 +1260,7 @@ export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMe
     .filter(sheet => {
       return currentEvidence && receivedVisualDescriptions(sheet)
         .some(description =>
-          visualDescriptionSimilarity(currentEvidence, description) >= 0.72
+          localObservationDescriptionsMatch(currentEvidence, description)
         );
     });
   const latestMatchingReceived = matchingReceivedObservations.at(-1);

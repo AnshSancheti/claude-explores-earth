@@ -2694,8 +2694,8 @@ test('a matching received subject is not diluted by unrelated sheet details', as
   const service = new RendezvousModelService({
     client: stagedClient([], {
       route: routeResponse({
-        observation: 'Five orange traffic cones across a street near a pedestrian crosswalk.',
-        observedFeatures: ['five orange traffic cones across a street near a pedestrian crosswalk']
+        observation: 'Construction activity ahead and a traffic cone visible in the street.',
+        observedFeatures: ['construction activity ahead and a traffic cone visible in the street']
       }),
       drawing() {
         drawingAttempts += 1;
@@ -2703,9 +2703,9 @@ test('a matching received subject is not diluted by unrelated sheet details', as
           return drawingResponse({
             contributionKind: 'local_observation',
             contributionEvidenceId: 'local:0',
-            drawingIntent: 'Show five orange traffic cones across a street near a crosswalk.',
+            drawingIntent: 'Show construction activity and a traffic cone in the street.',
             messageAction: 'stillness',
-            drawingPrompt: 'Draw five orange traffic cones blocking a street beside a crosswalk.',
+            drawingPrompt: 'Draw construction activity and one traffic cone in the street.',
             groundedFeatureEvidenceIds: ['local:0']
           });
         }
@@ -2752,6 +2752,62 @@ test('a matching received subject is not diluted by unrelated sheet details', as
 
   assert.equal(drawingAttempts, 2);
   assert.equal(decision.contributionKind, 'question');
+});
+
+test('drawing recovery excludes a paraphrased construction-zone echo', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      replan: {
+        contributionEvidenceId: 'local:1',
+        drawingIntent: 'Show the fire escape on the right-hand building.',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw a metal fire escape attached to the right-hand brick building.',
+        groundedFeatureEvidenceIds: ['local:1']
+      }
+    }),
+    logger: { warn() {} }
+  });
+  const coneObservation = {
+    contributionKind: 'local_observation',
+    contributionSummary:
+      'New local observation: five orange traffic cones across a street near a pedestrian crosswalk',
+    informationDelta:
+      'New local observation: five orange traffic cones across a street near a pedestrian crosswalk',
+    intent: 'Show five orange traffic cones across a street near a pedestrian crosswalk.'
+  };
+
+  const replan = await service.replanUnrenderableDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    pending: {
+      contributionKind: 'local_observation',
+      contributionSummary: 'New local observation: metal railing beside shrubbery',
+      groundedFeatures: ['metal railing beside shrubbery']
+    },
+    privateMemory: {
+      ownObservations: [{
+        description:
+          'construction activity ahead and a traffic cone visible in the street; fire escape on the right-hand building',
+        sourcePanoId: 'ada-current'
+      }],
+      sentMessages: [{ sequence: 15, ...coneObservation }],
+      receivedSheets: [{
+        sequence: 18,
+        communicationFunction: 'report',
+        primarySubject: 'five orange traffic cones across a street near a pedestrian crosswalk',
+        literalContents: ['a temporary construction barrier across a crosswalk'],
+        interpretation: 'A construction-zone blockage.'
+      }]
+    }
+  });
+
+  assert.equal(
+    replan.contributionSummary,
+    'New local observation: fire escape on the right-hand building'
+  );
+  const requestText = requests[0].messages.at(-1).content;
+  assert.doesNotMatch(requestText, /construction activity|traffic cone/i);
 });
 
 test('a partner observation misread as a shared proposal still counts toward repetition', async () => {
@@ -3809,6 +3865,25 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
   );
   assert.equal(isConcreteLocalEvidence('New local observation: parked vans'), false);
   assert.equal(
+    isConcreteLocalEvidence(
+      'New local observation: veneer of urban canyon formed by opposing facades'
+    ),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence(
+      'New local observation: street appears to continue toward an intersection with crosswalks ahead'
+    ),
+    false
+  );
+  assert.equal(isConcreteLocalEvidence('New local observation: Bus or truck centered in the street'), false);
+  assert.equal(
+    isConcreteLocalEvidence(
+      'New local observation: row of mid/high-rise buildings lining both sides'
+    ),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('subtle shading suggesting depth and distance'),
     false
   );
@@ -3858,6 +3933,8 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
   );
   assert.equal(isConcreteLocalEvidence('a dense queue of yellow taxis beneath an iron viaduct'), true);
   assert.equal(isConcreteLocalEvidence('three red delivery vans beneath an iron viaduct'), true);
+  assert.equal(isConcreteLocalEvidence('a red double-decker bus beneath a stone arch'), true);
+  assert.equal(isConcreteLocalEvidence('a high-rise building with a rooftop clock'), true);
   assert.equal(
     isConcreteLocalEvidence('a south-east oriented street passing beneath an iron viaduct'),
     true
