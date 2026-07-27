@@ -1128,6 +1128,34 @@ test('newest evidence cannot softly point to following a depicted urban axis', a
   assert.doesNotMatch(decision.reasoning, /newest evidence points|vanishing point/i);
 });
 
+test('a route cannot align a chosen axis with newest evidence in reverse word order', async () => {
+  const copiedReasoning = 'Theo’s latest sheet proposes moving along a public axis toward a distant goal, not copying a literal drawn path. My on-ground evidence shows a straight, busy urban corridor with crosswalks and a clear forward axis. Following the public axis with a northeast heading aligns with the newest evidence and keeps us moving toward potential shared space without duplicating Theo’s drawn route.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'The sender reports their own movement along a public street.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /proposes moving|aligns with the newest evidence/i);
+});
+
 test('a sheet cannot frame forward motion as the locally justified path', async () => {
   const copiedReasoning = 'The newest sheet presents a calm, tree-lined street with a clear central corridor and a distant vanishing point, suggesting forward motion along the public avenue as the most locally justified path. Previous local notes indicate an unexplored continuation, and the current surroundings visually align with moving northeast.';
   const service = new RendezvousModelService({
