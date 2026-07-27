@@ -3086,12 +3086,63 @@ test('a run ends honestly after its persisted branch-decision budget', async () 
     assert.match(controller.state.lostReason, /2-decision search budget/);
     assert.ok(events.some(entry => entry.event === 'rendezvous-lost'));
     assert.ok(controller.state.eventLog.some(entry => entry.type === 'rendezvous_lost'));
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.match(
+      controller.state.scratchpad.messageAudit.at(-1).error,
+      /search budget ended before this draft was sent/
+    );
     assert.equal(controller.getPublicState().agents.ada.branchDecisionCount, undefined);
   } finally {
     if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
     else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
     if (previousBudget === undefined) delete process.env.RENDEZVOUS_MAX_BRANCH_DECISIONS;
     else process.env.RENDEZVOUS_MAX_BRANCH_DECISIONS = previousBudget;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('loading a terminal run cancels and audits its persisted pending drawing', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-terminal-pending-test-'));
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'terminal-unsent-draft',
+      agentId: 'ada',
+      turn: 12,
+      contributionKind: 'local_observation',
+      contributionEvidenceId: 'local:0',
+      contributionSummary: 'New local observation: tree canopy overhead along the path',
+      drawingIntent: 'Show the tree canopy overhead along the path.',
+      informationDelta: 'New local observation: tree canopy overhead along the path',
+      messageAction: 'unclear',
+      drawingPrompt: 'Draw a tree canopy overhead along a path.',
+      groundedFeatures: ['tree canopy overhead along the path']
+    });
+    controller.state.status = 'lost';
+    controller.state.lostReason = 'The search budget ended.';
+    await controller.saveState();
+
+    const restored = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      logger: { warn() {}, error() {} }
+    });
+    const publicState = await restored.loadState();
+
+    assert.equal(publicState.status, 'lost');
+    assert.equal(publicState.scratchpad.isGenerating, false);
+    assert.equal(restored.state.scratchpad.pendingMessage, null);
+    assert.equal(restored.state.scratchpad.messageAudit.at(-1).id, 'terminal-unsent-draft');
+    assert.match(
+      restored.state.scratchpad.messageAudit.at(-1).error,
+      /search budget ended before this draft was sent/
+    );
+  } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
 });

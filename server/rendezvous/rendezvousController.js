@@ -627,10 +627,13 @@ export class RendezvousController {
           await this.#archivePreMemoryState(raw.runId);
         }
         this.state = this.#normalizeLoadedState(raw);
+        const terminalPendingCancelled = ['found', 'lost'].includes(this.state.status)
+          ? this.#cancelTerminalPendingDrawing()
+          : false;
         if (this.state.status !== 'found' && Number(this.state.scratchpad?.version) === 4) {
           await this.#migrateLegacyScratchpadToRaster();
           await this.saveState();
-        } else if (needsMemoryMigration) {
+        } else if (needsMemoryMigration || terminalPendingCancelled) {
           await this.saveState();
         }
       }
@@ -2273,6 +2276,7 @@ export class RendezvousController {
     this.state.foundReason = `${AGENTS.ada.name} and ${AGENTS.theo.name} reached the same connected Street View place, ${Math.round(distance)}m apart.`;
     this.state.agents.ada.status = 'found';
     this.state.agents.theo.status = 'found';
+    this.#cancelTerminalPendingDrawing();
     const payload = {
       runId: this.state.runId,
       turn: this.state.turn,
@@ -2298,6 +2302,7 @@ export class RendezvousController {
     this.state.lostAt = new Date().toISOString();
     this.state.lostReason = `The friends used their ${this.maxBranchDecisions}-decision search budget without finding each other.`;
     for (const agentId of AGENT_ORDER) this.state.agents[agentId].status = 'lost';
+    this.#cancelTerminalPendingDrawing();
     const payload = {
       runId: this.state.runId,
       turn: this.state.turn,
@@ -2306,6 +2311,28 @@ export class RendezvousController {
     };
     this.#recordEvent('rendezvous_lost', payload);
     this.emit('rendezvous-lost', payload);
+  }
+
+  #cancelTerminalPendingDrawing() {
+    if (Number(this.state.scratchpad?.version) !== 5) return false;
+    const scratchpad = normalizeRasterScratchpad(this.state.scratchpad);
+    const pending = scratchpad.pendingMessage;
+    if (!pending) return false;
+    const terminalReason = this.state.status === 'found'
+      ? 'The friends found each other before this draft was sent.'
+      : 'The search budget ended before this draft was sent.';
+    this.state.scratchpad = failRasterScratchpadMessage(scratchpad, {
+      pendingId: pending.id,
+      error: terminalReason
+    });
+    this.#recordEvent('scratchpad_terminal_cancelled', {
+      id: pending.id,
+      from: pending.from,
+      to: pending.to,
+      status: this.state.status,
+      error: terminalReason
+    });
+    return true;
   }
 
   async #getPanorama(positionOrPanoId) {
