@@ -1296,6 +1296,34 @@ test('a latest partner scene cannot reinforce continuing along an axis', async (
   assert.doesNotMatch(decision.reasoning, /scene reinforces|landmarks for coordination/i);
 });
 
+test('a latest partner sketch cannot emphasize a shared movement axis', async () => {
+  const copiedReasoning = 'Ada’s latest sketch emphasizes movement along a broad urban axis and I am already proceeding northeast along that shared, unobstructed axis. The new image suggests evaluating spatial relationships in a public plaza, but does not fix a destination; continuing along the northeast axis keeps us coordinated via common landmarks without locking to a specific Ada route.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'A plaza with curved seating and modern buildings.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /sketch emphasizes|shared, unobstructed axis/i);
+});
+
 test('newest evidence and an ambiguous motif cannot jointly justify movement', async () => {
   const copiedReasoning = 'Following the newest evidence, I continue along the public corridor toward the vanishing point while keeping the fork coordinated. This aligns with the still-ambiguous fork motif, which may mark a generic continuation. Moving preserves forward movement without fixing a meeting point.';
   const service = new RendezvousModelService({
