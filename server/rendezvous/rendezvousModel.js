@@ -113,7 +113,7 @@ const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'active', 'activity', 'adjacent', 'along', 'an', 'and', 'are', 'area', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'boulevard', 'brick', 'building', 'buildings', 'car',
   'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'canyon', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'central', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
-  'am', 'architectural', 'between', 'beyond', 'clear', 'cloudy', 'converging', 'corridor', 'corridors', 'dense', 'depth', 'detail', 'distinct', 'elements', 'empty', 'expansive', 'extend', 'extending', 'extends', 'facade', 'flanked', 'horizon', 'i', 'image', 'including', 'intersections', 'into', 'lane', 'lanes', 'large', 'lead', 'leading', 'ledge', 'left', 'lengthy', 'like', 'lined', 'lintel', 'local', 'long', 'm', 'minimal', 'multi',
+  'am', 'architectural', 'between', 'beyond', 'clear', 'cloudy', 'converging', 'corridor', 'corridors', 'dense', 'depth', 'detail', 'distinct', 'elements', 'empty', 'expansive', 'extend', 'extending', 'extends', 'facade', 'facades', 'flanked', 'horizon', 'i', 'image', 'including', 'intersections', 'into', 'lane', 'lanes', 'large', 'lead', 'leading', 'ledge', 'left', 'lengthy', 'like', 'lined', 'lintel', 'local', 'long', 'm', 'minimal', 'multi',
   'manhattan', 'marked', 'marking', 'markings', 'modern', 'multiple', 'narrow', 'narrowed', 'narrowing', 'near', 'nearby', 'new',
   'observation', 'occupying', 'of', 'on', 'other', 'pale', 'path', 'paths', 'pathway', 'pathways', 'paved', 'pavement', 'pedestrian', 'pedestrians', 'plaza', 'plazas', 'point', 'present', 'promenade', 'promenades', 'protruding', 'public', 'recede', 'recedes', 'receding', 'rectangular',
   'prominent', 'right', 'road', 'roads', 'roadway', 'roadways', 'row', 'rows', 'scene', 'several', 'side', 'sides', 'sidewalk', 'sidewalks', 'small', 'stories', 'story', 'storefront',
@@ -126,6 +126,8 @@ const LOW_INFORMATION_URBAN_WORDS = new Set([
 function isLowInformationUrbanObservation(description) {
   const normalized = cleanString(description, 500)
     .replace(/^New local observation:\s*/i, '')
+    .normalize('NFKD')
+    .replace(/\p{Diacritic}/gu, '')
     .toLowerCase();
   const words = normalized.match(/[a-z]+/g) || [];
   if (words.length === 0) return true;

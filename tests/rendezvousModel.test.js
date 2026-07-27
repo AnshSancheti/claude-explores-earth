@@ -3666,6 +3666,10 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence('New local observation: brick building façades on both sides'),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('rectangular tiled pavement converging to a vanishing point'),
     false
   );
