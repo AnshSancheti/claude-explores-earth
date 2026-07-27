@@ -121,7 +121,7 @@ const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
 
 const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'an', 'and', 'asphalt', 'at', 'ahead', 'building', 'buildings', 'car',
-  'bordered', 'both', 'broad', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
+  'bordered', 'both', 'broad', 'busy', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
   'expansive', 'flanked', 'intersections', 'lane', 'lanes', 'lengthy', 'lined', 'local', 'long',
   'marked', 'marking', 'markings', 'multiple', 'narrow', 'narrowed', 'narrowing', 'new',

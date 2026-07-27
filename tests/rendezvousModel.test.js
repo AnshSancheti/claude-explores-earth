@@ -2554,6 +2554,7 @@ test('bare street substrate is omitted while distinctive local evidence remains'
           'a widthy urban street flanked by buildings',
           'a long street lined with tall buildings',
           'pedestrians and vehicles in the distance',
+          'busy urban street with crosswalk markings',
           'orange construction barriers beneath dense scaffolding'
         ]
       }),
@@ -2580,7 +2581,7 @@ test('bare street substrate is omitted while distinctive local evidence remains'
     'New local observation: orange construction barriers beneath dense scaffolding');
   assert.doesNotMatch(
     catalogText,
-    /street with lane markings|cross-street environment|curb, sidewalk|broad urban street flanked|widthy urban street|long street lined|pedestrians and vehicles/
+    /street with lane markings|cross-street environment|curb, sidewalk|broad urban street flanked|widthy urban street|long street lined|pedestrians and vehicles|busy urban street/
   );
   assert.match(catalogText, /orange construction barriers beneath dense scaffolding/);
 });

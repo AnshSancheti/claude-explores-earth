@@ -1409,12 +1409,12 @@ test('a persisted low-information street report is abandoned after semantic repl
       turn: 22,
       contributionKind: 'local_observation',
       contributionEvidenceId: 'local:0',
-      contributionSummary: 'New local observation: pedestrians and vehicles in the distance',
-      drawingIntent: 'Show the distant pedestrians and vehicles.',
-      informationDelta: 'New local observation: pedestrians and vehicles in the distance',
+      contributionSummary: 'New local observation: busy urban street with crosswalk markings',
+      drawingIntent: 'Show the busy street and crosswalk.',
+      informationDelta: 'New local observation: busy urban street with crosswalk markings',
       messageAction: 'stillness',
-      drawingPrompt: 'Sketch pedestrians and vehicles in the distance.',
-      groundedFeatures: ['pedestrians and vehicles in the distance']
+      drawingPrompt: 'Sketch a busy urban street with crosswalk markings.',
+      groundedFeatures: ['busy urban street with crosswalk markings']
     });
     controller.state.scratchpad.pendingMessage.replanCount = 2;
     controller.state.scratchpad.pendingMessage.replanFailureCount = 2;
