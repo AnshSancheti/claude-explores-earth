@@ -4245,6 +4245,112 @@ test('local-observation review recognizes a midtown-scale urban canyon', async (
   assert.equal(review.accepted, true);
 });
 
+test('local-observation review recognizes a distant city along a perspective axis', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: ['a long road receding from the foreground toward a distant city'],
+        primarySubject: 'the long road/axis leading from foreground to the distant city',
+        likelyMessage: 'The sender sees a distant skyline at the end of a long central road.',
+        dominantAction: 'unclear',
+        frameOfReference: 'sender',
+        frameBasis: 'The road and skyline form a static perspective study.',
+        communicationFunction: 'report',
+        movementCues: [],
+        stillnessCues: ['static distant skyline'],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: Distant city core visible along a central axis',
+    drawingIntent: 'Show the distant city core along the central axis.',
+    informationDelta: 'New local observation: Distant city core visible along a central axis',
+    messageAction: 'unclear',
+    drawingPrompt: 'Draw a distant city core visible along a central axis.',
+    groundedFeatures: ['Distant city core visible along a central axis'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, true);
+});
+
+test('local-observation review requires the perspective axis as well as the skyline', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: ['a distant city skyline inside a circular opening surrounded by trees'],
+        primarySubject: 'distant city skyline framed by a circular pass-through with surrounding trees',
+        likelyMessage: 'The sender sees a city through a circular opening.',
+        dominantAction: 'stillness',
+        frameOfReference: 'sender',
+        frameBasis: 'The circular opening dominates the composition.',
+        communicationFunction: 'report',
+        movementCues: [],
+        stillnessCues: ['static circular frame'],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: Distant city core visible along a central axis',
+    drawingIntent: 'Show the distant city core along the central axis.',
+    informationDelta: 'New local observation: Distant city core visible along a central axis',
+    messageAction: 'unclear',
+    drawingPrompt: 'Draw a distant city core visible along a central axis.',
+    groundedFeatures: ['Distant city core visible along a central axis'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /circular pass-through.*not the cited local observation/);
+});
+
+test('local-observation review recognizes a skyline framed by a receding avenue', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: ['a tree-lined avenue framing a distant skyline'],
+        primarySubject: 'the distant city skyline framed by the tree-lined avenue',
+        likelyMessage: 'The sender sees a city core at the end of an avenue.',
+        dominantAction: 'unclear',
+        frameOfReference: 'sender',
+        frameBasis: 'The avenue and skyline form a static perspective.',
+        communicationFunction: 'report',
+        movementCues: [],
+        stillnessCues: ['static skyline'],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: Distant city core visible along a central axis',
+    drawingIntent: 'Show the distant city core along the central axis.',
+    informationDelta: 'New local observation: Distant city core visible along a central axis',
+    messageAction: 'unclear',
+    drawingPrompt: 'Draw a distant city core visible along a central axis.',
+    groundedFeatures: ['Distant city core visible along a central axis'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, true);
+});
+
 test('local-observation review recognizes crosswalk wording as the cited subject', async () => {
   const requests = [];
   const service = new RendezvousModelService({

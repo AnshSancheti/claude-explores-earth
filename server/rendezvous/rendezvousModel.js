@@ -199,6 +199,27 @@ function visualDescriptionSimilarity(first, second) {
   return shared / Math.min(a.size, b.size);
 }
 
+function localObservationReviewDescription(value) {
+  const description = cleanString(value, 1200);
+  const concepts = [];
+  if (
+    /\b(?:city core|city cent(?:er|re)|downtown|skyline)\b/i.test(description) ||
+    /\bdistant city\b/i.test(description)
+  ) {
+    concepts.push('city-center-skyline');
+  }
+  if (
+    /\baxis\b/i.test(description) ||
+    /\b(?:avenue|boulevard|corridor|road|street)\b[^.!;]{0,80}\b(?:city|distant|lead|reced|skyline|vanishing)\w*\b/i
+      .test(description) ||
+    /\b(?:city|distant|lead|reced|skyline|vanishing)\w*\b[^.!;]{0,80}\b(?:avenue|boulevard|corridor|road|street)\b/i
+      .test(description)
+  ) {
+    concepts.push('perspective-axis');
+  }
+  return `${description} ${concepts.join(' ')}`.trim();
+}
+
 function contributionEvidenceText(value) {
   return cleanString(value, 700)
     .replace(/^(?:New local observation|My current chosen action|Question I am sending(?: about this local evidence)?|Correction I am sending|Acknowledging received visual evidence without claiming it as my own|Deliberately repeating existing visual evidence without treating it as new):\s*/i, '');
@@ -2304,8 +2325,12 @@ Return only JSON:
     if (
       contributionKind === 'local_observation' &&
       visualDescriptionSimilarity(
-        contributionEvidenceText(contributionSummary),
-        blindRead.primarySubject || blindRead.likelyMessage
+        localObservationReviewDescription(
+          contributionEvidenceText(contributionSummary)
+        ),
+        localObservationReviewDescription(
+          blindRead.primarySubject || blindRead.likelyMessage
+        )
       ) < 0.4
     ) {
       const competingSubject = cleanString(
