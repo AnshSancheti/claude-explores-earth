@@ -1404,6 +1404,120 @@ test('a second failed replan can accept a recipient-legible local report', async
   }
 });
 
+test('a bounded retry accepts a legible unresolved visual question', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-terminal-question-test-'));
+  let reviews = 0;
+  const agentModel = {
+    async reviewDrawing() {
+      reviews += 1;
+      return {
+        accepted: false,
+        assessment: 'The two alternatives could still be more explicit.',
+        revisionPrompt: 'Keep both alternatives equally unresolved.',
+        blindRead: {
+          dominantAction: 'stillness',
+          frameOfReference: 'recipient',
+          communicationFunction: 'request',
+          readableText: false,
+          likelyMessage: 'There is uncertainty about which of two paths is the shared crossing.'
+        }
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'recipient-legible-terminal-question',
+      agentId: 'ada',
+      turn: 9,
+      contributionKind: 'question',
+      contributionEvidenceId: 'question:0',
+      contributionSummary: 'Question I am sending: is this a shared crossing or a continuation?',
+      drawingIntent: 'Show two equally unresolved readings of the crossing.',
+      informationDelta: 'Question I am sending: is this a shared crossing or a continuation?',
+      messageAction: 'unclear',
+      drawingPrompt: 'Draw two equally unresolved readings of the crossing.',
+      groundedFeatures: ['shared crossing', 'continuation']
+    });
+    controller.state.scratchpad.pendingMessage.attempts = 6;
+    controller.state.scratchpad.pendingMessage.totalAttempts = 6;
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(reviews, 2);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.currentMessage.id, 'recipient-legible-terminal-question');
+    assert.match(
+      controller.state.scratchpad.messageAudit.at(-1).reviewAssessment,
+      /Accepted after 7 durable attempts/
+    );
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a bounded question retry cannot waive a preferred route directive', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-terminal-question-directive-test-'));
+  const agentModel = {
+    async reviewDrawing() {
+      return {
+        accepted: false,
+        assessment: 'The drawing answers its own question.',
+        revisionPrompt: 'Remove the preferred route.',
+        blindRead: {
+          dominantAction: 'movement',
+          frameOfReference: 'recipient',
+          communicationFunction: 'directive',
+          readableText: false,
+          likelyMessage: 'Go left at the crossing.'
+        }
+      };
+    }
+  };
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'preferred-route-question',
+      agentId: 'ada',
+      turn: 9,
+      contributionKind: 'question',
+      contributionEvidenceId: 'question:0',
+      contributionSummary: 'Question I am sending: is this a shared crossing or a continuation?',
+      drawingIntent: 'Show two equally unresolved readings of the crossing.',
+      informationDelta: 'Question I am sending: is this a shared crossing or a continuation?',
+      messageAction: 'unclear',
+      drawingPrompt: 'Draw two equally unresolved readings of the crossing.',
+      groundedFeatures: ['shared crossing', 'continuation']
+    });
+    controller.state.scratchpad.pendingMessage.attempts = 6;
+    controller.state.scratchpad.pendingMessage.totalAttempts = 6;
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.notEqual(controller.state.scratchpad.currentMessage?.id, 'preferred-route-question');
+    assert.equal(controller.state.scratchpad.pendingMessage.id, 'preferred-route-question');
+    assert.match(controller.state.scratchpad.pendingMessage.lastError, /answers its own question/i);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a persisted alternating echo is abandoned after semantic replans are exhausted', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-echo-revalidation-test-'));
   let generatedImages = 0;

@@ -132,9 +132,22 @@ function canAcceptRecipientLegibleRetry(review, pending, attemptNumber) {
     blindRead?.readableText !== true &&
     Boolean(blindRead?.likelyMessage)
   ) {
+    if (pending?.contributionKind === 'question') {
+      const likelyMessage = String(blindRead.likelyMessage);
+      const expressesUncertainty = /\b(?:alternative|choice|choose|decide|question|uncertain|uncertainty|whether|which)\b/i
+        .test(likelyMessage);
+      const prefersDirection = /\b(?:go|take|follow|proceed|turn|head)\s+(?:left|right|straight|forward)\b/i
+        .test(likelyMessage);
+      if (
+        ['request', 'unclear'].includes(blindRead.communicationFunction) &&
+        expressesUncertainty &&
+        !prefersDirection
+      ) {
+        return true;
+      }
+    }
     const intendedFunction = {
       local_observation: 'report',
-      question: 'question',
       correction: 'correction',
       acknowledgement: 'acknowledgement'
     }[pending?.contributionKind];
