@@ -3221,6 +3221,53 @@ test('drawing review still rejects a material contribution conflict', async () =
   assert.match(review.revisionPrompt, /Point the movement southeast/);
 });
 
+test('drawing review rejects enumerated text-like marks even when the reader boolean is false', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: ['two yellow taxis wait outside storefronts'],
+        primarySubject: 'yellow taxis and storefront awnings',
+        likelyMessage: 'The sender sees taxis beside storefronts.',
+        dominantAction: 'stillness',
+        frameOfReference: 'sender',
+        frameBasis: 'The street scene is presented as an observation.',
+        communicationFunction: 'report',
+        movementCues: [],
+        stillnessCues: ['parked taxis'],
+        textLikeMarks: ['the numeral 30 on a taxi roof sign'],
+        readableText: false
+      },
+      review: {
+        accepted: true,
+        contributionPrimary: true,
+        materialContributionConflict: false,
+        visualNovelty: 'distinct',
+        assessment: 'The taxis and storefronts are primary.',
+        revisionPrompt: ''
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: storefronts and yellow taxis.',
+    drawingIntent: 'Show storefronts and yellow taxis.',
+    informationDelta: 'New local observation: storefronts and yellow taxis.',
+    messageAction: 'stillness',
+    drawingPrompt: 'Draw yellow taxis outside storefronts without text.',
+    groundedFeatures: ['storefronts and yellow taxis'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.equal(review.blindRead.readableText, true);
+  assert.deepEqual(review.blindRead.textLikeMarks, ['the numeral 30 on a taxi roof sign']);
+  assert.match(review.revisionPrompt, /Remove every readable word, letter, number/);
+});
+
 test('own-action drawing review rejects a recipient-framed command', async () => {
   const requests = [];
   const service = new RendezvousModelService({

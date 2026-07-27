@@ -1950,6 +1950,7 @@ Return only JSON:
   "communicationFunction": "report" | "request" | "acknowledgement" | "directive" | "deliberate_repetition" | "unclear",
   "movementCues": ["visible cue suggesting movement or direction"],
   "stillnessCues": ["visible cue suggesting waiting, stopping, anchoring, or no movement"],
+  "textLikeMarks": ["every visible word, isolated letter, numeral, logo, street sign, vehicle sign, signature, or watermark; empty only when none are recognizable"],
   "readableText": true | false
 }`;
     let blindRead = null;
@@ -1973,6 +1974,7 @@ Return only JSON:
           max_completion_tokens: 1200
         });
         const parsed = parseJsonContent(response?.choices?.[0]?.message?.content);
+        const textLikeMarks = cleanStringList(parsed?.textLikeMarks, { limit: 8, maxLength: 160 });
         blindRead = {
           literalContents: cleanStringList(parsed?.literalContents, { limit: 8, maxLength: 220 }),
           likelyMessage: cleanString(parsed?.likelyMessage, 700),
@@ -1996,7 +1998,8 @@ Return only JSON:
             : 'unclear',
           movementCues: cleanStringList(parsed?.movementCues, { limit: 6, maxLength: 220 }),
           stillnessCues: cleanStringList(parsed?.stillnessCues, { limit: 6, maxLength: 220 }),
-          readableText: parsed?.readableText === true
+          textLikeMarks,
+          readableText: parsed?.readableText === true || textLikeMarks.length > 0
         };
         if (!blindRead.likelyMessage || blindRead.literalContents.length === 0) {
           throw new Error('Rendezvous blind drawing read omitted its grounded interpretation');
