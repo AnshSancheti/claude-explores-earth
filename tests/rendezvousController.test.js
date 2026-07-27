@@ -1474,6 +1474,50 @@ test('a persisted crosswalk-only report cannot gain information from stripe adje
   }
 });
 
+test('a persisted empty perspective axis is not treated as a landmark', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-axis-revalidation-test-'));
+  let generatedImages = 0;
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: {},
+      imageModel: {
+        async generate() {
+          generatedImages += 1;
+          throw new Error('An empty perspective axis should not reach image generation');
+        }
+      },
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'persisted-empty-axis-report',
+      agentId: 'ada',
+      turn: 25,
+      contributionKind: 'local_observation',
+      contributionEvidenceId: 'local:0',
+      contributionSummary: 'New local observation: Central axis receding toward a vanishing point',
+      drawingIntent: 'Show the central axis receding toward a vanishing point.',
+      informationDelta: 'New local observation: Central axis receding toward a vanishing point',
+      messageAction: 'stillness',
+      drawingPrompt: 'Sketch a central axis receding toward a vanishing point.',
+      groundedFeatures: ['Central axis receding toward a vanishing point']
+    });
+    controller.state.scratchpad.pendingMessage.replanCount = 2;
+    controller.state.scratchpad.pendingMessage.replanFailureCount = 2;
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(generatedImages, 0);
+    assert.equal(controller.state.scratchpad.pendingMessage, null);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
+    assert.match(controller.state.scratchpad.messageAudit.at(-1).error, /low-information urban street/);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a persisted response cannot depict a route after withholding destination certainty', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-response-revalidation-test-'));
   let generatedImages = 0;
