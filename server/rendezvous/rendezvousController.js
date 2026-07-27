@@ -40,6 +40,7 @@ import {
   publicRasterScratchpad,
   publicRasterScratchpadHistory,
   queueRasterScratchpadMessage,
+  recordRasterScratchpadReceipt,
   RASTER_SCRATCHPAD_ATTEMPTS_PER_PLAN,
   retryRasterScratchpadMessage,
   renderScratchpad
@@ -1225,7 +1226,7 @@ export class RendezvousController {
         if (Number(this.state.scratchpad?.version) !== 5) {
           throw new Error('Rendezvous sheet must be migrated before resolving a branch');
         }
-        const scratchpad = normalizeRasterScratchpad(this.state.scratchpad, { turn: this.state.turn });
+        let scratchpad = normalizeRasterScratchpad(this.state.scratchpad, { turn: this.state.turn });
         this.state.scratchpad = scratchpad;
         if (scratchpad.pendingMessage || scratchpad.owner !== agentId) {
           waitingAtBranch = true;
@@ -1269,6 +1270,34 @@ export class RendezvousController {
           });
           decisionReason = decision.reasoning;
           modelFallbackCause = decision.fallbackCause || null;
+          if (
+            scratchpad.currentMessage?.sequence &&
+            scratchpad.currentMessage.to === agentId &&
+            decision.sheetInterpretation
+          ) {
+            this.state.scratchpad = recordRasterScratchpadReceipt(
+              this.state.scratchpad,
+              {
+                sequence: scratchpad.currentMessage.sequence,
+                recipientId: agentId,
+                turn: this.state.turn,
+                interpretation: decision.sheetInterpretation,
+                confidence: decision.sheetConfidence,
+                perception: decision.sheetPerception,
+                action: modelFallbackCause ? null : decision.action,
+                reasoning: modelFallbackCause ? '' : decision.reasoning,
+                observation: modelFallbackCause ? '' : decision.observation,
+                currentPlan: modelFallbackCause
+                  ? ''
+                  : decision.memoryUpdate?.currentPlan,
+                planAssessment: decision.reconciliation?.planAssessment,
+                recordedAt: new Date().toISOString()
+              }
+            );
+            scratchpad = normalizeRasterScratchpad(this.state.scratchpad, {
+              turn: this.state.turn
+            });
+          }
           if (modelFallbackCause) {
             if (
               scratchpad.currentMessage?.sequence &&

@@ -10,6 +10,7 @@ import {
   publicRasterScratchpad,
   publicRasterScratchpadHistory,
   queueRasterScratchpadMessage,
+  recordRasterScratchpadReceipt,
   renderScratchpad,
   sketchOperationSvg,
   SCRATCHPAD_MAX_OPERATIONS
@@ -87,7 +88,35 @@ test('raster sheet changes and transfers only after a durable image commit', () 
   assert.equal(committed.messageAudit[0].sourceImageFile, 'message-one-source.jpg');
   assert.equal(committed.messageAudit[0].renderMode, 'source_grounded');
 
-  const publicSheet = publicRasterScratchpad(committed, {
+  const received = recordRasterScratchpadReceipt(committed, {
+    sequence: 1,
+    recipientId: 'theo',
+    turn: 6,
+    interpretation: 'Two arches hold a bright circular form between them.',
+    confidence: 0.62,
+    perception: {
+      literalContents: ['two arches', 'one bright circle between them'],
+      possiblePlaces: ['a civic arcade'],
+      possibleIntentions: ['reporting a recognizable local landmark'],
+      primarySubject: 'the circle between the arches',
+      communicationFunction: 'report',
+      frameOfReference: 'sender',
+      requestedResponse: '',
+      informationNovelty: 'new'
+    },
+    action: 'move',
+    reasoning: 'I keep searching from my own local options.',
+    observation: 'A stone stair rises beside a public path.',
+    currentPlan: 'Look for architecture that can distinguish this hypothesis.',
+    planAssessment: 'inconclusive',
+    recordedAt: '2026-07-16T12:01:00.000Z'
+  });
+  assert.equal(received.messageAudit[0].receipt.recipientId, 'theo');
+  assert.equal(received.messageAudit[0].receipt.communicationFunction, 'report');
+  assert.equal(received.messageAudit[0].receipt.action, 'move');
+  assert.match(received.messageAudit[0].receipt.interpretation, /bright circular/);
+
+  const publicSheet = publicRasterScratchpad(received, {
     imageUrlFor: message => `/drawings/${message.id}`
   });
   assert.equal(publicSheet.currentMessage.imageUrl, '/drawings/message-one');
@@ -95,16 +124,16 @@ test('raster sheet changes and transfers only after a durable image commit', () 
   assert.equal(Object.hasOwn(publicSheet, 'pendingMessage'), false);
   assert.equal(Object.hasOwn(publicSheet.currentMessage, 'imageFile'), false);
   assert.equal(Object.hasOwn(publicSheet.currentMessage, 'imageSha256'), false);
-  assert.doesNotMatch(JSON.stringify(publicSheet), /arches|converge|drawingPrompt|drawingIntent|contributionKind|contributionEvidenceId|contributionSummary|informationDelta|continuityReason|messageAction|groundedFeatures|sourcePanoId|sourceImageFile|renderMode/);
+  assert.doesNotMatch(JSON.stringify(publicSheet), /arches|converge|drawingPrompt|drawingIntent|contributionKind|contributionEvidenceId|contributionSummary|informationDelta|continuityReason|messageAction|groundedFeatures|sourcePanoId|sourceImageFile|renderMode|receipt|interpretation/);
 
-  const history = publicRasterScratchpadHistory(committed, {
+  const history = publicRasterScratchpadHistory(received, {
     imageUrlFor: message => `/drawings/${message.id}`
   });
   assert.equal(history.items.length, 1);
   assert.equal(history.items[0].snapshot.agents.ada.panoId, 'ada-branch');
   assert.equal(history.items[0].snapshot.agents.ada.pathLength, 4);
   assert.equal(history.items[0].snapshot.agents.ada.lastThought.reasoning, 'I will mark the arches.');
-  assert.doesNotMatch(JSON.stringify(history), /drawingPrompt|drawingIntent|contributionKind|contributionEvidenceId|contributionSummary|informationDelta|continuityReason|messageAction|groundedFeatures|sourceImageFile|renderMode/);
+  assert.doesNotMatch(JSON.stringify(history), /drawingPrompt|drawingIntent|contributionKind|contributionEvidenceId|contributionSummary|informationDelta|continuityReason|messageAction|groundedFeatures|sourceImageFile|renderMode|receipt|interpretation/);
 });
 
 test('primitive model output is composed into one authored street sketch', async () => {

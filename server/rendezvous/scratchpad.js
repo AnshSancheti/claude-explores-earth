@@ -171,6 +171,52 @@ function normalizePendingRasterMessage(raw) {
   };
 }
 
+function normalizeRasterReceipt(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const recipientId = normalizedAgentId(raw.recipientId, null);
+  const interpretation = cleanString(raw.interpretation, 500);
+  if (!recipientId || !interpretation) return null;
+  const numericConfidence = Number(raw.confidence);
+  return {
+    recipientId,
+    turn: Math.max(0, Math.floor(Number(raw.turn) || 0)),
+    interpretation,
+    confidence: Number.isFinite(numericConfidence)
+      ? Math.min(1, Math.max(0, numericConfidence))
+      : 0.35,
+    literalContents: cleanStringList(raw.literalContents, { limit: 6, maxLength: 220 }),
+    possiblePlaces: cleanStringList(raw.possiblePlaces, { limit: 4, maxLength: 220 }),
+    possibleIntentions: cleanStringList(raw.possibleIntentions, { limit: 4, maxLength: 220 }),
+    primarySubject: cleanString(raw.primarySubject, 400),
+    communicationFunction: [
+      'report',
+      'request',
+      'question',
+      'acknowledgement',
+      'correction',
+      'shared_proposal',
+      'unclear'
+    ].includes(raw.communicationFunction)
+      ? raw.communicationFunction
+      : 'unclear',
+    frameOfReference: ['sender', 'recipient', 'shared', 'unclear'].includes(raw.frameOfReference)
+      ? raw.frameOfReference
+      : 'unclear',
+    requestedResponse: cleanString(raw.requestedResponse, 400),
+    informationNovelty: ['new', 'mixed', 'repeated', 'unclear'].includes(raw.informationNovelty)
+      ? raw.informationNovelty
+      : 'unclear',
+    action: ['move', 'retrace', 'wait'].includes(raw.action) ? raw.action : null,
+    reasoning: cleanString(raw.reasoning, 700),
+    observation: cleanString(raw.observation, 700),
+    currentPlan: cleanString(raw.currentPlan, 500),
+    planAssessment: ['supporting', 'weakening', 'inconclusive'].includes(raw.planAssessment)
+      ? raw.planAssessment
+      : 'inconclusive',
+    recordedAt: raw.recordedAt || null
+  };
+}
+
 export function createRasterScratchpad({ owner = 'ada', turn = 0 } = {}) {
   return {
     version: RASTER_SCRATCHPAD_VERSION,
@@ -220,6 +266,7 @@ export function normalizeRasterScratchpad(raw, { turn = 0 } = {}) {
         renderMode: ['source_grounded', 'authored'].includes(entry?.renderMode)
           ? entry.renderMode
           : 'authored',
+        receipt: normalizeRasterReceipt(entry?.receipt),
         snapshot: normalizeRasterSnapshot(entry?.snapshot),
         imageModel: cleanString(entry?.imageModel, 120) || null,
         requestId: cleanString(entry?.requestId, 240) || null,
@@ -394,6 +441,60 @@ export function failRasterScratchpadMessage(scratchpad, { pendingId, error }) {
   }].slice(-RASTER_SCRATCHPAD_MAX_MESSAGES);
   normalized.pendingMessage = null;
   normalized.updatedAt = new Date().toISOString();
+  return normalized;
+}
+
+export function recordRasterScratchpadReceipt(scratchpad, {
+  sequence,
+  recipientId,
+  turn = 0,
+  interpretation = '',
+  confidence = 0.35,
+  perception = null,
+  action = null,
+  reasoning = '',
+  observation = '',
+  currentPlan = '',
+  planAssessment = null,
+  recordedAt = new Date().toISOString()
+}) {
+  const normalized = normalizeRasterScratchpad(scratchpad);
+  const targetSequence = Math.max(1, Math.floor(Number(sequence) || 0));
+  const index = normalized.messageAudit.findIndex(message =>
+    message.status === 'sent' &&
+    message.sequence === targetSequence &&
+    message.to === recipientId
+  );
+  if (index < 0) return normalized;
+  const previous = normalized.messageAudit[index].receipt;
+  const receipt = normalizeRasterReceipt({
+    ...previous,
+    recipientId,
+    turn,
+    interpretation: interpretation || previous?.interpretation,
+    confidence,
+    literalContents: perception?.literalContents || previous?.literalContents,
+    possiblePlaces: perception?.possiblePlaces || previous?.possiblePlaces,
+    possibleIntentions: perception?.possibleIntentions || previous?.possibleIntentions,
+    primarySubject: perception?.primarySubject || previous?.primarySubject,
+    communicationFunction:
+      perception?.communicationFunction || previous?.communicationFunction,
+    frameOfReference: perception?.frameOfReference || previous?.frameOfReference,
+    requestedResponse: perception?.requestedResponse || previous?.requestedResponse,
+    informationNovelty: perception?.informationNovelty || previous?.informationNovelty,
+    action: action || previous?.action,
+    reasoning: reasoning || previous?.reasoning,
+    observation: observation || previous?.observation,
+    currentPlan: currentPlan || previous?.currentPlan,
+    planAssessment: planAssessment || previous?.planAssessment,
+    recordedAt
+  });
+  if (!receipt) return normalized;
+  normalized.messageAudit[index] = {
+    ...normalized.messageAudit[index],
+    receipt
+  };
+  normalized.updatedAt = recordedAt;
   return normalized;
 }
 

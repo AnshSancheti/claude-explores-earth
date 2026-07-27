@@ -2971,6 +2971,13 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
     assert.equal(imageModel.calls.length, model.calls.length);
     assert.ok(model.calls.length > 0);
     assert.ok(imageModel.calls.every(call => call.groundedFeatures.length >= 2));
+    const receivedSheets = controller.state.scratchpad.messageAudit.filter(
+      message => message.status === 'sent' && message.receipt
+    );
+    assert.ok(receivedSheets.length > 0);
+    assert.ok(receivedSheets.every(message => message.receipt.recipientId === message.to));
+    assert.ok(receivedSheets.every(message => message.receipt.interpretation));
+    assert.ok(receivedSheets.every(message => ['move', 'retrace', 'wait'].includes(message.receipt.action)));
     for (const call of model.calls) {
       assert.equal(Object.hasOwn(call.agent, 'position'), false);
       assert.equal(Object.hasOwn(call.agent, 'path'), false);
@@ -2996,6 +3003,7 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
     assert.equal(Object.hasOwn(publicState.scratchpad, 'messageAudit'), false);
     assert.equal(Object.hasOwn(publicState.scratchpad, 'pendingMessage'), false);
     assert.doesNotMatch(JSON.stringify(publicState.scratchpad), /observational sketch chosen/i);
+    assert.doesNotMatch(JSON.stringify(publicState.scratchpad), /receipt|interpretation/i);
     const history = controller.getPublicHistory();
     assert.equal(history.runId, completedRunId);
     assert.equal(history.items.length, controller.state.scratchpad.messageAudit.filter(message => message.status === 'sent').length);
@@ -3003,7 +3011,7 @@ test('RendezvousController uses one causal drawing pad and can find the other ag
     assert.ok(history.items.every(item => item.snapshot.agents.ada.pathLength <= publicState.agents.ada.path.length));
     assert.ok(history.items.every(item => item.snapshot.agents.theo.pathLength <= publicState.agents.theo.path.length));
     assert.ok(controller.getDrawingPath(completedRunId, history.items[0].id));
-    assert.doesNotMatch(JSON.stringify(history), /drawingPrompt|drawingIntent|groundedFeatures|privateMemory/);
+    assert.doesNotMatch(JSON.stringify(history), /drawingPrompt|drawingIntent|groundedFeatures|privateMemory|receipt|interpretation/);
     assert.equal(publicState.eventLog.some(entry => entry.type === 'agent_step' && entry.payload.searchTargetName), false);
     assert.equal(publicState.eventLog.some(entry => Object.hasOwn(entry.payload || {}, 'targetName')), false);
     assert.equal(publicState.eventLog.some(entry => Object.hasOwn(entry.payload || {}, 'distanceToTarget')), false);
