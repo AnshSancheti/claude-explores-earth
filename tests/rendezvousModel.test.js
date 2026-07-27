@@ -3348,6 +3348,7 @@ test('bare street substrate is omitted while distinctive local evidence remains'
           'busy urban street with crosswalk markings',
           'crosswalk markings with bold white stripes ahead',
           'central axis receding toward a vanishing point',
+          'no visible storefronts blocking the way',
           'orange construction barriers beneath dense scaffolding'
         ]
       }),
@@ -3374,7 +3375,7 @@ test('bare street substrate is omitted while distinctive local evidence remains'
     'New local observation: orange construction barriers beneath dense scaffolding');
   assert.doesNotMatch(
     catalogText,
-    /street with lane markings|cross-street environment|curb, sidewalk|broad urban street flanked|widthy urban street|long street lined|pedestrians and vehicles|busy urban street|bold white stripes|central axis/
+    /street with lane markings|cross-street environment|curb, sidewalk|broad urban street flanked|widthy urban street|long street lined|pedestrians and vehicles|busy urban street|bold white stripes|central axis|no visible storefronts/
   );
   assert.match(catalogText, /orange construction barriers beneath dense scaffolding/);
 });
@@ -3421,6 +3422,14 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
   );
   assert.equal(
     isConcreteLocalEvidence('New local observation: pedestrian activity'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('New local observation: No visible storefronts blocking the way'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('New local observation: a plaza without a distinctive structure'),
     false
   );
   assert.equal(

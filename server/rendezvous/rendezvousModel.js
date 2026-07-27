@@ -152,6 +152,9 @@ export function isConcreteLocalEvidence(description) {
   if (/\bstreet\s+(?:label|name)\b/i.test(value) || containsNamedStreetReference(value)) {
     return false;
   }
+  if (/\b(?:no|none|without|lacks?|lacking|absent|missing|not\s+visible)\b/i.test(value)) {
+    return false;
+  }
   if (isLowInformationUrbanObservation(value)) return false;
   return !/\b(?:arrow|implied|suggests?|cue|motif|route|waypoint|shared|prior|sheet|partner|destination|coordinate|map|grid|star|intersection context)\b/i
     .test(value);
