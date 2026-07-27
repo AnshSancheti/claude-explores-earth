@@ -2315,6 +2315,12 @@ Return only JSON:
         .test(blindActionDescription) ||
       /\b(?:command|instruction|invitation|invite|cue)\b[^.!;]{0,40}\b(?:follow|go|head|move|proceed|travel|walk)\b/i
         .test(blindActionDescription);
+    const reportsOwnAction =
+      contributionKind === 'own_action' ||
+      (
+        contributionKind === 'deliberate_repetition' &&
+        /\bmy current chosen action\b/i.test(contributionSummary)
+      );
     if (
       contributionKind === 'response' &&
       responseWithholdsRouteCertainty(contributionSummary) &&
@@ -2376,7 +2382,7 @@ Return only JSON:
       };
     }
     if (
-      contributionKind === 'own_action' &&
+      reportsOwnAction &&
       (
         blindRead.frameOfReference === 'shared' ||
         (

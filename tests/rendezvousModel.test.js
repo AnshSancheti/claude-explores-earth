@@ -3866,6 +3866,49 @@ test('own-action drawing review rejects a recipient-framed command', async () =>
   assert.equal(requests.length, 1);
 });
 
+test('repeating an own action retains sender-frame review', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      blindRead: {
+        literalContents: [
+          'a runner advances beneath a large red arrow on a broad avenue'
+        ],
+        primarySubject: 'a large forward arrow projected down the avenue',
+        likelyMessage: 'A forward-directed cue urging movement along a path.',
+        dominantAction: 'movement',
+        frameOfReference: 'recipient',
+        frameBasis: 'The arrow projects ahead as the viewer\'s next action.',
+        communicationFunction: 'deliberate_repetition',
+        movementCues: ['a large arrow pointing ahead'],
+        stillnessCues: [],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    contributionKind: 'deliberate_repetition',
+    contributionSummary:
+      'Deliberately repeating existing visual evidence without treating it as new: My current chosen action: I chose to move northeast along the selected public route.',
+    drawingIntent: 'Signal continued movement along the broad public axis ahead.',
+    informationDelta:
+      'Deliberately repeating existing visual evidence without treating it as new: My current chosen action: I chose to move northeast along the selected public route.',
+    continuityReason: 'The unchanged movement report is useful to repeat.',
+    messageAction: 'movement',
+    drawingPrompt: 'Draw a runner beneath a large forward arrow on a broad avenue.',
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /recipient.*not clearly the sender's own action/);
+  assert.match(review.revisionPrompt, /Avoid any standalone arrow/);
+  assert.equal(requests.length, 1);
+});
+
 test('own-action drawing review permits an intrinsically ambiguous retrospective report', async () => {
   const requests = [];
   const service = new RendezvousModelService({
