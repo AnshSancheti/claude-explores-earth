@@ -1243,6 +1243,32 @@ test('a route cannot align a chosen axis with newest evidence in reverse word or
   assert.doesNotMatch(decision.reasoning, /proposes moving|aligns with the newest evidence/i);
 });
 
+test('a route disclaimer cannot hide later movement along an indicated route', async () => {
+  let routeAttempts = 0;
+  const copiedReasoning = 'Ada’s latest sheet presents a crossroads but does not fix a destination; locally I can proceed along the unexplored public continuation toward the northeast. I treat the newest drawing as a report of a choice point, not a command to reproduce a specific path, so continuing along the indicated public route increases chances of meeting Ada while keeping options open.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route() {
+        routeAttempts += 1;
+        return routeResponse({
+          reasoning: copiedReasoning,
+          memoryUpdate: {
+            currentPlan: copiedReasoning
+          }
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.doesNotMatch(decision.reasoning, /indicated public route/i);
+});
+
 test('a sheet cannot frame forward motion as the locally justified path', async () => {
   const copiedReasoning = 'The newest sheet presents a calm, tree-lined street with a clear central corridor and a distant vanishing point, suggesting forward motion along the public avenue as the most locally justified path. Previous local notes indicate an unexplored continuation, and the current surroundings visually align with moving northeast.';
   const service = new RendezvousModelService({

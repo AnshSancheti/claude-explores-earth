@@ -849,7 +849,7 @@ export function sanitizeRendezvousDecision(raw, options, { allowWait = true } = 
 function copiesSheetRoute(...descriptions) {
   const text = descriptions.map(value => cleanString(value, 1200)).join(' ');
   const positiveText = text.replace(
-    /\b(?:do not|don't|never|not|without)\b[^.!?;]{0,120}/gi,
+    /\b(?:do not|don't|never|not|without)\b[^.!?;,]{0,120}/gi,
     ' '
   );
   const statements = positiveText

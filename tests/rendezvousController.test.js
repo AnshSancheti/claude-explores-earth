@@ -609,6 +609,80 @@ test('a model fallback does not replace the last genuine agent thought', async (
   }
 });
 
+test('a drawing fallback preserves completed sheet perception for the retry', async () => {
+  const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
+  process.env.RENDEZVOUS_START_PAIR_INDEX = '0';
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-perception-fallback-test-'));
+  const model = new ScriptedRendezvousModel({
+    fallbackCause: 'drawing_plan_error',
+    sheetInterpretation: 'Theo may be asking about two equally uncertain arches.',
+    sheetConfidence: 0.48,
+    sheetPerception: {
+      literalContents: ['two arches separated by an uncertain circle'],
+      possiblePlaces: [],
+      possibleIntentions: ['Theo may be asking Ada to compare the arches'],
+      primarySubject: 'two arches and an uncertain circle',
+      communicationFunction: 'question',
+      frameOfReference: 'sender',
+      requestedResponse: 'compare the two arches',
+      informationNovelty: 'new'
+    },
+    reconciliation: {
+      newEvidence: ['two arches separated by an uncertain circle'],
+      repeatedEvidence: [],
+      contradictions: [],
+      unresolvedQuestions: ['whether the arches depict the same place'],
+      informationWorthSending: [],
+      planAssessment: 'inconclusive'
+    }
+  });
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: model,
+      imageModel: new FakeImageModel(),
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad.owner = 'theo';
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'incoming-fallback-sheet',
+      agentId: 'theo',
+      turn: 0,
+      drawingIntent: 'Ask Ada to compare two arches.',
+      drawingPrompt: 'Two arches separated by an uncertain circle.'
+    });
+    await controller.resumePendingDrawing();
+    controller.state.status = 'running';
+    controller.running = true;
+
+    await controller.tick();
+
+    const memory = controller.state.agents.ada.privateMemory;
+    assert.equal(memory.receivedSheets.at(-1).sequence, 1);
+    assert.match(memory.receivedSheets.at(-1).interpretation, /equally uncertain arches/);
+    assert.equal(memory.reconciliations.at(-1).sheetSequence, 1);
+    assert.equal(controller.state.agents.ada.lastDecision.fallbackCause, 'drawing_plan_error');
+    assert.ok(controller.state.eventLog.some(event =>
+      event.type === 'sheet_perception_preserved' &&
+      event.payload.sheetSequence === 1
+    ));
+
+    assert.equal(
+      controller.state.agents.ada.privateMemory.reconciliations
+        .filter(item => item.sheetSequence === 1).length,
+      1
+    );
+    await controller.resumePendingDrawing();
+    await controller.shutdown();
+  } finally {
+    if (previousPairIndex === undefined) delete process.env.RENDEZVOUS_START_PAIR_INDEX;
+    else process.env.RENDEZVOUS_START_PAIR_INDEX = previousPairIndex;
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a holder can deliberately retrace a walked route at a genuine branch', async () => {
   const previousPairIndex = process.env.RENDEZVOUS_START_PAIR_INDEX;
   process.env.RENDEZVOUS_START_PAIR_INDEX = '0';

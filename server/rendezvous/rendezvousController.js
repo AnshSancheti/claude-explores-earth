@@ -1236,6 +1236,27 @@ export class RendezvousController {
           decisionReason = decision.reasoning;
           modelFallbackCause = decision.fallbackCause || null;
           if (modelFallbackCause) {
+            if (
+              scratchpad.currentMessage?.sequence &&
+              decision.sheetInterpretation &&
+              Array.isArray(decision.sheetPerception?.literalContents) &&
+              decision.sheetPerception.literalContents.length > 0
+            ) {
+              agent.privateMemory = applyMemoryRevision(agent.privateMemory, null, {
+                turn: this.state.turn,
+                sheetMessage: scratchpad.currentMessage,
+                sheetInterpretation: decision.sheetInterpretation,
+                sheetConfidence: decision.sheetConfidence,
+                sheetPerception: decision.sheetPerception,
+                reconciliation: decision.reconciliation
+              });
+              this.#recordEvent('sheet_perception_preserved', {
+                agentId,
+                agentName: agent.name,
+                sheetSequence: scratchpad.currentMessage.sequence,
+                cause: modelFallbackCause
+              });
+            }
             waitingAtBranch = true;
             mode = 'decision_retry';
             agent.status = 'waiting';

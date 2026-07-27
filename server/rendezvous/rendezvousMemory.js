@@ -346,7 +346,12 @@ export function applyMemoryRevision(memory, revision, {
     createdAt: updatedAt
   });
   if (reconciled) {
-    normalized.reconciliations = [...normalized.reconciliations, reconciled].slice(-MAX_RECONCILIATIONS);
+    normalized.reconciliations = [
+      ...normalized.reconciliations.filter(item =>
+        !sequence || item.sheetSequence !== sequence
+      ),
+      reconciled
+    ].slice(-MAX_RECONCILIATIONS);
   }
   normalized.updatedTurn = positiveInt(turn);
   normalized.updatedAt = updatedAt;
