@@ -119,12 +119,34 @@ const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
   'deliberate_repetition'
 ]);
 
+const LOW_INFORMATION_URBAN_WORDS = new Set([
+  'a', 'an', 'and', 'asphalt', 'at', 'ahead', 'building', 'buildings', 'car',
+  'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
+  'crosswalks', 'curb', 'environment', 'foreground', 'in', 'intersection',
+  'intersections', 'lane', 'lanes', 'local', 'marked', 'marking', 'markings',
+  'multiple', 'new', 'observation', 'of', 'on', 'pedestrian', 'pedestrians',
+  'road', 'roads', 'scene', 'sidewalk', 'sidewalks', 'straight', 'street',
+  'streets', 'tall', 'the', 'urban', 'vehicle', 'vehicles', 'visible', 'wide',
+  'with'
+]);
+
+function isLowInformationUrbanObservation(description) {
+  const words = cleanString(description, 500).toLowerCase().match(/[a-z]+/g) || [];
+  if (words.length === 0) return true;
+  const hasGenericStreetAnchor = words.some(word =>
+    ['crossing', 'crosswalk', 'curb', 'intersection', 'lane', 'road', 'sidewalk', 'street']
+      .includes(word)
+  );
+  return hasGenericStreetAnchor && words.every(word => LOW_INFORMATION_URBAN_WORDS.has(word));
+}
+
 function isConcreteLocalEvidence(description) {
   const value = cleanString(description, 220);
   if (!value || value.toLowerCase() === 'context') return false;
   if (/\bstreet\s+(?:label|name)\b/i.test(value) || containsNamedStreetReference(value)) {
     return false;
   }
+  if (isLowInformationUrbanObservation(value)) return false;
   return !/\b(?:arrow|implied|suggests?|cue|motif|route|waypoint|shared|prior|sheet|partner|destination|coordinate|map|grid|star|intersection context)\b/i
     .test(value);
 }
@@ -1286,6 +1308,8 @@ ${recentFieldNotes}`
 Decide what wordless drawing would be most useful to send now. You may communicate anything you genuinely believe could help you find each other: what you see, a remembered place, uncertainty, a correction, intended movement, a request, relative spatial relationships, or an invented visual convention. You are not limited to an observational postcard and you may use arrows, diagrams, symbols, maps, perspective, or figurative imagery when you choose.
 
 First identify your outbound contribution: what this reply contributes from your own observation, chosen action, response to the received drawing, question, correction, acknowledgement, or deliberate repetition. Cite exactly one evidence ID from the supplied catalog. The cited evidence becomes the authoritative information delta; do not restate or enlarge it as a separate claim. A response evidence item is your own private synthesis of what is worth saying back; it is not an instruction you must follow. When the received drawing is explicitly a question, answer it, clarify it, correct it, visibly acknowledge that you cannot answer it, or deliberately leave it unresolved. Do not evade it with an unrelated observational postcard when response evidence is available. This requirement preserves a real exchange without prescribing what you should believe or how you should search.
+
+Ordinary street substrate by itself is not a useful locating clue. Bare crosswalks, lanes, curbs, asphalt, traffic, sidewalks, or generic city buildings are omitted from the evidence catalog unless the observation also contains a distinctive structure, object, spatial relationship, or atmosphere. You may still use those ordinary elements as supporting context, transform a recurring one into a question or symbol, or deliberately repeat it when repetition itself is what you mean.
 
 Compose each handoff from a conceptually blank page. Make the cited contribution the largest, darkest, or otherwise unmistakable primary subject; prior visual language is optional supporting vocabulary, not a layout template. When the contribution is one simple observation or action, prefer one coherent composition. Use multiple panels only when the cited contribution itself needs a temporal, spatial, or comparative relationship; continuity alone does not justify copying a multi-panel itinerary. A received-sheet or prior-sent motif may be retained as context, acknowledgement, or deliberate repetition, but never relabel it as a new local observation. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and the cited evidence is visually dominant over that context. Repetition does not make a belief more certain. If you are asking your friend to clarify something, make the uncertainty, choice, or missing relationship visibly legible instead of drawing a confident route. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
 

@@ -2270,6 +2270,44 @@ test('abstract sheet-language residue is excluded from local outbound evidence',
   assert.doesNotMatch(catalogText, /Bowery|Prince|FDR Drive|W 47th|E 48th|street label/);
 });
 
+test('bare street substrate is omitted while distinctive local evidence remains', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      route: routeResponse({
+        observation: 'A street with lane markings, crosswalks, and orange barriers beneath scaffolding.',
+        observedFeatures: [
+          'street with lane markings and crosswalks',
+          'a cross-street environment',
+          'curb, sidewalk, and asphalt street',
+          'orange construction barriers beneath dense scaffolding'
+        ]
+      }),
+      drawing: drawingResponse({
+        contributionKind: 'local_observation',
+        contributionEvidenceId: 'local:0',
+        drawingIntent: 'Show the orange barriers beneath dense scaffolding.',
+        drawingPrompt: 'Draw orange construction barriers compressed beneath a dense scaffold canopy.',
+        groundedFeatureEvidenceIds: ['local:0']
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+  const drawingRequest = requests.find(request =>
+    /currently hold the one physical sheet/.test(request.messages[0].content)
+  );
+  const catalogText = drawingRequest.messages[1].content[0].text
+    .split('Available outbound evidence catalog:\n')[1];
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionSummary,
+    'New local observation: orange construction barriers beneath dense scaffolding');
+  assert.doesNotMatch(catalogText, /street with lane markings|cross-street environment|curb, sidewalk/);
+  assert.match(catalogText, /orange construction barriers beneath dense scaffolding/);
+});
+
 test('route planning rejects partner-cue dependency but preserves evidence-based waiting', async () => {
   const requests = [];
   let routeAttempts = 0;
