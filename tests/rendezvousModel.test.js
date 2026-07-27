@@ -3364,6 +3364,20 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence(
+      'New local observation: I am on a broad urban plaza-like street corridor'
+    ),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('New local observation: broad urban pedestrian pathway'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('New local observation: empty urban promenade receding into the distance'),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('row of storefronts with striped awnings'),
     true
   );

@@ -113,13 +113,13 @@ const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'active', 'an', 'and', 'are', 'asphalt', 'at', 'ahead', 'avenue', 'axis', 'building', 'buildings', 'car',
   'black', 'bold', 'bordered', 'both', 'broad', 'busy', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
   'crosswalks', 'curb', 'central', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
-  'expansive', 'extend', 'extending', 'extends', 'flanked', 'including', 'intersections', 'lane', 'lanes', 'lengthy', 'like', 'lined', 'local', 'long',
+  'am', 'corridor', 'corridors', 'empty', 'expansive', 'extend', 'extending', 'extends', 'flanked', 'i', 'including', 'intersections', 'into', 'lane', 'lanes', 'lengthy', 'like', 'lined', 'local', 'long',
   'manhattan', 'marked', 'marking', 'markings', 'multiple', 'narrow', 'narrowed', 'narrowing', 'new',
-  'observation', 'of', 'on', 'pedestrian', 'pedestrians', 'point', 'present', 'recede', 'recedes', 'receding',
+  'observation', 'of', 'on', 'pathway', 'pathways', 'pedestrian', 'pedestrians', 'plaza', 'plazas', 'point', 'present', 'promenade', 'promenades', 'public', 'recede', 'recedes', 'receding',
   'road', 'roads', 'roadway', 'row', 'rows', 'scene', 'several', 'side', 'sides', 'sidewalk', 'sidewalks', 'storefront',
   'storefronts', 'straight', 'street', 'traffic', 'streets', 'stripe', 'striped', 'stripes',
   'suggest', 'suggesting', 'suggests', 'surrounded', 'tall', 'taxi', 'taxis', 'the', 'urban', 'vehicle',
-  'vehicles', 'vanishing', 'visible', 'white', 'wide', 'widened', 'widening', 'widthy', 'with',
+  'vehicles', 'vanishing', 'visible', 'walkway', 'walkways', 'white', 'wide', 'widened', 'widening', 'widthy', 'with',
   'toward', 'towards'
 ]);
 
@@ -137,8 +137,8 @@ function isLowInformationUrbanObservation(description) {
   }
   const hasGenericStreetAnchor = words.some(word =>
     [
-      'axis', 'building', 'buildings', 'city', 'crossing', 'crosswalk', 'curb', 'intersection',
-      'lane', 'pedestrian', 'pedestrians', 'road', 'sidewalk', 'storefront', 'storefronts',
+      'axis', 'building', 'buildings', 'city', 'corridor', 'crossing', 'crosswalk', 'curb', 'intersection',
+      'lane', 'pathway', 'pedestrian', 'pedestrians', 'plaza', 'promenade', 'road', 'sidewalk', 'storefront', 'storefronts',
       'street', 'traffic', 'vehicle', 'vehicles'
     ]
       .includes(word)

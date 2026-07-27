@@ -1818,7 +1818,7 @@ test('a persisted alternating echo is abandoned after semantic replans are exhau
   }
 });
 
-test('a persisted low-information street report is abandoned after semantic replans are exhausted', async () => {
+test('a persisted broad plaza-corridor report is abandoned after semantic replans are exhausted', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-low-info-revalidation-test-'));
   let generatedImages = 0;
   try {
@@ -1841,12 +1841,12 @@ test('a persisted low-information street report is abandoned after semantic repl
       turn: 22,
       contributionKind: 'local_observation',
       contributionEvidenceId: 'local:0',
-      contributionSummary: 'New local observation: busy urban street with crosswalk markings',
-      drawingIntent: 'Show the busy street and crosswalk.',
-      informationDelta: 'New local observation: busy urban street with crosswalk markings',
+      contributionSummary: 'New local observation: I am on a broad urban plaza-like street corridor',
+      drawingIntent: 'Show the broad urban plaza-like street corridor.',
+      informationDelta: 'New local observation: I am on a broad urban plaza-like street corridor',
       messageAction: 'stillness',
-      drawingPrompt: 'Sketch a busy urban street with crosswalk markings.',
-      groundedFeatures: ['busy urban street with crosswalk markings']
+      drawingPrompt: 'Sketch a broad urban plaza-like street corridor.',
+      groundedFeatures: ['broad urban plaza-like street corridor']
     });
     controller.state.scratchpad.pendingMessage.replanCount = 2;
     controller.state.scratchpad.pendingMessage.replanFailureCount = 2;

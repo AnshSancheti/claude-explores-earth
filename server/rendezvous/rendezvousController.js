@@ -163,7 +163,14 @@ function canAcceptRecipientLegibleRetry(review, pending, attemptNumber) {
       correction: 'correction',
       acknowledgement: 'acknowledgement'
     }[pending?.contributionKind];
-    if (intendedFunction && blindRead?.communicationFunction === intendedFunction) {
+    const hasSheetWorthyLocalEvidence =
+      pending?.contributionKind !== 'local_observation' ||
+      isConcreteLocalEvidence(pending?.contributionSummary || pending?.informationDelta);
+    if (
+      intendedFunction &&
+      blindRead?.communicationFunction === intendedFunction &&
+      hasSheetWorthyLocalEvidence
+    ) {
       return true;
     }
   }
