@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  acknowledgementInventsRouteProposal,
   deliberateRepetitionHasPurpose,
   isConcreteLocalEvidence,
   isCueDependentSearchPlan,
@@ -562,6 +563,33 @@ test('a static local observation cannot add an uncited movement scene', async ()
   assert.equal(decision.contributionKind, 'local_observation');
   assert.equal(decision.messageAction, 'stillness');
   assert.doesNotMatch(decision.drawingPrompt, /footprints|route|vanishing point/i);
+});
+
+test('an acknowledgement cannot enlarge received evidence into a route proposal', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing: drawingResponse({
+        contributionEvidenceId: 'received:0',
+        drawingIntent:
+          'Acknowledge the received arches and propose moving along a shared axis toward a meeting point.',
+        continuityReason: 'The shared route proposal is the reason to repeat the arches.',
+        messageAction: 'movement',
+        drawingPrompt:
+          'Draw the received arches opening onto a forward path toward a circular meeting point.',
+        groundedFeatureEvidenceIds: ['received:0']
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.contributionKind, 'acknowledgement');
+  assert.equal(decision.messageAction, 'unclear');
+  assert.match(decision.drawingIntent, /Acknowledge this received visual evidence/);
+  assert.match(decision.drawingPrompt, /reception, reflection, or transformation/);
+  assert.doesNotMatch(decision.drawingPrompt, /circular meeting point|forward path/i);
+  assert.equal(acknowledgementInventsRouteProposal(decision), false);
 });
 
 test('a local observation records only its cited evidence as the intended message', async () => {

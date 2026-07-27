@@ -362,6 +362,25 @@ export function responseInventsRouteCoordination(message) {
     routeEndorsement.test(positiveText);
 }
 
+export function acknowledgementInventsRouteProposal(message) {
+  if (message?.contributionKind !== 'acknowledgement') return false;
+  const citedRouteCues = routeCommandCues(
+    message?.contributionSummary || message?.informationDelta
+  );
+  const authoredText = cleanString(
+    `${message?.drawingIntent || ''} ${message?.drawingPrompt || ''}`,
+    2800
+  ).replace(
+    /\b(?:do not|does not|doesn't|never|not|rather than|without)\b[^.!;]{0,120}/gi,
+    ' '
+  );
+  const hasUncitedRouteCue = routeCommandCues(authoredText)
+    .some(cue => !citedRouteCues.includes(cue));
+  const proposesCoordination =
+    /\b(?:coordinat|meeting point|propos|recommend|shared)\w*\b/i.test(authoredText);
+  return hasUncitedRouteCue && proposesCoordination;
+}
+
 export function deliberateRepetitionHasPurpose(message) {
   if (message?.contributionKind !== 'deliberate_repetition') return true;
   const reason = cleanString(message?.continuityReason, 700)
@@ -2013,6 +2032,25 @@ ${JSON.stringify(availableEvidence, null, 2)}`
           throw new Error(
             'Rendezvous response promoted an inferred sheet meaning into route coordination'
           );
+        }
+        if (acknowledgementInventsRouteProposal(candidateDrawingPlan)) {
+          if (attempt >= this.maxAttempts) {
+            candidateDrawingPlan.drawingIntent =
+              `Acknowledge this received visual evidence without enlarging it: ${candidateDrawingPlan.contributionSummary}.`;
+            candidateDrawingPlan.continuityReason =
+              'The received subject is repeated only to show that I recognized it.';
+            candidateDrawingPlan.messageAction = 'unclear';
+            candidateDrawingPlan.drawingPrompt =
+              `Create one coherent handmade, wordless response that visibly recognizes this received subject: ${citedEvidence.description}. Show reception, reflection, or transformation without adding a route, destination, meeting point, or movement proposal. Include no readable text, letters, numbers, labels, logos, or watermarks.`;
+            candidateDrawingPlan.groundedFeatures = [citedEvidence.description];
+            this.logger.warn?.(
+              `Rendezvous normalized an uncited acknowledgement route proposal after ${attempt} attempts`
+            );
+          } else {
+            throw new Error(
+              'Rendezvous acknowledgement enlarged received evidence into an uncited route proposal'
+            );
+          }
         }
         if (candidateDrawingPlan.contributionKind === 'own_action') {
           const citedDirections = namedCompassDirections(citedEvidence?.description);

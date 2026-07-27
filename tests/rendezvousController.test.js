@@ -1619,6 +1619,80 @@ test('a repeatedly unrenderable acknowledgement gets one bounded replan', async 
   }
 });
 
+test('a persisted acknowledgement route proposal is replanned before rendering', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-ack-proposal-test-'));
+  const replans = [];
+  const agentModel = {
+    async replanUnrenderableDrawing(input) {
+      replans.push(input);
+      return {
+        contributionKind: 'local_observation',
+        contributionEvidenceId: 'local:0',
+        contributionSummary: 'New local observation: river visible to the right.',
+        drawingIntent: 'Show the river visible to the right.',
+        informationDelta: 'New local observation: river visible to the right.',
+        continuityReason: '',
+        messageAction: 'stillness',
+        drawingPrompt: 'Draw the river as the dominant local landmark.',
+        groundedFeatures: ['river visible to the right']
+      };
+    },
+    async reviewDrawing() {
+      return {
+        accepted: true,
+        assessment: 'The river is the primary observation.',
+        blindRead: {
+          dominantAction: 'stillness',
+          frameOfReference: 'sender',
+          communicationFunction: 'report',
+          readableText: false,
+          likelyMessage: 'The sender sees a river.'
+        }
+      };
+    }
+  };
+  const imageModel = new FakeImageModel();
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel,
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'acknowledgement-route-proposal',
+      agentId: 'ada',
+      turn: 4,
+      contributionKind: 'acknowledgement',
+      contributionEvidenceId: 'received:0',
+      contributionSummary:
+        'Acknowledging received visual evidence without claiming it as my own: long pedestrian plaza',
+      drawingIntent:
+        'Propose moving along a shared axis toward a circular meeting point.',
+      informationDelta:
+        'Acknowledging received visual evidence without claiming it as my own: long pedestrian plaza',
+      continuityReason: 'The shared route proposal is why I repeat the plaza.',
+      messageAction: 'movement',
+      drawingPrompt: 'Draw a forward path toward a shared circular meeting point.',
+      groundedFeatures: ['long pedestrian plaza']
+    });
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(replans.length, 1);
+    assert.equal(imageModel.calls.length, 1);
+    assert.equal(controller.state.scratchpad.currentMessage.id, 'acknowledgement-route-proposal');
+    assert.equal(
+      controller.state.scratchpad.messageAudit.at(-1).contributionKind,
+      'local_observation'
+    );
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('a second failed replan can accept a recipient-legible local report', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-terminal-report-test-'));
   let reviews = 0;

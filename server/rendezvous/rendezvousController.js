@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'crypto';
 import { StreetViewHeadless } from '../services/streetViewHeadless.js';
 import { calculateBearing } from '../utils/geoUtils.js';
 import {
+  acknowledgementInventsRouteProposal,
   deliberateRepetitionHasPurpose,
   isConcreteLocalEvidence,
   isOwnActionContribution,
@@ -1736,6 +1737,8 @@ export class RendezvousController {
       !isConcreteLocalEvidence(pending.contributionSummary || pending.informationDelta);
     const contradictoryResponse = responseDrawingContradictsRouteUncertainty(pending);
     const inventedRouteCoordination = responseInventsRouteCoordination(pending);
+    const inventedAcknowledgementProposal =
+      acknowledgementInventsRouteProposal(pending);
     const unmotivatedRepetition = !deliberateRepetitionHasPurpose(pending);
     const incompleteQuestionPlan = pending.contributionKind === 'question' &&
       !questionAlternativesVisible(pending.contributionSummary, {
@@ -1747,6 +1750,7 @@ export class RendezvousController {
       lowInformationObservation ||
       contradictoryResponse ||
       inventedRouteCoordination ||
+      inventedAcknowledgementProposal ||
       unmotivatedRepetition ||
       incompleteQuestionPlan ||
       displacedLocalQuestion
@@ -1759,6 +1763,8 @@ export class RendezvousController {
         ? 'Pending response contradicts its stated route uncertainty with directional imagery'
         : inventedRouteCoordination
         ? 'Pending response promoted an inferred sheet meaning into route coordination'
+        : inventedAcknowledgementProposal
+        ? 'Pending acknowledgement enlarged received evidence into an uncited route proposal'
         : unmotivatedRepetition
         ? 'Pending deliberate repetition does not explain what repeating it communicates now'
         : incompleteQuestionPlan
