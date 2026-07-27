@@ -122,10 +122,10 @@ const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
 const LOW_INFORMATION_URBAN_WORDS = new Set([
   'a', 'an', 'and', 'asphalt', 'at', 'ahead', 'building', 'buildings', 'car',
   'bordered', 'both', 'broad', 'by', 'cars', 'city', 'corner', 'cross', 'crossing', 'crossings', 'crosswalk',
-  'crosswalks', 'curb', 'environment', 'foreground', 'in', 'intersection',
+  'crosswalks', 'curb', 'distance', 'distant', 'environment', 'far', 'foreground', 'in', 'intersection',
   'expansive', 'flanked', 'intersections', 'lane', 'lanes', 'lengthy', 'lined', 'local', 'long',
   'marked', 'marking', 'markings', 'multiple', 'narrow', 'narrowed', 'narrowing', 'new',
-  'observation', 'of', 'on', 'pedestrian', 'pedestrians',
+  'observation', 'of', 'on', 'pedestrian', 'pedestrians', 'traffic',
   'road', 'roads', 'scene', 'side', 'sides', 'sidewalk', 'sidewalks', 'straight', 'street',
   'streets', 'surrounded', 'tall', 'the', 'urban', 'vehicle', 'vehicles', 'visible', 'wide',
   'widened', 'widening', 'widthy', 'with'
@@ -135,7 +135,11 @@ function isLowInformationUrbanObservation(description) {
   const words = cleanString(description, 500).toLowerCase().match(/[a-z]+/g) || [];
   if (words.length === 0) return true;
   const hasGenericStreetAnchor = words.some(word =>
-    ['crossing', 'crosswalk', 'curb', 'intersection', 'lane', 'road', 'sidewalk', 'street']
+    [
+      'building', 'buildings', 'city', 'crossing', 'crosswalk', 'curb', 'intersection',
+      'lane', 'pedestrian', 'pedestrians', 'road', 'sidewalk', 'street', 'traffic',
+      'vehicle', 'vehicles'
+    ]
       .includes(word)
   );
   return hasGenericStreetAnchor && words.every(word => LOW_INFORMATION_URBAN_WORDS.has(word));
