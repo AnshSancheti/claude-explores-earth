@@ -734,6 +734,41 @@ test('a route cannot align its movement with surrounding sheet sketches', async 
   assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
 });
 
+test('a sheet-emphasized navigation axis cannot justify proceeding', async () => {
+  const copiedReasoning = 'The latest local evidence favors moving along a broad public street with open navigation and forward progression toward a distant point. The newest sheet emphasizes navigation along a central axis without prescribing a rendezvous, so proceeding keeps options open and maintains momentum.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'A centered crosswalk divides an otherwise static street.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    sheetMessage: {
+      sequence: 7,
+      from: 'theo',
+      to: 'ada',
+      contributionKind: 'local_observation'
+    }
+  }));
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.doesNotMatch(decision.reasoning, /emphasizes navigation|so proceeding/i);
+  assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
+});
+
 test('a local observation cannot become route guidance through an inferred proposal', async () => {
   let routeAttempts = 0;
   const service = new RendezvousModelService({
