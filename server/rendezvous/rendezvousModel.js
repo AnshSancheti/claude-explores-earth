@@ -972,6 +972,21 @@ function matchingRecentSentPropositions(candidateDrawingPlan, privateMemory) {
     });
 }
 
+function matchingCurrentFailedPropositions(candidateDrawingPlan, privateMemory) {
+  const currentSheetSequence = Number(
+    (privateMemory?.receivedSheets || []).at(-1)?.sequence
+  ) || 0;
+  return matchingRecentSentPropositions(
+    candidateDrawingPlan,
+    {
+      ...privateMemory,
+      sentMessages: (privateMemory?.failedMessages || [])
+        .filter(message => Number(message?.sheetSequence) === currentSheetSequence)
+        .slice(-6)
+    }
+  );
+}
+
 export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
   const contributionKind = candidateDrawingPlan?.contributionKind;
   if (
@@ -988,17 +1003,9 @@ export function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMe
     candidateDrawingPlan,
     privateMemory
   ).length;
-  const currentSheetSequence = Number(
-    (privateMemory?.receivedSheets || []).at(-1)?.sequence
-  ) || 0;
-  const matchingFailedMessages = matchingRecentSentPropositions(
+  const matchingFailedMessages = matchingCurrentFailedPropositions(
     candidateDrawingPlan,
-    {
-      ...privateMemory,
-      sentMessages: (privateMemory?.failedMessages || [])
-        .filter(message => Number(message?.sheetSequence) === currentSheetSequence)
-        .slice(-6)
-    }
+    privateMemory
   ).length;
   const recentReceivedObservations = contributionKind === 'local_observation'
     ? (privateMemory?.receivedSheets || []).slice(-6)
@@ -1550,6 +1557,18 @@ ${recentFieldNotes}`
       perception,
       privateMemory: actionMemory,
       options
+    }).filter(evidence => {
+      const contributionKind = contributionKindForEvidenceId(evidence.id);
+      const contributionSummary = authoritativeContributionSummary(
+        contributionKind,
+        evidence.description,
+        evidence.id
+      );
+      return matchingCurrentFailedPropositions({
+        contributionKind,
+        contributionSummary,
+        informationDelta: contributionSummary
+      }, actionMemory).length === 0;
     });
     const drawingSystemPrompt = `You are ${agent.name}. You have reached a real choice while trying to find ${partnerName}, and you currently hold the one physical sheet you pass back and forth.
 
@@ -1626,7 +1645,7 @@ ${JSON.stringify({
 }, null, 2)}
 
 Your prior private memory:
-${JSON.stringify(actionMemory, null, 2)}
+${JSON.stringify(actionMemoryForPrompt, null, 2)}
 
 Available outbound evidence catalog:
 ${JSON.stringify(contributionEvidence, null, 2)}`

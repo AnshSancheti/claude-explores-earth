@@ -291,6 +291,48 @@ test('renderer failure memory stays out of the model-facing route ledger', async
   const serializedRouteRequest = JSON.stringify(routeRequest);
   assert.doesNotMatch(serializedRouteRequest, /private-failed-draft/);
   assert.doesNotMatch(serializedRouteRequest, /private renderer rejection marker/i);
+  const serializedRequests = JSON.stringify(requests);
+  assert.doesNotMatch(serializedRequests, /private-failed-draft/);
+  assert.doesNotMatch(serializedRequests, /private renderer rejection marker/i);
+});
+
+test('same-sheet failed propositions are omitted from the outbound evidence catalog', async () => {
+  const requests = [];
+  const baseInput = input();
+  const service = new RendezvousModelService({
+    client: stagedClient(requests),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...baseInput.privateMemory,
+      receivedSheets: [{
+        sequence: 7,
+        interpretation: 'A circle appears between arches.'
+      }],
+      failedMessages: [{
+        draftId: 'failed-circle-question',
+        sheetSequence: 7,
+        contributionKind: 'question',
+        contributionSummary: 'Question I am sending: whether the circle represents a lamp or destination',
+        informationDelta: 'Question I am sending: whether the circle represents a lamp or destination',
+        intent: 'Ask whether the circle represents a lamp or destination.'
+      }]
+    }
+  }));
+
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionEvidenceId, 'local:0');
+  const drawingRequest = requests.find(request =>
+    /currently hold the one physical sheet/.test(request.messages[0].content)
+  );
+  assert.ok(drawingRequest);
+  const drawingText = drawingRequest.messages[1].content
+    .find(item => item.type === 'text')?.text || '';
+  const catalogText = drawingText.split('Available outbound evidence catalog:\n')[1] || '';
+  assert.doesNotMatch(catalogText, /"id": "question:0"/);
+  assert.match(catalogText, /"id": "local:0"/);
 });
 
 test('an agent can turn concrete local evidence into its own visual question', async () => {
