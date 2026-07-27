@@ -4154,6 +4154,46 @@ test('own-action drawing review rejects a recipient-framed command', async () =>
   assert.equal(requests.length, 1);
 });
 
+test('own-action drawing review rejects a generic scene with unclear authorship', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      blindRead: {
+        literalContents: [
+          'a busy avenue with pedestrians, vehicles, and a foreground crosswalk'
+        ],
+        primarySubject: 'a crowded city crossing framed by tall buildings',
+        likelyMessage: 'A snapshot of a typical urban commute or street life.',
+        dominantAction: 'movement',
+        frameOfReference: 'unclear',
+        frameBasis: 'No person or trail is distinguished as the sender.',
+        communicationFunction: 'unclear',
+        movementCues: ['pedestrians and vehicles moving through the crossing'],
+        stillnessCues: [],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'own_action',
+    contributionSummary: 'My current chosen action: I chose to move northeast.',
+    drawingIntent: 'Report my chosen movement through the city.',
+    informationDelta: 'My current chosen action: I chose to move northeast.',
+    messageAction: 'movement',
+    drawingPrompt: 'Draw a busy city crossing with movement along the avenue.',
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /unclear.*not clearly the sender's own action/);
+  assert.match(review.revisionPrompt, /completed motion behind/);
+  assert.equal(requests.length, 1);
+});
+
 test('repeating an own action retains sender-frame review', async () => {
   const requests = [];
   const service = new RendezvousModelService({

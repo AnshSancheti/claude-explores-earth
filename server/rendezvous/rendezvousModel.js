@@ -2422,10 +2422,14 @@ Return only JSON:
       ].filter(Boolean).join(' '),
       3000
     );
+    const positiveBlindActionDescription = blindActionDescription.replace(
+      /\b(?:no|not|without)\b[^.!?;,]{0,100}/gi,
+      ' '
+    );
     const hasRetrospectiveActionFrame =
-      /\b(?:figure|person|pedestrian|walker|someone|subject)\b/i.test(blindActionDescription) &&
+      /\b(?:figure|person|pedestrian|walker|someone|subject)\b/i.test(positiveBlindActionDescription) &&
       /\b(?:behind|completed|departure|departing|fading|footprints?|leaving|past|trail)\b/i
-        .test(blindActionDescription);
+        .test(positiveBlindActionDescription);
     const explicitlyRecipientDirected =
       ['directive', 'request'].includes(blindRead.communicationFunction) ||
       /\b(?:recipient|viewer)\b[^.!;]{0,50}\b(?:follow|go|head|move|proceed|should|travel|walk)\b/i
@@ -2501,11 +2505,15 @@ Return only JSON:
       reportsOwnAction &&
       (
         blindRead.frameOfReference === 'shared' ||
-        (
-          blindRead.frameOfReference === 'recipient' &&
-          (explicitlyRecipientDirected || !hasRetrospectiveActionFrame)
-        )
+      (
+        blindRead.frameOfReference === 'recipient' &&
+        (explicitlyRecipientDirected || !hasRetrospectiveActionFrame)
+      ) ||
+      (
+        blindRead.frameOfReference === 'unclear' &&
+        !hasRetrospectiveActionFrame
       )
+    )
     ) {
       return {
         accepted: false,
