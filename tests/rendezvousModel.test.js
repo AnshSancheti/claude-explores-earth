@@ -3601,6 +3601,14 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     true
   );
   assert.equal(
+    isConcreteLocalEvidence('New local observation: brick multi-story building on the left'),
+    false
+  );
+  assert.equal(
+    isConcreteLocalEvidence('New local observation: brick clock tower on the left'),
+    true
+  );
+  assert.equal(
     isConcreteLocalEvidence('New local observation: No visible storefronts blocking the way'),
     false
   );
