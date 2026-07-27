@@ -2984,6 +2984,50 @@ test('local-observation review recognizes a midtown-scale urban canyon', async (
   assert.equal(review.accepted, true);
 });
 
+test('local-observation review recognizes crosswalk wording as the cited subject', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      blindRead: {
+        literalContents: ['a crosswalk spans a street extending into the city'],
+        primarySubject: 'the crosswalk and the street extending into the city',
+        likelyMessage: 'A crosswalk is visible before a continuing street.',
+        dominantAction: 'unclear',
+        frameOfReference: 'unclear',
+        frameBasis: 'No acting subject is present.',
+        communicationFunction: 'report',
+        movementCues: [],
+        stillnessCues: [],
+        readableText: false
+      },
+      review: {
+        accepted: true,
+        contributionPrimary: true,
+        materialContributionConflict: false,
+        visualNovelty: 'distinct',
+        assessment: 'The crosswalk is the primary observed feature.',
+        revisionPrompt: ''
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: crosswalk markings visible ahead',
+    drawingIntent: 'Show the crosswalk markings.',
+    informationDelta: 'New local observation: crosswalk markings visible ahead',
+    messageAction: 'unclear',
+    drawingPrompt: 'Sketch crosswalk markings visible ahead.',
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, true);
+  assert.equal(requests.length, 2);
+});
+
 test('blind recipient action overrides a sender review biased by intent', async () => {
   const requests = [];
   const service = new RendezvousModelService({

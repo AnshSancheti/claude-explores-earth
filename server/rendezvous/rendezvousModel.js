@@ -136,10 +136,12 @@ function atomizeLocalEvidenceDescription(description) {
 }
 
 const VISUAL_SIMILARITY_STOPWORDS = new Set([
-  'about', 'along', 'also', 'around', 'away', 'been', 'being', 'both', 'city',
-  'could', 'down', 'from', 'into', 'large', 'left', 'might', 'other', 'person',
-  'right', 'scene', 'shows', 'side', 'street', 'their', 'there', 'these', 'they',
-  'this', 'through', 'toward', 'towards', 'urban', 'viewer', 'with', 'would'
+  'about', 'ahead', 'along', 'also', 'and', 'around', 'away', 'background',
+  'been', 'being', 'both', 'city', 'could', 'distance', 'distant', 'down',
+  'foreground', 'from', 'into', 'large', 'left', 'might', 'one', 'other',
+  'person', 'right', 'scene', 'shows', 'side', 'street', 'the', 'their',
+  'there', 'these', 'they', 'this', 'through', 'toward', 'towards', 'urban',
+  'viewer', 'visible', 'with', 'would'
 ]);
 
 function normalizeVisualToken(token) {
