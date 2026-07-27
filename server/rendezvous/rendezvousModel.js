@@ -923,7 +923,7 @@ function copiesSheetRoute(...descriptions) {
     .split(/[.!?;]+/)
     .map(value => value.trim())
     .filter(Boolean);
-  const recentEvidence = '(?:latest|newest|new)(?:\\s+(?:environmental|private|visual))?\\s+evidence';
+  const recentEvidence = '(?:latest|newest|new)(?:\\s+(?:environmental|private|visual))?\\s+(?:evidence|reading)';
   const cue = `(?:arrows?|cues?|depicted|direction|drawings?|footprints?|forward(?:-movement)? frame|indicated|implied|latest sheets?|motifs?|new sheets?|newest sheets?|${recentEvidence}|path|prompts?|route|scenes?|sheets?|sketch(?:es)?|visuals?|vector)`;
   const copyAction = '(?:align(?:s|ed|ing)? with|continue|follow|in line with|mirror|move|preserve|proceed|pursue|reproduce)';
   const crossClausePrompt = /\b(?:drawing|sheet)\b[^.!?]{0,180}\b(?:cue|prompt)\b[^.!?]{0,140}\b(?:advanc|continu|head|keep|move|proceed)\w*\b/i
@@ -934,12 +934,16 @@ function copiesSheetRoute(...descriptions) {
   const crossClauseRouteAlignment =
     /\b(?:latest|newest|new)\b[^.!;]{0,80}\b(?:drawings?|images?|scenes?|sheets?|sketch(?:es)?)\b[^.!;]{0,160}\b(?:avenue|axis|continuation|corridor|direction|forward|motion|movement|navigation|path|route|vanishing point|way)\b[^.!]{0,40}[.;][^.!;]{0,180}\b(?:align|favor|reinforce|support)\w*\b[^.!;]{0,120}\b(?:advanc|continu|head|mov|proceed|progress)\w*\b/i
       .test(positiveText);
+  const crossClauseQualifiedReading =
+    /\b(?:latest|newest|new)(?:\s+(?:environmental|private|visual))?\s+(?:evidence|reading)\b[^.!;]{0,180}\b(?:avenue|axis|continuation|corridor|direction|forward|motion|movement|path|route|vanishing point|way)\b[^.!]{0,80}[.;][^.!]{0,220}\b(?:advanc|align|continu|follow|head|mov|proceed|progress)\w*\b[^.!;]{0,120}\b(?:avenue|axis|continuation|corridor|direction|path|route|street|way)\b/i
+      .test(positiveText);
   const attributedSharedPush =
     /\b(?:arrows?|cues?|drawings?|sheets?|signals?|sketch(?:es)?|visuals?)\b[^.!;]{0,180}\bshared\s+(?:cue|invitation|push|signal)\b[^.!;]{0,60}\b(?:advanc|continu|head|move|press|proceed)\w*\b/i
       .test(positiveText);
   return crossClausePrompt ||
     crossClauseCoordination ||
     crossClauseRouteAlignment ||
+    crossClauseQualifiedReading ||
     attributedSharedPush ||
     statements.some(statement => {
     if (/\b(?:intercept|opposite|counter|cross(?:ing)? path)\b/i.test(statement)) return false;
@@ -1709,7 +1713,7 @@ Return only JSON:
         }
       );
     }
-    const drawingContent = [
+    const drawingContentFor = availableEvidence => [
       {
         type: 'text',
         text: `Your private reading and evidence delta:
@@ -1729,7 +1733,7 @@ Your prior private memory:
 ${JSON.stringify(actionMemoryForPrompt, null, 2)}
 
 Available outbound evidence catalog:
-${JSON.stringify(contributionEvidence, null, 2)}`
+${JSON.stringify(availableEvidence, null, 2)}`
       },
       ...drawingVisualContext
     ];
@@ -1737,9 +1741,13 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
     let drawingRetryFeedback = '';
     let drawingPlanAttemptLimit = this.maxAttempts;
     const drawingPlanFailureKinds = new Set();
+    const excludedDrawingEvidenceIds = new Set();
     tokenBudget = Math.min(this.maxTokens, 1800);
     for (let attempt = 1; attempt <= drawingPlanAttemptLimit; attempt += 1) {
       try {
+        const availableContributionEvidence = contributionEvidence
+          .filter(evidence => !excludedDrawingEvidenceIds.has(evidence.id));
+        const drawingContent = drawingContentFor(availableContributionEvidence);
         const response = await this.#client().chat.completions.create({
           model: this.model,
           messages: [
@@ -1760,7 +1768,8 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         });
         const parsed = parseJsonContent(response?.choices?.[0]?.message?.content);
         const contributionEvidenceId = cleanString(parsed?.contributionEvidenceId, 80);
-        const citedEvidence = contributionEvidence.find(item => item.id === contributionEvidenceId);
+        const citedEvidence = availableContributionEvidence
+          .find(item => item.id === contributionEvidenceId);
         const contributionKind = contributionKindForEvidenceId(contributionEvidenceId);
         const contributionSummary = authoritativeContributionSummary(
           contributionKind,
@@ -1774,7 +1783,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         const groundedFeatures = [
           citedEvidence?.description,
           ...groundedFeatureEvidenceIds.map(id =>
-            contributionEvidence.find(item => item.id === id)?.description
+            availableContributionEvidence.find(item => item.id === id)?.description
           )
         ].filter(Boolean);
         const routeLabels = (Array.isArray(options) ? options : []).map(option => option?.label);
@@ -1826,6 +1835,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           throw new Error('Rendezvous drawing planner omitted one or both visual question alternatives');
         }
         if (!localQuestionPreservesCitedSubject(candidateDrawingPlan)) {
+          excludedDrawingEvidenceIds.add(candidateDrawingPlan.contributionEvidenceId);
           throw new Error('Rendezvous local question displaced its cited subject with the received cue');
         }
         if (

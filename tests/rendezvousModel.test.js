@@ -387,13 +387,15 @@ test('a local question cannot hide a question about the received cue', async () 
           request.messages[1].content[0].text,
           /Keep that feature inside the actual whether-or-if clause/
         );
+        const retryPrompt = request.messages[1].content.map(item => item.text || '').join('\n');
+        assert.doesNotMatch(retryPrompt, /"id": "question_local:0"/);
         return drawingResponse({
           contributionKind: 'question',
-          contributionEvidenceId: 'question_local:0',
-          drawingIntent: 'Ask whether Theo recognizes the relationship among these repeated arches.',
+          contributionEvidenceId: 'question:0',
+          drawingIntent: 'Ask whether the recurring circle represents a lamp or a destination.',
           messageAction: 'unclear',
-          drawingPrompt: 'Draw three stone arches with two equally unresolved relationships.',
-          groundedFeatureEvidenceIds: ['question_local:0']
+          drawingPrompt: 'Draw one uncertain circle balanced equally between a lamp and a destination.',
+          groundedFeatureEvidenceIds: ['question:0']
         });
       }
     }),
@@ -404,8 +406,8 @@ test('a local question cannot hide a question about the received cue', async () 
 
   assert.equal(drawingAttempts, 2);
   assert.equal(decision.fallbackCause, null);
-  assert.equal(decision.contributionEvidenceId, 'question_local:0');
-  assert.match(decision.drawingIntent, /these repeated arches/);
+  assert.equal(decision.contributionEvidenceId, 'question:0');
+  assert.match(decision.drawingIntent, /lamp or a destination/);
 });
 
 test('a local question may compare its cited subject with a received drawing', () => {
@@ -1490,6 +1492,34 @@ test('newest private evidence cannot quietly direct movement along an axis', asy
   assert.match(decision.reasoning, /what I can currently see/i);
   assert.match(decision.reasoning, /not route guidance/i);
   assert.doesNotMatch(decision.reasoning, /newest private evidence|unseen public continuation/i);
+});
+
+test('a newest private reading cannot carry a route across sentences', async () => {
+  const copiedReasoning = 'The newest private reading portrays a broad, orderly urban axis with a distant core. My current physical path is already veering northeast through a dense street canyon; continuing along the broad axis (Option 0) keeps forward momentum without locking Ada to a single fixed route, and aligns with the observed canyon-like streets in my environment.';
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'report',
+        frameOfReference: 'sender',
+        sheetInterpretation: 'A broad street recedes toward a distant core.'
+      },
+      route: routeResponse({
+        reasoning: copiedReasoning,
+        memoryUpdate: {
+          currentPlan: copiedReasoning
+        }
+      })
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(decision.fallbackCause, null);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /not route guidance/i);
+  assert.doesNotMatch(decision.reasoning, /newest private reading|broad axis/i);
 });
 
 test('a route cannot align a chosen axis with newest evidence in reverse word order', async () => {
