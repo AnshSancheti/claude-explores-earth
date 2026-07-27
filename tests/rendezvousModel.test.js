@@ -2058,9 +2058,9 @@ test('a drawing replan offers composite streetscapes as separate visual facts', 
     client: stagedClient(requests, {
       replan: {
         contributionEvidenceId: 'local:1',
-        drawingIntent: 'Show the row of parked vans.',
+        drawingIntent: 'Show three red delivery vans beneath an iron viaduct.',
         messageAction: 'stillness',
-        drawingPrompt: 'Draw one row of parked vans as the sole dominant subject.',
+        drawingPrompt: 'Draw three red delivery vans beneath an iron viaduct as the sole dominant subject.',
         groundedFeatureEvidenceIds: ['local:1']
       }
     }),
@@ -2076,17 +2076,20 @@ test('a drawing replan offers composite streetscapes as separate visual facts', 
     },
     privateMemory: {
       ownObservations: [{
-        description: 'tree-lined sidewalk; row of parked vans; crosswalk markings ahead',
+        description: 'tree-lined sidewalk; three red delivery vans beneath an iron viaduct; crosswalk markings ahead',
         sourcePanoId: 'ada-current'
       }]
     }
   });
 
-  assert.equal(replan.contributionSummary, 'New local observation: row of parked vans');
+  assert.equal(
+    replan.contributionSummary,
+    'New local observation: three red delivery vans beneath an iron viaduct'
+  );
   const requestText = requests[0].messages.at(-1).content;
   assert.match(requestText, /"description": "tree-lined sidewalk"/);
-  assert.match(requestText, /"description": "row of parked vans"/);
-  assert.doesNotMatch(requestText, /tree-lined sidewalk; row of parked vans/);
+  assert.match(requestText, /"description": "three red delivery vans beneath an iron viaduct"/);
+  assert.doesNotMatch(requestText, /tree-lined sidewalk; three red delivery vans/);
 });
 
 test('a drawing replan atomizes long streetscapes and drops generic fragments', async () => {
@@ -2230,9 +2233,9 @@ test('a drawing replan cannot reintroduce an exhausted outbound proposition', as
     client: stagedClient(requests, {
       replan: {
         contributionEvidenceId: 'local:1',
-        drawingIntent: 'Show the row of parked vans as the new local fact.',
+        drawingIntent: 'Show three red delivery vans beneath an iron viaduct as the new local fact.',
         messageAction: 'stillness',
-        drawingPrompt: 'Draw one quiet row of parked vans.',
+        drawingPrompt: 'Draw three red delivery vans beneath an iron viaduct.',
         groundedFeatureEvidenceIds: ['local:1']
       }
     }),
@@ -2255,7 +2258,7 @@ test('a drawing replan cannot reintroduce an exhausted outbound proposition', as
     },
     privateMemory: {
       ownObservations: [{
-        description: 'tree-lined urban street; row of parked vans',
+        description: 'tree-lined urban street; three red delivery vans beneath an iron viaduct',
         sourcePanoId: 'ada-current'
       }],
       sentMessages: [
@@ -2266,10 +2269,13 @@ test('a drawing replan cannot reintroduce an exhausted outbound proposition', as
   });
 
   assert.equal(replan.contributionEvidenceId, 'local:1');
-  assert.equal(replan.contributionSummary, 'New local observation: row of parked vans');
+  assert.equal(
+    replan.contributionSummary,
+    'New local observation: three red delivery vans beneath an iron viaduct'
+  );
   const requestText = requests[0].messages.at(-1).content;
   assert.doesNotMatch(requestText, /tree-lined urban street/);
-  assert.match(requestText, /row of parked vans/);
+  assert.match(requestText, /three red delivery vans beneath an iron viaduct/);
 });
 
 test('a drawing replan retries a placeholder intent and contradictory action', async () => {
@@ -3706,6 +3712,7 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     isConcreteLocalEvidence('New local observation: row of parked cars along the curb on both sides'),
     false
   );
+  assert.equal(isConcreteLocalEvidence('New local observation: parked vans'), false);
   assert.equal(
     isConcreteLocalEvidence('subtle shading suggesting depth and distance'),
     false
@@ -3755,6 +3762,7 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     true
   );
   assert.equal(isConcreteLocalEvidence('a dense queue of yellow taxis beneath an iron viaduct'), true);
+  assert.equal(isConcreteLocalEvidence('three red delivery vans beneath an iron viaduct'), true);
   assert.equal(
     isConcreteLocalEvidence('a south-east oriented street passing beneath an iron viaduct'),
     true

@@ -119,7 +119,7 @@ const LOW_INFORMATION_URBAN_WORDS = new Set([
   'perspective', 'prominent', 'pronounced', 'right', 'road', 'roads', 'roadway', 'roadways', 'row', 'rows', 'scene', 'several', 'side', 'sides', 'sidewalk', 'sidewalks', 'small', 'stories', 'story', 'storefront', 'strong',
   'shading', 'south', 'southeast', 'southern', 'southwest', 'storefronts', 'straight', 'street', 'subtle', 'traffic', 'streets', 'stripe', 'striped', 'stripes',
   'sill', 'single', 'sky', 'stone', 'suggest', 'suggesting', 'suggests', 'surrounded', 'surrounding', 'tall', 'taxi', 'taxis', 'that', 'the', 'urban', 'vehicle',
-  'vehicles', 'vanishing', 'visible', 'wall', 'walls', 'walkway', 'walkways', 'was', 'were', 'west', 'western', 'which', 'white', 'wide', 'widened', 'widening', 'widthy', 'window', 'windows', 'with', 'tiled', 'to',
+  'van', 'vanishing', 'vans', 'vehicles', 'visible', 'wall', 'walls', 'walkway', 'walkways', 'was', 'were', 'west', 'western', 'which', 'white', 'wide', 'widened', 'widening', 'widthy', 'window', 'windows', 'with', 'tiled', 'to',
   'toward', 'towards'
 ]);
 
@@ -145,9 +145,9 @@ function isLowInformationUrbanObservation(description) {
   }
   const hasGenericStreetAnchor = words.some(word =>
     [
-      'avenue', 'axis', 'boulevard', 'building', 'buildings', 'canyon', 'city', 'corridor', 'crossing', 'crosswalk', 'curb', 'facade', 'intersection',
+      'avenue', 'axis', 'boulevard', 'building', 'buildings', 'canyon', 'car', 'cars', 'city', 'corridor', 'crossing', 'crosswalk', 'curb', 'facade', 'intersection',
       'lane', 'pathway', 'pavement', 'pedestrian', 'pedestrians', 'perspective', 'plaza', 'promenade', 'road', 'roadway', 'roadways', 'shading', 'sidewalk', 'storefront', 'storefronts',
-      'street', 'traffic', 'vehicle', 'vehicles', 'wall', 'walls', 'window', 'windows'
+      'street', 'taxi', 'taxis', 'traffic', 'van', 'vans', 'vehicle', 'vehicles', 'wall', 'walls', 'window', 'windows'
     ]
       .includes(word)
   );
