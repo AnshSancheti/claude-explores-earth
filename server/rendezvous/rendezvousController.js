@@ -1846,6 +1846,9 @@ export class RendezvousController {
             if (failureCount >= MAX_DRAWING_REPLAN_FAILURES) {
               liveScratchpad.pendingMessage.replanCount = MAX_DRAWING_REPLANS;
               liveScratchpad.pendingMessage.nextAttemptAt = null;
+              const failedPending = { ...liveScratchpad.pendingMessage };
+              const failureReason =
+                `Semantic drawing replanning exhausted: ${error.message}`;
               this.#recordEvent('scratchpad_replan_exhausted', {
                 id: pending.id,
                 from: pending.from,
@@ -1853,6 +1856,22 @@ export class RendezvousController {
                 failures: failureCount,
                 error: error.message
               });
+              this.#rememberFailedDrawing(failedPending, failureReason);
+              this.state.scratchpad = failRasterScratchpadMessage(liveScratchpad, {
+                pendingId: pending.id,
+                error: failureReason
+              });
+              this.#recordEvent('scratchpad_abandoned', {
+                id: pending.id,
+                from: pending.from,
+                to: pending.to,
+                error: failureReason,
+                attempts: failedPending.attempts,
+                totalAttempts: failedPending.totalAttempts,
+                replanCount: failedPending.replanCount
+              });
+              this.#releaseSheetHolderAfterAbandonment(failedPending);
+              this.#scheduleAfterDrawingAbandonment();
             } else {
               const retryAt = new Date(Date.now() + this.drawingRetryBaseMs).toISOString();
               liveScratchpad.pendingMessage.nextAttemptAt = retryAt;
@@ -1864,9 +1883,10 @@ export class RendezvousController {
                 error: error.message,
                 retryAt
               });
+              this.state.scratchpad = liveScratchpad;
             }
-            this.state.scratchpad = liveScratchpad;
             await this.saveState();
+            this.broadcastState();
           }
           this.logger.warn?.(`Rendezvous drawing ${pending.id} could not be replanned: ${error.message}`);
         }

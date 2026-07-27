@@ -2179,15 +2179,17 @@ test('semantic recovery exhaustion abandons only the unsent draft', async () => 
   }
 });
 
-test('failed replanning is retried separately before bounded recipient-legible delivery', async () => {
+test('failed semantic replanning abandons the draft instead of retrying its known-bad render prompt', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-replan-failure-test-'));
   let replans = 0;
+  let reviews = 0;
   const agentModel = {
     async replanUnrenderableDrawing() {
       replans += 1;
       throw new Error('Rendezvous drawing replan omitted its visual message');
     },
     async reviewDrawing() {
+      reviews += 1;
       return {
         accepted: false,
         assessment: 'The median tree is more dominant than the broad avenue.',
@@ -2227,6 +2229,8 @@ test('failed replanning is retried separately before bounded recipient-legible d
     controller.state.scratchpad.pendingMessage.attempts = 6;
     controller.state.scratchpad.pendingMessage.totalAttempts = 6;
     controller.state.scratchpad.pendingMessage.replanCount = 1;
+    controller.state.agents.ada.status = 'waiting';
+    controller.state.agents.ada.sheetBlockedPanoId = controller.state.agents.ada.panoId;
 
     await controller.resumePendingDrawing();
 
@@ -2239,13 +2243,18 @@ test('failed replanning is retried separately before bounded recipient-legible d
     await controller.resumePendingDrawing();
 
     assert.equal(replans, 2);
+    assert.equal(reviews, 0);
     assert.equal(controller.state.scratchpad.pendingMessage, null);
-    assert.equal(controller.state.scratchpad.currentMessage.id, 'failed-replan-report');
+    assert.equal(controller.state.scratchpad.currentMessage, null);
     assert.equal(controller.state.scratchpad.messageAudit.at(-1).replanCount, 2);
+    assert.equal(controller.state.scratchpad.messageAudit.at(-1).status, 'failed');
     assert.match(
-      controller.state.scratchpad.messageAudit.at(-1).reviewAssessment,
-      /Accepted after 7 durable attempts/
+      controller.state.scratchpad.messageAudit.at(-1).error,
+      /Semantic drawing replanning exhausted/
     );
+    assert.equal(controller.state.agents.ada.status, 'searching');
+    assert.equal(controller.state.agents.ada.sheetBlockedPanoId, null);
+    assert.equal(controller.state.agents.ada.privateMemory.failedMessages.at(-1).draftId, 'failed-replan-report');
   } finally {
     await fsp.rm(tempDir, { recursive: true, force: true });
   }
