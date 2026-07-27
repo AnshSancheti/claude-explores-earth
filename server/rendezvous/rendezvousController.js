@@ -8,6 +8,7 @@ import {
   deliberateRepetitionHasPurpose,
   isConcreteLocalEvidence,
   isOwnActionContribution,
+  localObservationMatchesBlindRead,
   localQuestionPreservesCitedSubject,
   questionAlternativesVisible,
   RendezvousModelService,
@@ -138,6 +139,14 @@ function canAcceptRecipientLegibleRetry(review, pending, attemptNumber) {
     blindRead?.communicationFunction !== 'acknowledgement'
   ) {
     return false;
+  }
+  if (
+    pending?.contributionKind === 'local_observation' &&
+    blindRead?.communicationFunction === 'report' &&
+    blindRead?.readableText !== true &&
+    localObservationMatchesBlindRead(pending.contributionSummary, blindRead)
+  ) {
+    return true;
   }
   if (
     Number(pending?.replanCount) >= MAX_DRAWING_REPLANS &&

@@ -5,6 +5,7 @@ import {
   deliberateRepetitionHasPurpose,
   isConcreteLocalEvidence,
   isCueDependentSearchPlan,
+  localObservationMatchesBlindRead,
   localQuestionPreservesCitedSubject,
   questionAlternativesVisible,
   RendezvousModelService,
@@ -3667,6 +3668,23 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     isConcreteLocalEvidence('orange construction barriers beneath dense scaffolding'),
     true
   );
+});
+
+test('a blind recipient can validate a concrete local report despite sender-review disagreement', () => {
+  assert.equal(localObservationMatchesBlindRead(
+    'New local observation: river or water body visible to the right',
+    {
+      primarySubject: 'a quiet riverside landscape with a visible shoreline',
+      likelyMessage: 'an observational rendering of a river edge'
+    }
+  ), true);
+  assert.equal(localObservationMatchesBlindRead(
+    'New local observation: river or water body visible to the right',
+    {
+      primarySubject: 'a runner moving down a road toward the horizon',
+      likelyMessage: 'continue forward along the route'
+    }
+  ), false);
 });
 
 test('generic local context remains private while outbound features require distinctive evidence', () => {

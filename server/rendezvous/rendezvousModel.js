@@ -280,6 +280,26 @@ function localObservationReviewDescription(value) {
   return `${description} ${concepts.join(' ')}`.trim();
 }
 
+export function localObservationMatchesBlindRead(contributionSummary, blindRead) {
+  const citedEvidence = contributionEvidenceText(contributionSummary);
+  const recipientDescription = cleanString(
+    blindRead?.primarySubject || blindRead?.likelyMessage,
+    700
+  );
+  const citedReviewDescription = localObservationReviewDescription(citedEvidence);
+  const recipientReviewDescription = localObservationReviewDescription(recipientDescription);
+  const sharedWaterfrontConcept =
+    citedReviewDescription.includes('waterfront-waterbody') &&
+    recipientReviewDescription.includes('waterfront-waterbody');
+  return isConcreteLocalEvidence(citedEvidence) &&
+    Boolean(recipientDescription) &&
+    !hasUncitedDistinctivePrimarySubject(citedEvidence, recipientDescription) &&
+    (
+      sharedWaterfrontConcept ||
+      visualDescriptionSimilarity(citedReviewDescription, recipientReviewDescription) >= 0.4
+    );
+}
+
 function contributionEvidenceText(value) {
   return cleanString(value, 700)
     .replace(/^(?:New local observation|My current chosen action|Question I am sending(?: about this local evidence)?|Correction I am sending|Acknowledging received visual evidence without claiming it as my own|Deliberately repeating existing visual evidence without treating it as new):\s*/i, '');
