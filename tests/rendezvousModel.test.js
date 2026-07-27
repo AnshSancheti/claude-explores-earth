@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   deliberateRepetitionHasPurpose,
+  isConcreteLocalEvidence,
   isCueDependentSearchPlan,
   localQuestionPreservesCitedSubject,
   questionAlternativesVisible,
@@ -1667,9 +1668,9 @@ test('a drawing replan removes uncited perspective that competes with a landmark
         if (attempts === 1) {
           return {
             contributionEvidenceId: 'local:0',
-            drawingIntent: 'Show storefronts on both sides around a deep central perspective.',
+            drawingIntent: 'Show striped storefront awnings on both sides around a deep central perspective.',
             messageAction: 'unclear',
-            drawingPrompt: 'Draw two storefront rows receding toward a distant vanishing point.',
+            drawingPrompt: 'Draw two rows of striped awnings receding toward a distant vanishing point.',
             groundedFeatureEvidenceIds: ['local:0']
           };
         }
@@ -1679,9 +1680,9 @@ test('a drawing replan removes uncited perspective that competes with a landmark
         );
         return {
           contributionEvidenceId: 'local:0',
-          drawingIntent: 'Show the facing storefront facades as the entire local fact.',
-          messageAction: 'stillness',
-          drawingPrompt: 'Draw two large facing storefront facades filling the page edges.',
+            drawingIntent: 'Show the facing striped awnings as the entire local fact.',
+            messageAction: 'stillness',
+            drawingPrompt: 'Draw two large rows of striped awnings filling the page edges.',
           groundedFeatureEvidenceIds: ['local:0']
         };
       }
@@ -1698,14 +1699,17 @@ test('a drawing replan removes uncited perspective that competes with a landmark
     },
     privateMemory: {
       ownObservations: [{
-        description: 'storefronts on both sides',
+        description: 'striped storefront awnings on both sides',
         sourcePanoId: 'theo-current'
       }]
     }
   });
 
   assert.equal(attempts, 2);
-  assert.equal(replan.contributionSummary, 'New local observation: storefronts on both sides');
+  assert.equal(
+    replan.contributionSummary,
+    'New local observation: striped storefront awnings on both sides'
+  );
   assert.doesNotMatch(
     `${replan.drawingIntent} ${replan.drawingPrompt}`,
     /perspective|receding|vanishing/i
@@ -2977,6 +2981,24 @@ test('bare street substrate is omitted while distinctive local evidence remains'
     /street with lane markings|cross-street environment|curb, sidewalk|broad urban street flanked|widthy urban street|long street lined|pedestrians and vehicles|busy urban street|bold white stripes|central axis/
   );
   assert.match(catalogText, /orange construction barriers beneath dense scaffolding/);
+});
+
+test('a list of generic city fixtures is not promoted into a locating clue', () => {
+  assert.equal(
+    isConcreteLocalEvidence(
+      'New local observation: crosswalks, tall buildings, storefronts'
+    ),
+    false
+  );
+  assert.equal(isConcreteLocalEvidence('row of storefronts'), false);
+  assert.equal(
+    isConcreteLocalEvidence('row of storefronts with striped awnings'),
+    true
+  );
+  assert.equal(
+    isConcreteLocalEvidence('orange construction barriers beneath dense scaffolding'),
+    true
+  );
 });
 
 test('route planning rejects partner-cue dependency but preserves evidence-based waiting', async () => {
