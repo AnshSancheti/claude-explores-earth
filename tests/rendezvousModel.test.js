@@ -1551,6 +1551,62 @@ test('a third copy of the same local observation must adapt or repeat deliberate
   assert.match(decision.drawingPrompt, /uncertain/);
 });
 
+test('distinct planner corrections receive one bounded extra attempt', async () => {
+  let drawingAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      drawing() {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'question',
+            contributionEvidenceId: 'local:0'
+          });
+        }
+        if (drawingAttempts === 2) {
+          return drawingResponse({
+            contributionKind: 'local_observation',
+            contributionEvidenceId: 'local:0',
+            drawingIntent: 'Show the same tree-lined urban street again.',
+            messageAction: 'stillness',
+            drawingPrompt: 'Draw the same tree-lined urban street.',
+            groundedFeatureEvidenceIds: ['local:0']
+          });
+        }
+        return drawingResponse({
+          contributionKind: 'question',
+          contributionEvidenceId: 'question:0',
+          drawingIntent: 'Ask whether the recurring circle is a lamp or destination.',
+          messageAction: 'unclear',
+          drawingPrompt: 'Draw one uncertain circle between a lamp and a distant place.',
+          groundedFeatureEvidenceIds: ['question:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+  const repeatedObservation = {
+    contributionKind: 'local_observation',
+    contributionSummary: 'New local observation: three repeated stone arches',
+    informationDelta: 'New local observation: three repeated stone arches',
+    intent: 'Show the three repeated stone arches.'
+  };
+
+  const decision = await service.decide(input({
+    privateMemory: {
+      ...input().privateMemory,
+      sentMessages: [
+        { sequence: 5, ...repeatedObservation },
+        { sequence: 7, ...repeatedObservation }
+      ]
+    }
+  }));
+
+  assert.equal(drawingAttempts, 3);
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'question');
+});
+
 test('a repeatedly unanswered question cannot keep masquerading as a new message', async () => {
   let drawingAttempts = 0;
   const service = new RendezvousModelService({

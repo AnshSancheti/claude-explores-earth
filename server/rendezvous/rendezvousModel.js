@@ -1326,8 +1326,10 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
     ];
     let drawingPlan = null;
     let drawingRetryFeedback = '';
+    let drawingPlanAttemptLimit = this.maxAttempts;
+    const drawingPlanFailureKinds = new Set();
     tokenBudget = Math.min(this.maxTokens, 1800);
-    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+    for (let attempt = 1; attempt <= drawingPlanAttemptLimit; attempt += 1) {
       try {
         const response = await this.#client().chat.completions.create({
           model: this.model,
@@ -1506,7 +1508,23 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
         break;
       } catch (error) {
         lastError = error;
-        this.logger.warn?.(`Rendezvous drawing plan attempt ${attempt}/${this.maxAttempts} failed: ${error.message}`);
+        const status = error?.status ?? error?.response?.status;
+        if (!status) {
+          drawingPlanFailureKinds.add(
+            cleanString(error?.message, 500).replace(/"[^"]+"/g, '"motif"')
+          );
+        }
+        if (
+          attempt === drawingPlanAttemptLimit &&
+          drawingPlanAttemptLimit === this.maxAttempts &&
+          drawingPlanFailureKinds.size >= 2
+        ) {
+          drawingPlanAttemptLimit += 1;
+          this.logger.warn?.(
+            'Rendezvous drawing planner received one extra attempt after distinct validation corrections exhausted the normal budget'
+          );
+        }
+        this.logger.warn?.(`Rendezvous drawing plan attempt ${attempt}/${drawingPlanAttemptLimit} failed: ${error.message}`);
         drawingRetryFeedback = /multi-panel template/i.test(error.message)
           ? 'Start from a blank page and use one coherent composition centered on the cited contribution. You may retain one small recurring symbol, but do not use panels, a triptych, or the received sheet layout.'
           : (/route-command imagery unrelated/i.test(error.message)
