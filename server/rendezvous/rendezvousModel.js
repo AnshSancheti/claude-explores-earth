@@ -112,6 +112,7 @@ function validateCorroborationProvenance(
 const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
   'local_observation',
   'own_action',
+  'response',
   'question',
   'correction',
   'acknowledgement',
@@ -121,6 +122,9 @@ const OUTBOUND_CONTRIBUTION_KINDS = Object.freeze([
 function isConcreteLocalEvidence(description) {
   const value = cleanString(description, 220);
   if (!value || value.toLowerCase() === 'context') return false;
+  if (/\bstreet\s+(?:label|name)\b/i.test(value) || containsNamedStreetReference(value)) {
+    return false;
+  }
   return !/\b(?:arrow|implied|suggests?|cue|motif|route|waypoint|shared|prior|sheet|partner|destination|coordinate|map|grid|star|intersection context)\b/i
     .test(value);
 }
@@ -282,16 +286,21 @@ function escapeRegExp(value) {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+const NAMED_STREET_PATTERN =
+  /\b(?:[NSEW]\.?\s+)?(?:\d+(?:st|nd|rd|th)?|[A-Z][A-Za-z'.-]*)(?:\s+(?:\d+(?:st|nd|rd|th)?|[A-Z][A-Za-z'.-]*)){0,3}\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Place|Pl|Parkway|Pkwy|Highway|Hwy)\b/g;
+
+function containsNamedStreetReference(description) {
+  NAMED_STREET_PATTERN.lastIndex = 0;
+  return NAMED_STREET_PATTERN.test(cleanString(description, 2400));
+}
+
 function sanitizeOutboundPlaceNames(description, routeLabels = [], maxLength = 2400) {
   let value = cleanString(description, maxLength)
     .replace(
       /\b[A-Z][A-Za-z0-9'.-]*(?:\s+[A-Z][A-Za-z0-9'.-]*)?\s*\/\s*[A-Z][A-Za-z0-9'.-]*(?:\s+[A-Z][A-Za-z0-9'.-]*)?(?:\s+(?:intersection|anchor|corner))?\b/g,
       'local street corner'
     )
-    .replace(
-      /\b(?:[A-Z][A-Za-z0-9'.-]*\s+){1,3}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Place|Pl|Parkway|Pkwy|Highway|Hwy)\b/g,
-      'local street'
-    );
+    .replace(NAMED_STREET_PATTERN, 'local street');
   const labels = routeLabels.flatMap(label => {
     const full = cleanString(label, 120);
     const base = full.replace(
@@ -357,18 +366,19 @@ function describeChosenAction(routeDecision, options) {
 function buildContributionEvidence({ routeDecision, perception, privateMemory, options }) {
   const catalog = [];
   const routeLabels = (Array.isArray(options) ? options : []).map(option => option?.label);
-  const add = (prefix, values) => {
+  const add = (prefix, values, { concreteLocalOnly = false } = {}) => {
     cleanStringList(values, { limit: 6, maxLength: 220 })
       .map(description => sanitizeOutboundPlaceNames(description, routeLabels, 220))
+      .filter(description => !concreteLocalOnly || isConcreteLocalEvidence(description))
       .filter(Boolean)
       .forEach((description, index) => {
       catalog.push({ id: `${prefix}:${index}`, description });
     });
   };
-  add('local', routeDecision.observedFeatures
-    .filter(isConcreteLocalEvidence));
+  add('local', routeDecision.observedFeatures, { concreteLocalOnly: true });
   add('action', [describeChosenAction(routeDecision, options)]);
   add('received', perception.literalContents);
+  add('response', perception.evidenceDelta.informationWorthSending);
   add('question', perception.evidenceDelta.unresolvedQuestions);
   add('contradiction', perception.evidenceDelta.contradictions);
   add('prior_sent', (privateMemory?.sentMessages || []).slice(-2).map(message =>
@@ -381,6 +391,7 @@ function validContributionEvidencePrefix(kind, evidenceId) {
   const prefix = String(evidenceId || '').split(':')[0];
   if (kind === 'local_observation') return prefix === 'local';
   if (kind === 'own_action') return prefix === 'action';
+  if (kind === 'response') return prefix === 'response';
   if (kind === 'question') return prefix === 'question';
   if (kind === 'correction') return prefix === 'contradiction';
   if (kind === 'acknowledgement') return prefix === 'received';
@@ -392,6 +403,7 @@ function contributionKindForEvidenceId(evidenceId) {
   const prefix = String(evidenceId || '').split(':')[0];
   if (prefix === 'local') return 'local_observation';
   if (prefix === 'action') return 'own_action';
+  if (prefix === 'response') return 'response';
   if (prefix === 'question') return 'question';
   if (prefix === 'contradiction') return 'correction';
   if (prefix === 'received') return 'acknowledgement';
@@ -403,6 +415,7 @@ function authoritativeContributionSummary(kind, description) {
   const evidence = cleanString(description, 300);
   if (kind === 'local_observation') return `New local observation: ${evidence}`;
   if (kind === 'own_action') return `My current chosen action: ${evidence}`;
+  if (kind === 'response') return `My response to the received drawing: ${evidence}`;
   if (kind === 'question') return `Question I am sending: ${evidence}`;
   if (kind === 'correction') return `Correction I am sending: ${evidence}`;
   if (kind === 'acknowledgement') {
@@ -706,7 +719,7 @@ function locallyGroundRouteLanguage(routeDecision, partnerName) {
 function repeatsRecentOutboundProposition(candidateDrawingPlan, privateMemory) {
   const contributionKind = candidateDrawingPlan?.contributionKind;
   if (
-    !['local_observation', 'own_action', 'question', 'correction']
+    !['local_observation', 'own_action', 'response', 'question', 'correction']
       .includes(contributionKind)
   ) {
     return false;
@@ -1272,7 +1285,9 @@ ${recentFieldNotes}`
 
 Decide what wordless drawing would be most useful to send now. You may communicate anything you genuinely believe could help you find each other: what you see, a remembered place, uncertainty, a correction, intended movement, a request, relative spatial relationships, or an invented visual convention. You are not limited to an observational postcard and you may use arrows, diagrams, symbols, maps, perspective, or figurative imagery when you choose.
 
-First identify your outbound contribution: what this reply contributes from your own observation, chosen action, question, correction, acknowledgement, or deliberate repetition. Cite exactly one evidence ID from the supplied catalog. The cited evidence becomes the authoritative information delta; do not restate or enlarge it as a separate claim. Compose each handoff from a conceptually blank page. Make the cited contribution the largest, darkest, or otherwise unmistakable primary subject; prior visual language is optional supporting vocabulary, not a layout template. When the contribution is one simple observation or action, prefer one coherent composition. Use multiple panels only when the cited contribution itself needs a temporal, spatial, or comparative relationship; continuity alone does not justify copying a multi-panel itinerary. A received-sheet or prior-sent motif may be retained as context, acknowledgement, or deliberate repetition, but never relabel it as a new local observation. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and the cited evidence is visually dominant over that context. Repetition does not make a belief more certain. If you are asking your friend to clarify something, make the uncertainty, choice, or missing relationship visibly legible instead of drawing a confident route. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
+First identify your outbound contribution: what this reply contributes from your own observation, chosen action, response to the received drawing, question, correction, acknowledgement, or deliberate repetition. Cite exactly one evidence ID from the supplied catalog. The cited evidence becomes the authoritative information delta; do not restate or enlarge it as a separate claim. A response evidence item is your own private synthesis of what is worth saying back; it is not an instruction you must follow. When the received drawing is explicitly a question, answer it, clarify it, correct it, visibly acknowledge that you cannot answer it, or deliberately leave it unresolved. Do not evade it with an unrelated observational postcard when response evidence is available. This requirement preserves a real exchange without prescribing what you should believe or how you should search.
+
+Compose each handoff from a conceptually blank page. Make the cited contribution the largest, darkest, or otherwise unmistakable primary subject; prior visual language is optional supporting vocabulary, not a layout template. When the contribution is one simple observation or action, prefer one coherent composition. Use multiple panels only when the cited contribution itself needs a temporal, spatial, or comparative relationship; continuity alone does not justify copying a multi-panel itinerary. A received-sheet or prior-sent motif may be retained as context, acknowledgement, or deliberate repetition, but never relabel it as a new local observation. You will see the current received sheet and up to two earlier passed sheets, explicitly labeled. Compare them as drawings before composing your reply. Do not merely mirror the incoming drawing or redraw your previous message because its motifs are familiar. If your proposed composition visibly resembles a recent sheet, use it only when your continuity reason explains why repetition itself is useful and the cited evidence is visually dominant over that context. Repetition does not make a belief more certain. If you are asking your friend to clarify something, make the uncertainty, choice, or missing relationship visibly legible instead of drawing a confident route. Make the visual roles legible enough that your own movement is not accidentally presented as an instruction to ${partnerName}, unless an instruction is truly what you mean.
 
 A changed compass bearing does not by itself make another generic walking-away street scene a new visual proposition. If you intentionally want to repeat a recent visual proposition, cite a prior_sent evidence ID as deliberate_repetition and explain why the repetition is useful now. Otherwise choose a genuinely different grounded contribution or composition. This requirement does not prescribe what you should say; it keeps your chosen message honest about whether it adds information.
 
@@ -1284,7 +1299,7 @@ Do not include readable text, letters, numbers, captions, street labels, signatu
 
 Return only JSON:
 {
-  "contributionKind": "local_observation" | "own_action" | "question" | "correction" | "acknowledgement" | "deliberate_repetition",
+  "contributionKind": "local_observation" | "own_action" | "response" | "question" | "correction" | "acknowledgement" | "deliberate_repetition",
   "contributionEvidenceId": "one exact ID from the available outbound evidence catalog",
   "drawingIntent": "your private account of what you are trying to tell ${partnerName}",
   "continuityReason": "why recurring motifs are worth retaining, or empty when they are not",
@@ -1456,6 +1471,19 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
             'Rendezvous drawing planner presented a repeated outbound proposition as a fresh contribution'
           );
         }
+        const currentSheetNeedsAnswer =
+          perception.communicationFunction === 'question' &&
+          Boolean(perception.requestedResponse) &&
+          contributionEvidence.some(item => item.id.startsWith('response:'));
+        if (
+          currentSheetNeedsAnswer &&
+          !['response', 'question', 'correction', 'acknowledgement', 'deliberate_repetition']
+            .includes(candidateDrawingPlan.contributionKind)
+        ) {
+          throw new Error(
+            'Rendezvous drawing planner evaded an explicit received question with an unrelated postcard'
+          );
+        }
         if (
           !['acknowledgement', 'deliberate_repetition'].includes(candidateDrawingPlan.contributionKind) &&
           usesMultiPanelTemplate(...perception.literalContents, perception.sheetInterpretation) &&
@@ -1551,12 +1579,14 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
           : (/route-command imagery unrelated/i.test(error.message)
             ? 'The cited local observation is static evidence. Remove uncited routes, footprints, arrows, runners, progression, and directional cues. If movement is the actual contribution you want to send, cite an exact action evidence ID instead.'
           : (/labeled its contribution/i.test(error.message)
-              ? 'Preserve the communicative act you actually intend. Cite an exact evidence ID whose prefix matches that contribution kind: local for local_observation, action for own_action, question for question, contradiction for correction, received for acknowledgement, or prior_sent for deliberate_repetition. Do not change the message kind merely to fit a mismatched ID.'
+              ? 'Preserve the communicative act you actually intend. Cite an exact evidence ID whose prefix matches that contribution kind: local for local_observation, action for own_action, response for response, question for question, contradiction for correction, received for acknowledgement, or prior_sent for deliberate_repetition. Do not change the message kind merely to fit a mismatched ID.'
               : (/repeated outbound proposition/i.test(error.message)
               ? 'The proposed message repeats a recent outbound proposition that has already recurred. Choose a genuinely different grounded contribution or composition. If repetition itself is what you intend to communicate, cite an exact prior_sent evidence ID as deliberate_repetition and explain what the repetition is meant to communicate or test now.'
+              : (/evaded an explicit received question/i.test(error.message)
+              ? 'The current sheet visibly asks you something and your reconciliation contains grounded response evidence. Choose what you actually want to say back: cite response evidence to answer, question evidence to clarify, contradiction evidence to correct, received evidence to acknowledge that you cannot answer, or deliberately repeat unresolved evidence. Do not substitute an unrelated local postcard.'
               : (/(?:uncited motif|unsupported partner hypothesis)/i.test(error.message)
               ? 'Keep the cited contribution primary. Do not describe any inherited symbol, route, target, waypoint, district, or place as a known shared destination or otherwise promote an unsupported partner hypothesis into a movement goal. If you retain one, make it subordinate and explicitly uncertain, questioned, tested, transformed, or deliberately repeated.'
-              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.'))));
+              : 'Correct the reported planning error. Cite an exact available evidence ID and make that contribution visually primary without enlarging its claim.')))));
         tokenBudget = Math.min(this.maxRetryTokens, Math.max(tokenBudget * 2, 2600));
       }
     }
@@ -1618,8 +1648,8 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
       limit: 6,
       maxLength: 220
     })
-      .filter(isConcreteLocalEvidence)
       .map(description => sanitizeOutboundPlaceNames(description, [], 220))
+      .filter(isConcreteLocalEvidence)
       .filter(Boolean);
     const latestReconciliation = (privateMemory?.reconciliations || []).at(-1);
     const latestQuestions = cleanStringList(
@@ -1634,6 +1664,12 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
     )
       .map(description => sanitizeOutboundPlaceNames(description, [], 220))
       .filter(Boolean);
+    const latestResponses = cleanStringList(
+      latestReconciliation?.informationWorthSending,
+      { limit: 3, maxLength: 220 }
+    )
+      .map(description => sanitizeOutboundPlaceNames(description, [], 220))
+      .filter(Boolean);
     const priorContribution = contributionEvidenceText(
       pending?.informationDelta || pending?.contributionSummary
     );
@@ -1641,6 +1677,11 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
       ...localEvidence.map((description, index) => ({
         id: `local:${index}`,
         kind: 'local_observation',
+        description
+      })),
+      ...latestResponses.map((description, index) => ({
+        id: `response:${index}`,
+        kind: 'response',
         description
       })),
       ...latestQuestions.map((description, index) => ({
@@ -1657,6 +1698,9 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
       !priorContribution ||
       visualDescriptionSimilarity(priorContribution, item.description) < 0.55
     ).filter(item =>
+      pending?.contributionKind !== 'response' ||
+      ['response', 'question', 'correction'].includes(item.kind)
+    ).filter(item =>
       !repeatsRecentOutboundProposition({
         contributionKind: item.kind,
         contributionSummary: authoritativeContributionSummary(item.kind, item.description),
@@ -1667,7 +1711,7 @@ ${JSON.stringify(contributionEvidence, null, 2)}`
 
     const systemPrompt = `You are ${agentName}, reconsidering only the drawing you are about to pass to ${partnerName}. Your route choice is already made and does not change.
 
-Your prior contribution repeatedly failed because a context-free recipient could not see its intended communicative function. Choose a different useful contribution from the supplied evidence catalog rather than retrying the same visual proposition. Start from a conceptually blank page. Do not retain the prior subject, relationship, symbol, person, arrow, path, route, directional cue, movement scene, or composition unless the newly cited alternative itself requires that element. This is not a request to adopt a prescribed code or strategy: decide which grounded observation, genuine question, or correction is most worth communicating now.
+Your prior contribution repeatedly failed because a context-free recipient could not see its intended communicative function. Choose a different useful contribution from the supplied evidence catalog rather than retrying the same visual proposition. Start from a conceptually blank page. Do not retain the prior subject, relationship, symbol, person, arrow, path, route, directional cue, movement scene, or composition unless the newly cited alternative itself requires that element. This is not a request to adopt a prescribed code or strategy: decide which grounded observation, response, genuine question, or correction is most worth communicating now. If the failed contribution was a response to an explicit question, the alternatives intentionally remain conversationally responsive.
 
 Use one coherent, wordless composition. Do not include readable text, letters, numbers, captions, street names, coordinates, labels, signatures, logos, or watermarks. Do not invent evidence or enlarge the cited claim.
 

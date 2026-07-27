@@ -569,7 +569,15 @@ test('a question about a path cannot silently become route guidance', async () =
                 currentPlan: 'Use the local arches to choose my route while remembering that the footprint question remains unresolved.'
               }
             });
-      }
+      },
+      drawing: drawingResponse({
+        contributionKind: 'response',
+        contributionEvidenceId: 'response:0',
+        drawingIntent: 'Answer that the footprints remain ambiguous rather than treating them as a route.',
+        messageAction: 'unclear',
+        drawingPrompt: 'Draw fading footprints ending beneath an unresolved question mark.',
+        groundedFeatureEvidenceIds: ['response:0']
+      })
     }),
     logger: { warn() {} }
   });
@@ -674,7 +682,15 @@ test('a route cannot move in line with a partner prompt', async () => {
             currentPlan: 'Use the locally visible arches and traffic light, then reassess.'
           }
         });
-      }
+      },
+      drawing: drawingResponse({
+        contributionKind: 'response',
+        contributionEvidenceId: 'response:0',
+        drawingIntent: 'Answer the open question without turning it into route guidance.',
+        messageAction: 'unclear',
+        drawingPrompt: 'Draw an unresolved fork beside a stationary observing figure.',
+        groundedFeatureEvidenceIds: ['response:0']
+      })
     }),
     logger: { warn() {} }
   });
@@ -1115,6 +1131,49 @@ test('an acknowledgement replan does not relabel received imagery as a local obs
   const requestText = requests[0].messages.at(-1).content;
   assert.match(requestText, /three dark arches beside a public plaza/);
   assert.doesNotMatch(requestText, /long sidewalk, footprints, and a large tree/);
+});
+
+test('a failed response cannot be replanned into an unrelated local postcard', async () => {
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      replan: {
+        contributionEvidenceId: 'response:1',
+        drawingIntent: 'Answer that movement is continuing while the depicted place remains uncertain.',
+        messageAction: 'movement',
+        drawingPrompt: 'Draw completed motion through a crossing beside an unresolved place symbol.',
+        groundedFeatureEvidenceIds: ['response:1']
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const replan = await service.replanUnrenderableDrawing({
+    agentName: 'Ada',
+    partnerName: 'Theo',
+    pending: {
+      contributionKind: 'response',
+      contributionSummary: 'My response to the received drawing: the crossing remains ambiguous',
+      informationDelta: 'My response to the received drawing: the crossing remains ambiguous'
+    },
+    privateMemory: {
+      ownObservations: [{ description: 'three stone arches beside the road' }],
+      reconciliations: [{
+        informationWorthSending: [
+          'the crossing remains ambiguous',
+          'movement is continuing while the depicted place remains uncertain'
+        ],
+        unresolvedQuestions: ['whether the place symbol refers to a real landmark'],
+        contradictions: []
+      }],
+      sentMessages: [],
+      receivedSheets: []
+    }
+  });
+
+  assert.equal(replan.contributionKind, 'response');
+  assert.equal(replan.contributionEvidenceId, 'response:1');
+  assert.doesNotMatch(requests[0].messages.at(-1).content, /three stone arches/);
 });
 
 test('a drawing replan offers composite streetscapes as separate visual facts', async () => {
@@ -1700,6 +1759,67 @@ test('a partner observation misread as a shared proposal still counts toward rep
   assert.equal(decision.contributionKind, 'question');
 });
 
+test('an explicit received question cannot be evaded with an unrelated local postcard', async () => {
+  let drawingAttempts = 0;
+  const requests = [];
+  const service = new RendezvousModelService({
+    client: stagedClient(requests, {
+      perception: {
+        ...perceptionResponse(),
+        communicationFunction: 'question',
+        requestedResponse: 'Show whether Ada is moving through the crossing or only observing it.',
+        evidenceDelta: {
+          ...perceptionResponse().evidenceDelta,
+          informationWorthSending: [
+            'I am continuing through a busy public crossing, but it is not a known meeting place.'
+          ]
+        }
+      },
+      route: routeResponse({
+        sheetReconciliation: {
+          ...routeResponse().sheetReconciliation,
+          informationWorthSending: [
+            'I am continuing through a busy public crossing, but it is not a known meeting place.'
+          ]
+        }
+      }),
+      drawing(request) {
+        drawingAttempts += 1;
+        if (drawingAttempts === 1) {
+          return drawingResponse({
+            contributionKind: 'local_observation',
+            contributionEvidenceId: 'local:0',
+            drawingIntent: 'Show the arches beside me.',
+            drawingPrompt: 'Draw three stone arches.',
+            groundedFeatureEvidenceIds: ['local:0']
+          });
+        }
+        assert.match(
+          request.messages[1].content[0].text,
+          /current sheet visibly asks you something.*response evidence/s
+        );
+        return drawingResponse({
+          contributionKind: 'response',
+          contributionEvidenceId: 'response:0',
+          drawingIntent: 'Answer that I am moving through the crossing without claiming it as our meeting place.',
+          messageAction: 'movement',
+          drawingPrompt: 'Draw a completed crossing behind one moving figure while a destination marker remains visibly uncertain.',
+          groundedFeatureEvidenceIds: ['response:0', 'action:0']
+        });
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(drawingAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.contributionKind, 'response');
+  assert.equal(decision.contributionEvidenceId, 'response:0');
+  assert.match(decision.informationDelta, /My response to the received drawing/);
+});
+
 test('one partner observation can still be echoed as corroboration', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {
@@ -1883,9 +2003,9 @@ test('planner-authored fields cannot reintroduce private place names for an own-
       drawing: drawingResponse({
         contributionKind: 'own_action',
         contributionEvidenceId: 'action:0',
-        drawingIntent: 'Anchor at Bowery/Prince and continue toward Delancey.',
-        drawingPrompt: 'Draw Bowery/Prince with a tree, then follow Delancey St east.',
-        continuityReason: 'The Bowery/Prince anchor connects to Delancey.',
+        drawingIntent: 'Anchor at Bowery/Prince and continue from W 47th St toward Delancey.',
+        drawingPrompt: 'Draw Bowery/Prince with a tree, then follow Delancey St east from E 48th St.',
+        continuityReason: 'The Bowery/Prince anchor connects W 47th St to Delancey.',
         groundedFeatureEvidenceIds: ['action:0']
       })
     }),
@@ -1906,7 +2026,7 @@ test('planner-authored fields cannot reintroduce private place names for an own-
   });
 
   assert.equal(decision.fallbackCause, null);
-  assert.doesNotMatch(outbound, /Bowery|Prince|Delancey/);
+  assert.doesNotMatch(outbound, /Bowery|Prince|Delancey|W 47th|E 48th/);
   assert.match(outbound, /local street/);
 });
 
@@ -2123,6 +2243,8 @@ test('abstract sheet-language residue is excluded from local outbound evidence',
           'a suspended traffic light beside them',
           'Bowery/Prince intersection with central median tree',
           'FDR Drive beside the river',
+          'street label W 47th St is visible beside the crossing',
+          'E 48th St is printed on a nearby sign',
           'a star waypoint implied by the prior sheet cue',
           'Bowery/Prince intersection context',
           'bold diagonal route arrow toward the right'
@@ -2145,8 +2267,7 @@ test('abstract sheet-language residue is excluded from local outbound evidence',
   assert.doesNotMatch(catalogText, /Bowery\/Prince intersection context/);
   assert.doesNotMatch(catalogText, /bold diagonal route arrow/);
   assert.match(catalogText, /central median tree/);
-  assert.match(catalogText, /beside the river/);
-  assert.doesNotMatch(catalogText, /Bowery|Prince|FDR Drive/);
+  assert.doesNotMatch(catalogText, /Bowery|Prince|FDR Drive|W 47th|E 48th|street label/);
 });
 
 test('route planning rejects partner-cue dependency but preserves evidence-based waiting', async () => {
