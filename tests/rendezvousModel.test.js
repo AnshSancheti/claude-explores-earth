@@ -1506,6 +1506,40 @@ test('route planning rejects partner-cue dependency but preserves evidence-based
   assert.doesNotMatch(decision.memoryUpdate.currentPlan, /Theo|cue|signal/);
 });
 
+test('repeated partner-cue movement is normalized to the selected local route', async () => {
+  const warnings = [];
+  let routeAttempts = 0;
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      route() {
+        routeAttempts += 1;
+        return routeResponse({
+          action: 'move',
+          selectedIndex: 1,
+          reasoning: 'The northern opening has three visible stone arches, so I will move when Ada signals readiness.',
+          memoryUpdate: {
+            currentPlan: 'Advance along the northern route when Ada gives the next cue.'
+          }
+        });
+      }
+    }),
+    logger: { warn(message) { warnings.push(message); } }
+  });
+
+  const decision = await service.decide(input());
+
+  assert.equal(routeAttempts, 2);
+  assert.equal(decision.fallbackCause, null);
+  assert.equal(decision.action, 'move');
+  assert.equal(decision.selectedIndex, 1);
+  assert.match(decision.reasoning, /what I can currently see/i);
+  assert.match(decision.reasoning, /three repeated stone arches/i);
+  assert.doesNotMatch(decision.reasoning, /Ada|cue|signal|when/i);
+  assert.doesNotMatch(decision.memoryUpdate.currentPlan, /Ada|cue|signal/);
+  assert.equal(decision.reconciliation.planAssessment, 'inconclusive');
+  assert.ok(warnings.some(message => /normalized partner-cue route causality/i.test(message)));
+});
+
 test('repeated-only imagery cannot count as fresh support for the current plan', async () => {
   const service = new RendezvousModelService({
     client: stagedClient([], {

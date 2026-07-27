@@ -987,14 +987,17 @@ ${recentFieldNotes}`
         if (!allowWait && cleanString(parsed?.action, 20).toLowerCase() === 'wait') {
           throw new Error('Rendezvous model chose waiting after local patience expired');
         }
-        if (isCueDependentSearchPlan(
+        const cueDependentSearchPlan = isCueDependentSearchPlan(
           parsed?.action === 'wait' ? parsed?.reasoning : '',
           parsed?.memoryUpdate?.currentPlan
-        )) {
-          throw new Error('Rendezvous model made independent movement contingent on a partner cue');
-        }
+        );
         routeDecision = sanitizeRendezvousDecision(parsed, options, { allowWait });
         const validationErrors = [];
+        if (cueDependentSearchPlan) {
+          validationErrors.push(
+            'Rendezvous model made independent movement contingent on a partner cue'
+          );
+        }
         if (
           routeDecision.action !== 'wait' &&
           routeDecision.intendedHeading !== null &&
@@ -1114,6 +1117,9 @@ ${recentFieldNotes}`
           );
         }
         if (validationErrors.length > 0) {
+          const onlyNonSupportingSheetCausality = validationErrors.every(error =>
+            /partner cue|attributed absent motif|copied a non-supporting sheet route/i.test(error)
+          );
           if (
             attempt >= this.maxAttempts &&
             validationErrors.length === 1 &&
@@ -1129,15 +1135,16 @@ ${recentFieldNotes}`
             );
           } else if (
             attempt >= this.maxAttempts &&
-            validationErrors.length === 1 &&
-            (copiedSheetRoute || misattributedSheetTerm)
+            onlyNonSupportingSheetCausality
           ) {
             const groundedLanguage = locallyGroundRouteLanguage(routeDecision, partnerName);
             routeDecision.reasoning = groundedLanguage.reasoning;
             routeDecision.memoryUpdate.currentPlan = groundedLanguage.currentPlan;
             routeReconciliation.evidenceDelta.planAssessment = 'inconclusive';
             this.logger.warn?.(
-              misattributedSheetTerm
+              cueDependentSearchPlan
+                ? `Rendezvous normalized partner-cue route causality after ${attempt} attempts`
+                : misattributedSheetTerm
                 ? `Rendezvous normalized absent current-sheet motif "${misattributedSheetTerm}" after ${attempt} attempts`
                 : `Rendezvous normalized copied non-supporting sheet route after ${attempt} attempts`
             );
