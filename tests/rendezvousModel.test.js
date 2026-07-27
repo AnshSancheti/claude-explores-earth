@@ -418,6 +418,35 @@ test('a local question may compare its cited subject with a received drawing', (
   }), true);
 });
 
+test('a local axis cannot launder a repeated literal-versus-symbolic route question', () => {
+  const candidate = {
+    contributionKind: 'question',
+    contributionEvidenceId: 'question_local:0',
+    contributionSummary:
+      'Question I am sending about this local evidence: Distant city core along a central axis',
+    drawingIntent:
+      'Invite Ada to clarify whether the forward cue is literal movement or a symbolic axis.',
+    drawingPrompt:
+      'Draw a central fork with divergent paths, a distant city, and an unresolved cue.'
+  };
+
+  assert.equal(localQuestionPreservesCitedSubject(candidate), false);
+  assert.equal(repeatsRecentOutboundProposition(candidate, {
+    receivedSheets: [{ sequence: 43 }],
+    sentMessages: [],
+    failedMessages: [{
+      sheetSequence: 43,
+      contributionKind: 'question',
+      contributionSummary:
+        'Question I am sending: Is Ada signaling a literal path or a symbolic broad-axis cue without a fixed destination?',
+      informationDelta:
+        'Question I am sending: Is Ada signaling a literal path or a symbolic broad-axis cue without a fixed destination?',
+      intent:
+        'Depict a literal fork versus a symbolic broad-axis cue and ask whether the forward cue is a real route.'
+    }]
+  }), true);
+});
+
 test('drawing planner derives contribution kind from the selected evidence ID', async () => {
   const requests = [];
   const service = new RendezvousModelService({
@@ -4435,6 +4464,86 @@ test('local-observation review recognizes crosswalk wording as the cited subject
 
   assert.equal(review.accepted, true);
   assert.equal(requests.length, 2);
+});
+
+test('local-question review rejects a generic route choice that displaces its city-axis subject', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: [
+          'a person faces three diverging roads, two arrows, a question mark, and a distant city'
+        ],
+        primarySubject:
+          'a crossroads choice between forest, rocky, and central routes toward a city',
+        likelyMessage: 'Which route should the viewer take toward the city?',
+        dominantAction: 'movement',
+        frameOfReference: 'recipient',
+        frameBasis: 'The arrows and diverging roads address the viewer.',
+        communicationFunction: 'request',
+        movementCues: ['two route arrows', 'three diverging roads'],
+        stillnessCues: [],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'question',
+    contributionEvidenceId: 'question_local:0',
+    contributionSummary:
+      'Question I am sending about this local evidence: Distant city core along a central axis',
+    drawingIntent: 'Ask about the distant city core along the central axis.',
+    informationDelta:
+      'Question I am sending about this local evidence: Distant city core along a central axis',
+    messageAction: 'movement',
+    drawingPrompt: 'Draw a route question around the city.',
+    groundedFeatures: ['Distant city core along a central axis'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, false);
+  assert.match(review.assessment, /not the local subject cited by the question/);
+});
+
+test('local-question review retains a city-axis subject in a genuine comparison', async () => {
+  const service = new RendezvousModelService({
+    client: stagedClient([], {
+      blindRead: {
+        literalContents: ['a distant skyline centered at the end of one receding avenue'],
+        primarySubject: 'a distant city skyline framed by a central avenue',
+        likelyMessage: 'Does the recipient recognize this skyline and avenue relationship?',
+        dominantAction: 'unclear',
+        frameOfReference: 'sender',
+        frameBasis: 'The skyline and avenue dominate the page.',
+        communicationFunction: 'question',
+        movementCues: [],
+        stillnessCues: ['static skyline'],
+        readableText: false
+      }
+    }),
+    logger: { warn() {} }
+  });
+
+  const review = await service.reviewDrawing({
+    agentName: 'Theo',
+    partnerName: 'Ada',
+    contributionKind: 'question',
+    contributionEvidenceId: 'question_local:0',
+    contributionSummary:
+      'Question I am sending about this local evidence: Distant city core along a central axis',
+    drawingIntent: 'Ask whether Ada recognizes this skyline and avenue relationship.',
+    informationDelta:
+      'Question I am sending about this local evidence: Distant city core along a central axis',
+    messageAction: 'unclear',
+    drawingPrompt: 'Draw the skyline and central avenue as an unresolved comparison.',
+    groundedFeatures: ['Distant city core along a central axis'],
+    imageBuffer: Buffer.from('generated-image')
+  });
+
+  assert.equal(review.accepted, true);
 });
 
 test('blind recipient action overrides a sender review biased by intent', async () => {

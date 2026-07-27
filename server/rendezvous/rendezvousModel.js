@@ -378,6 +378,12 @@ export function localQuestionPreservesCitedSubject(message) {
     3000
   );
   if (
+    routeMeaningQuestion(drawingPlan) &&
+    !routeMeaningQuestion(localEvidence)
+  ) {
+    return false;
+  }
+  if (
     !localEvidence ||
     visualDescriptionSimilarity(localEvidence, drawingPlan) < 0.25
   ) {
@@ -965,8 +971,16 @@ function matchingRecentSentPropositions(candidateDrawingPlan, privateMemory) {
       return repeatsEvidence || repeatsVisual ||
         (
           contributionKind === 'question' &&
-          routeMeaningQuestion(currentEvidence) &&
-          routeMeaningQuestion(previousEvidence)
+          (
+            (
+              routeMeaningQuestion(currentEvidence) &&
+              routeMeaningQuestion(previousEvidence)
+            ) ||
+            (
+              routeMeaningQuestion(currentVisual) &&
+              routeMeaningQuestion(previousVisual)
+            )
+          )
         ) ||
         (genericMovementProposition(currentVisual) && genericMovementProposition(previousVisual));
     });
@@ -2360,6 +2374,26 @@ Return only JSON:
         accepted: false,
         assessment: `Blind recipient saw "${blindRead.primarySubject || blindRead.likelyMessage}" as primary, not the cited local observation: ${contributionSummary}`,
         revisionPrompt: `Remove or strongly subordinate this competing focal subject: ${competingSubject}. Start from a blank composition and make the cited local observation itself the largest, darkest, or most central subject. Remove unrelated arrows, paths, runners, movement narratives, and inherited route imagery instead of using the observation as background scenery.`,
+        blindRead
+      };
+    }
+    if (
+      contributionKind === 'question' &&
+      String(contributionEvidenceId || '').startsWith('question_local:') &&
+      visualDescriptionSimilarity(
+        localObservationReviewDescription(
+          contributionEvidenceText(contributionSummary)
+            .replace(/^about this local evidence:\s*/i, '')
+        ),
+        localObservationReviewDescription(
+          blindRead.primarySubject || blindRead.likelyMessage
+        )
+      ) < 0.4
+    ) {
+      return {
+        accepted: false,
+        assessment: `Blind recipient saw "${blindRead.primarySubject || blindRead.likelyMessage}" as primary, not the local subject cited by the question: ${contributionSummary}`,
+        revisionPrompt: 'Start from a blank composition and make the cited local subject the unmistakable primary visual evidence. The question may compare or transform that subject, but must not replace it with a generic route choice, received cue, arrow, fork, or destination.',
         blindRead
       };
     }
