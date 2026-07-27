@@ -3678,6 +3678,12 @@ test('a list of generic city fixtures is not promoted into a locating clue', () 
     false
   );
   assert.equal(
+    isConcreteLocalEvidence(
+      'New local observation: narrow urban street with a pronounced vanishing point ahead'
+    ),
+    false
+  );
+  assert.equal(
     isConcreteLocalEvidence('subtle shading suggesting depth and distance'),
     false
   );
