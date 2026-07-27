@@ -39,6 +39,7 @@ import {
 
 const AGENT_ORDER = ['ada', 'theo'];
 const RENDER_REVISION_MARKER = 'Authoritative rendering correction:';
+const UNRESOLVED_QUESTION_CONSTRAINT = 'The drawing must remain an unresolved question. Give the alternatives equal visual weight and make uncertainty primary. Do not answer the question, favor one route, or use check marks, X marks, green/red approval, or any other correct-versus-incorrect cue.';
 const MAX_DRAWING_ATTEMPTS_PER_PLAN = RASTER_SCRATCHPAD_ATTEMPTS_PER_PLAN;
 const MAX_DRAWING_REPLANS = 2;
 const MAX_DRAWING_REPLAN_FAILURES = 2;
@@ -49,7 +50,8 @@ function composeDrawingRevisionPrompt(
   drawingPrompt,
   revisionPrompt,
   messageAction = 'unclear',
-  contributionSummary = ''
+  contributionSummary = '',
+  contributionKind = ''
 ) {
   const actionConstraint = messageAction === 'stillness'
     ? 'The dominant action must be stillness: remove arrows, directional lines, motion trails, and route cues that read as movement; make stopping, waiting, anchoring, or uncertainty visually dominant.'
@@ -64,8 +66,24 @@ function composeDrawingRevisionPrompt(
   const contributionConstraint = citedContribution
     ? `The exact cited contribution to communicate is: ${citedContribution}`
     : '';
+  const communicationConstraint = contributionKind === 'question'
+    ? UNRESOLVED_QUESTION_CONSTRAINT
+    : '';
 
-  return `${RENDER_REVISION_MARKER} ${correction} ${contributionConstraint} ${actionConstraint} Rebuild the image from these instructions and the compatible visual anchors supplied separately. Do not reuse the rejected composition or any earlier instruction that conflicts with this correction.`;
+  return `${RENDER_REVISION_MARKER} ${correction} ${contributionConstraint} ${communicationConstraint} ${actionConstraint} Rebuild the image from these instructions and the compatible visual anchors supplied separately. Do not reuse the rejected composition or any earlier instruction that conflicts with this correction.`;
+}
+
+function upgradePersistedQuestionRevisionPrompt(drawingPrompt, contributionKind) {
+  const prompt = String(drawingPrompt || '').trim();
+  if (
+    contributionKind !== 'question' ||
+    !prompt.startsWith(RENDER_REVISION_MARKER) ||
+    prompt.includes(UNRESOLVED_QUESTION_CONSTRAINT)
+  ) {
+    return prompt;
+  }
+  const correction = prompt.slice(RENDER_REVISION_MARKER.length).trim();
+  return `${RENDER_REVISION_MARKER} ${UNRESOLVED_QUESTION_CONSTRAINT} ${correction}`;
 }
 
 function compatibleRevisionFeatures(
@@ -1574,6 +1592,7 @@ export class RendezvousController {
       : null;
     let pending = normalizedScratchpad?.pendingMessage || null;
     if (!pending) return null;
+    let pendingChanged = false;
     const reconciledMessageAction = reconcileRendezvousContributionAction(
       pending.contributionKind,
       pending.contributionSummary,
@@ -1588,11 +1607,24 @@ export class RendezvousController {
         '',
         `Rebuild from this intended message: ${pending.drawingIntent} Make this evidence delta visible: ${pending.informationDelta}`,
         reconciledMessageAction,
-        pending.contributionSummary || pending.informationDelta || pending.drawingIntent
+        pending.contributionSummary || pending.informationDelta || pending.drawingIntent,
+        pending.contributionKind
       );
       normalizedScratchpad.updatedAt = new Date().toISOString();
       this.state.scratchpad = normalizedScratchpad;
+      pendingChanged = true;
     }
+    const upgradedPrompt = upgradePersistedQuestionRevisionPrompt(
+      pending.drawingPrompt,
+      pending.contributionKind
+    );
+    if (upgradedPrompt !== pending.drawingPrompt) {
+      pending.drawingPrompt = upgradedPrompt;
+      normalizedScratchpad.updatedAt = new Date().toISOString();
+      this.state.scratchpad = normalizedScratchpad;
+      pendingChanged = true;
+    }
+    if (pendingChanged) await this.saveState();
     const nextAttemptAt = Date.parse(pending.nextAttemptAt || '');
     if (Number.isFinite(nextAttemptAt) && nextAttemptAt > Date.now()) return null;
     const senderMemory = normalizeAgentMemory(
@@ -1774,7 +1806,8 @@ export class RendezvousController {
             pending.drawingPrompt,
             review.revisionPrompt,
             pending.messageAction,
-            pending.contributionSummary || pending.informationDelta || pending.drawingIntent
+            pending.contributionSummary || pending.informationDelta || pending.drawingIntent,
+            pending.contributionKind
           );
           generated = await this.imageModel.generate({
             drawingPrompt: revisionPrompt,
@@ -1821,7 +1854,8 @@ export class RendezvousController {
             pending.drawingPrompt,
             review.revisionPrompt,
             pending.messageAction,
-            pending.contributionSummary || pending.informationDelta || pending.drawingIntent
+            pending.contributionSummary || pending.informationDelta || pending.drawingIntent,
+            pending.contributionKind
           );
           throw error;
         }

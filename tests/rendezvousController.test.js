@@ -766,6 +766,103 @@ test('the sender reviews a generated drawing and one rejection produces a revise
   }
 });
 
+test('a rejected question revision cannot resolve its own alternatives', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-question-revision-test-'));
+  let reviewCount = 0;
+  const agentModel = {
+    async reviewDrawing() {
+      reviewCount += 1;
+      return reviewCount === 1
+        ? {
+            accepted: false,
+            assessment: 'One route is marked as the correct answer.',
+            revisionPrompt: 'Make the unresolved choice visually primary.'
+          }
+        : {
+            accepted: true,
+            assessment: 'Both alternatives remain equally unresolved.',
+            revisionPrompt: ''
+          };
+    }
+  };
+  const imageModel = new FakeImageModel();
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel,
+      imageModel,
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'question-revision-message',
+      agentId: 'ada',
+      turn: 2,
+      contributionKind: 'question',
+      contributionSummary: 'Question I am sending: is this a crossing point or a continuation?',
+      drawingIntent: 'Ask which of two possible spatial readings is intended.',
+      drawingPrompt: 'Draw two possible readings around an uncertain crossing.',
+      messageAction: 'unclear',
+      groundedFeatures: ['crossing point', 'continuation']
+    });
+
+    await controller.resumePendingDrawing();
+
+    assert.equal(imageModel.calls.length, 2);
+    assert.match(imageModel.calls[1].drawingPrompt, /remain an unresolved question/i);
+    assert.match(imageModel.calls[1].drawingPrompt, /alternatives equal visual weight/i);
+    assert.match(imageModel.calls[1].drawingPrompt, /Do not answer the question/i);
+    assert.match(imageModel.calls[1].drawingPrompt, /check marks, X marks, green\/red approval/i);
+    assert.equal(controller.state.scratchpad.currentMessage.id, 'question-revision-message');
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test('a persisted question revision gains the unresolved constraint without resetting its retry', async () => {
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-question-upgrade-test-'));
+  const imageModel = new FakeImageModel();
+  try {
+    const controller = new RendezvousController({
+      dataDir: tempDir,
+      streetView: new FakeStreetView(),
+      agentModel: {},
+      imageModel,
+      logger: { warn() {}, error() {} }
+    });
+    await controller.createRun();
+    controller.state.scratchpad = queueRasterScratchpadMessage(controller.state.scratchpad, {
+      id: 'persisted-question-message',
+      agentId: 'ada',
+      turn: 2,
+      contributionKind: 'question',
+      contributionSummary: 'Question I am sending: is this a crossing point or a continuation?',
+      drawingIntent: 'Ask which of two possible spatial readings is intended.',
+      drawingPrompt: 'Draw two possible readings around an uncertain crossing.',
+      messageAction: 'unclear',
+      groundedFeatures: ['crossing point', 'continuation']
+    });
+    const pending = controller.state.scratchpad.pendingMessage;
+    pending.drawingPrompt = 'Authoritative rendering correction: Remove readable text and preserve the crossing.';
+    pending.attempts = 5;
+    pending.totalAttempts = 5;
+    pending.nextAttemptAt = new Date(Date.now() + 60_000).toISOString();
+
+    await controller.resumePendingDrawing();
+
+    const upgraded = controller.state.scratchpad.pendingMessage;
+    assert.equal(imageModel.calls.length, 0);
+    assert.equal(upgraded.id, 'persisted-question-message');
+    assert.equal(upgraded.attempts, 5);
+    assert.equal(upgraded.totalAttempts, 5);
+    assert.match(upgraded.drawingPrompt, /remain an unresolved question/i);
+    assert.match(upgraded.drawingPrompt, /Remove readable text and preserve the crossing/i);
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('sender revision feedback survives a durable retry and controller restart', async () => {
   const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'rendezvous-review-retry-test-'));
   const rejectingModel = {
