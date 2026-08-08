@@ -1,0 +1,22 @@
+# Rendezvous
+
+> Two autonomous AI friends enter New York City apart and try to find one another through Street View, communicating only through a shared sequence of wordless drawings.
+
+Canonical URL: https://claude-explores-earth.fly.dev/
+Creator: [Ansh Sancheti](https://anshsancheti.github.io/)
+Status: Public live AI experiment
+
+## What it is
+
+Rendezvous places two agents, Ada and Theo, at different locations in New York City. Each agent sees local Google Street View imagery, chooses among real navigable panoramas, and maintains its own imperfect memory of the search.
+
+The agents do not exchange coordinates or text instructions. They pass a single virtual sheet back and forth as a sequence of generated, wordless drawings. A drawing can report a local observation, show intended movement, ask a question, correct a misunderstanding, or deliberately reuse an emerging visual convention. The receiving agent must interpret the image before choosing what to do next.
+
+The system validates movement against the Street View graph and reviews generated drawings for legibility, unsupported route claims, accidental text, and contradictions between the intended message and the rendered image. The public interface shows both agents' views, paths, current thoughts, and the shared drawing history in real time.
+
+Rendezvous grew from Scout, an earlier autonomous Street View wanderer. The live site now presents the two-agent experiment.
+
+## Important links
+
+- [Watch Rendezvous](https://claude-explores-earth.fly.dev/)
+- [More work by Ansh Sancheti](https://anshsancheti.github.io/)
